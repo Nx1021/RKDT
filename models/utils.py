@@ -158,14 +158,14 @@ class WeightLoader():
     #     if hasattr(self.f, 'close'):
     #         self.f.close()
 
-def denormalize_bbox(bbox_n:torch.Tensor, img_size:Union[tuple, list, torch.Tensor]):
+def denormalize_bbox(bbox_n:Union[torch.Tensor, np.ndarray], img_size:Union[tuple, list, torch.Tensor]):
     """
     将归一化的边界框坐标还原为像素单位。
 
     parameter
     -----
-        - bbox_n: 归一化的边界框坐标，形状为 (N, 4)，其中 N 是边界框的数量。每个边界框由四个值表示 (xmin, ymin, xmax, ymax)。值应在 [0, 1] 范围内。
-        - img_size: 图像的大小，可以是元组、列表或形状为 (2,) 的张量，表示图像的宽度和高度。
+        - bbox_n: (N, 4) 归一化的边界框坐标，形状为 (N, 4)，其中 N 是边界框的数量。每个边界框由四个值表示 (xmin, ymin, xmax, ymax)。值应在 [0, 1] 范围内。
+        - img_size: (w, h) 图像的大小，可以是元组、列表或形状为 (2,) 的张量，表示图像的宽度和高度。
 
     return
     -----
@@ -179,7 +179,6 @@ def denormalize_bbox(bbox_n:torch.Tensor, img_size:Union[tuple, list, torch.Tens
         img_size = np.concatenate((img_size, img_size))
 
     bbox = bbox_n * img_size
-
     return bbox
 
 def normalize_bbox(bbox: torch.Tensor, img_size: Union[tuple, list, torch.Tensor]):
@@ -195,10 +194,14 @@ def normalize_bbox(bbox: torch.Tensor, img_size: Union[tuple, list, torch.Tensor
     -----
         - bbox: 还原为像素单位的边界框坐标，形状为 (N, 4)。
     """
-    img_size = torch.Tensor(img_size)
-    img_size = torch.cat([img_size, img_size])
-    bbox_n = bbox / img_size
+    if isinstance(bbox, torch.Tensor):
+        img_size = torch.Tensor(img_size)
+        img_size = torch.cat([img_size, img_size]).to(bbox.device)
+    elif isinstance(bbox, np.ndarray):
+        img_size = np.array(img_size)
+        img_size = np.concatenate((img_size, img_size))
 
+    bbox_n = bbox / img_size
     return bbox_n
 
 def tensor_to_numpy(tensor: torch.Tensor) -> np.ndarray:

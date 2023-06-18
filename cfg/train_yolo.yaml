@@ -13,6 +13,7 @@ yolo_override:
 ### landmark detect settings
 max_token_num: 784
 pool_size:    [24, 24]
+use_variable_tokennum: True
 landmark_num: 24
 transformer_tgt_num: 96
 pcd_models: 

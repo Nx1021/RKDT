@@ -1,5 +1,5 @@
 from typing import Any
-from models.roi_handling import FeatureMapDistribution, gather_results
+from models.roi_handling import FeatureMapDistribution, gather_results, NestedTensor
 from models.transformer import LandmarkBranch
 from models.utils import WeightLoader, normalize_bbox
 
@@ -122,23 +122,24 @@ class OLDT(nn.Module):
     def forward(self, input, iftrain = True):
         detect_rlt:list[Results] = self._backbone.predict(input)
         self.last_detect_rlt = detect_rlt
-        input_size = [x.orig_shape for x in detect_rlt]
+        input_size = [x.orig_shape[::-1] for x in detect_rlt] #list[(w,h)]
         ### 整合特征图
         # P3, P4, P5 = self._backbone.model.feature_map
         P3, P4, P5 = self.get_feature_callback.feature_map
         # P3 = torch.rand(len(input), 256, 60, 80)
         feature_map = self.reshape_feature_maps((P3,))
         class_ids, bboxes_n = self.parse_results(detect_rlt) #[bn, num_roi?] [bn, num_roi?, 4]
-        roi_feature_dict, org_idx = self.feature_map_distribution(class_ids, bboxes_n, feature_map)
+        roi_feature_dict, org_idx, bboxes_n = self.feature_map_distribution(class_ids, bboxes_n, feature_map)
         
         landmark_dict = {}
         for class_id in self.landmark_branch_classes:
             try:
-                rois:list[torch.Tensor] = roi_feature_dict[class_id] #[num_landmark_group?, H, W, C]
+                rois:torch.Tensor = roi_feature_dict[class_id].tensor #[num_landmark_group?, C, H, W]
+                masks:torch.Tensor = roi_feature_dict[class_id].mask #[num_landmark_group?, H, W]
             except:
                 continue # 只选取关注的class
             branch = self.landmark_branches[class_id]
-            landmark_coords, landmark_probs = branch(rois) #[decoder_num, num_landmark_group?, landmarknum, 2]
+            landmark_coords, landmark_probs = branch(rois, masks) #[decoder_num, num_landmark_group?, landmarknum, 2]
             landmark_dict[class_id] = (landmark_coords, landmark_probs)
 
         # 重新汇聚

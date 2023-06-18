@@ -7,7 +7,6 @@ Copy-paste from torch.nn.Transformer with modifications:
     * extra LN at the end of encoder is removed
     * decoder returns a stack of activations from all decoding layers
 """
-####
 import copy
 from typing import Optional, List
 
@@ -17,7 +16,6 @@ from torch import nn, Tensor
 
 import numpy as np
 import matplotlib.pyplot as plt
-
 
 class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
@@ -61,7 +59,6 @@ class Transformer(nn.Module):
                           pos=pos_embed, query_pos=query_embed)
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
-
 class TransformerEncoder(nn.Module):
 
     def __init__(self, encoder_layer, num_layers, norm=None):
@@ -84,7 +81,6 @@ class TransformerEncoder(nn.Module):
             output = self.norm(output)
 
         return output
-
 
 class TransformerDecoder(nn.Module):
 
@@ -125,7 +121,6 @@ class TransformerDecoder(nn.Module):
             return torch.stack(intermediate)
 
         return output.unsqueeze(0)
-
 
 class TransformerEncoderLayer(nn.Module):
 
@@ -185,7 +180,6 @@ class TransformerEncoderLayer(nn.Module):
         if self.normalize_before:
             return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
         return self.forward_post(src, src_mask, src_key_padding_mask, pos)
-
 
 class TransformerDecoderLayer(nn.Module):
 
@@ -330,15 +324,11 @@ class PositionEmbeddingSine(nn.Module):
             scale = 2 * np.pi
         self.scale = scale
 
-    def forward(self, tensor: Tensor):
+    def forward(self, tensor: Tensor, mask: Tensor):
         '''
         tensor [bn, C, H, W]
         '''
-        ### 判断输入是否是mask
-        if len(tensor.shape) == 4:
-            mask = torch.zeros((tensor.shape[0], tensor.shape[2], tensor.shape[3]), device=tensor.device, dtype=torch.bool)
-        elif len(tensor.shape) == 3:
-            mask = tensor
+        assert mask is not None
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
         x_embed = not_mask.cumsum(2, dtype=torch.float32)
@@ -384,15 +374,15 @@ class LandmarkBranch(nn.Module):
         self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1, device="cuda") ###TODO###
         self.aux_loss = aux_loss
 
-    def forward(self, roi_feature:Tensor):
+    def forward(self, roi_feature:Tensor, masks:Tensor):
         """ 
         parameters
         ----
         roi_feature: [N, C, H, W] Tensor 
         """
-        roi_feature = torch.stack(roi_feature).to("cuda")
-        pos = self.position_embedding(roi_feature)
-        hs = self.transformer(self.input_proj(roi_feature), None, self.query_embed.weight, pos)[0]
+        # roi_feature = torch.stack(roi_feature).to("cuda")
+        pos = self.position_embedding(roi_feature, masks)
+        hs = self.transformer(self.input_proj(roi_feature), masks, self.query_embed.weight, pos)[0]
 
         outputs_class = self.class_embed(hs).softmax(-1)
         outputs_coord = self.pos_embed(hs)
