@@ -2,7 +2,8 @@ from typing import Any
 from models.roi_handling import FeatureMapDistribution, gather_results, NestedTensor
 from models.transformer import LandmarkBranch
 from models.utils import WeightLoader, normalize_bbox
-
+import models.yolo8_patch 
+import ultralytics
 from ultralytics import YOLO, yolo
 from ultralytics.yolo.v8.detect import DetectionPredictor
 from ultralytics.yolo.engine.results import Results
@@ -44,8 +45,10 @@ class OLDT(nn.Module):
     def __init__(self, yolo_weight_path, cfg, landmark_branch_classes:list[int] = [], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._backbone = YOLO(yolo_weight_path, "detect")
+        self._backbone.to(f"cuda:{torch.cuda.current_device()}")
         self.cfg = yaml_load(cfg)
         self._backbone.overrides.update(self.cfg["yolo_override"])
+        self._backbone.overrides.update({"device": self._backbone.device})
         self.yolo_detection:DetectionModel = self._backbone.model
         self.nc:int = self.yolo_detection.yaml['nc']
 

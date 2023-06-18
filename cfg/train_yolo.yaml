@@ -31,4 +31,4 @@ bboxes: datasets/models/bboxes.json
 grasp_model_dict: datasets/models/grasp_model_dict.json
 landmarks: datasets/models/landmarks.json
 default_K: datasets/models/default_K.txt
-calc_intermediate_loss: False
+calc_intermediate_loss: True

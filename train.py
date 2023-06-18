@@ -7,6 +7,7 @@ import platform
 
 from launcher.Trainer import Trainer
 from launcher.OLDT_Dataset import OLDT_Dataset, transpose_data, collate_fn
+from launcher.utils import get_gpu_with_lowest_memory_usage
 from models.loss import LandmarkLoss
 from models.OLDT import OLDT
 
@@ -68,6 +69,11 @@ if __name__ == '__main__':
     #     print()
     # else:
     #     pass
+
+    min_memory_idx = get_gpu_with_lowest_memory_usage()
+    device = torch.device(f"cuda:{min_memory_idx}")
+    torch.cuda.set_device(device)
+    print(f"default GPU idx: {torch.cuda.current_device()}")
 
     # 示例用法
     data_folder = './datasets/morrison'
