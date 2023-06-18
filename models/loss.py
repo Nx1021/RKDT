@@ -146,12 +146,12 @@ class LandmarkLoss(nn.Module):
         out_coord_matched = out_coord[batch_ind, pred_ind].reshape(-1, ldmk_num, 2)
         tgt_coord_matched = tgt_coord[batch_ind, target_ind].reshape(-1, ldmk_num, 2)
         dist_loss  = torch.mean(torch.norm(out_coord_matched - tgt_coord_matched, dim = -1)) * match_num        
-        # 总体旋转损失，由于在初始训练时可能很大，因此它将被约束在一定范围内
-        rotation_angles = torch.abs(find_best_rotation(out_coord_matched, tgt_coord_matched))
-        rotation_angles = torch.clip(rotation_angles, 0, torch.pi/12)
+        # # 总体旋转损失，由于在初始训练时可能很大，因此它将被约束在一定范围内
+        # rotation_angles = torch.abs(find_best_rotation(out_coord_matched, tgt_coord_matched))
+        # rotation_angles = torch.clip(rotation_angles, 0, torch.pi/12)
 
 
-        return class_loss + dist_loss * 5 + obj_loss + rotation_angles * 5
+        return class_loss + dist_loss * 5 + obj_loss # + rotation_angles * 5
 
     def match_landmarks(self, out_probs:Tensor, out_coord:Tensor, tgt_coord:Tensor):
         '''
@@ -243,10 +243,10 @@ class LandmarkLoss(nn.Module):
             weights_sum = []
             intermediate_loss_weights = torch.linspace(0.5, 1, output_num) if output_num > 1 else torch.Tensor([1.0])
             intermediate_loss_weights = torch.square(intermediate_loss_weights).to(matched_pred_landmarks_probs.device)
-            selected = list(range(output_num))
+            selected_output_idx = list(range(output_num))
             if not self.calc_intermediate_loss:
-                selected = [selected[-1]]
-            for i in range(output_num):
+                selected_output_idx = [selected_output_idx[-1]]
+            for i in selected_output_idx:
                 out_probs = matched_pred_landmarks_probs[i]
                 out_coord = matched_pred_landmarks_n[i]
                 tgt_coord = target_landmarks_n[i]
