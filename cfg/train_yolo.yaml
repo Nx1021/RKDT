@@ -1,0 +1,33 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# Default training settings and hyperparameters for medium-augmentation COCO training
+### override
+yolo_override:
+  task: detect  # YOLO task, i.e. detect, segment, classify, pose
+  mode: predict  # YOLO mode, i.e. train, val, predict, export, track, benchmark
+
+  # Train settings -------------------------------------------------------------------------------------------------------
+  model: weights/best.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
+  data: ./datasets/morrison.yaml # path to data file, i.e. coco128.yaml
+  verbose: False  # whether to print verbose output
+
+### landmark detect settings
+max_token_num: 784
+pool_size:    [24, 24]
+landmark_num: 24
+transformer_tgt_num: 96
+pcd_models: 
+  0: datasets/models/bar_clamp.ply
+  1: datasets/models/gearbox.ply
+  2: datasets/models/nozzle.ply
+  3: datasets/models/part1.ply
+  4: datasets/models/part3.ply
+  5: datasets/models/pawn.ply
+  6: datasets/models/turbine_housing.ply
+  7: datasets/models/vase.ply
+  8: datasets/models/ape.ply
+models_info: datasets/models/models_info.json
+bboxes: datasets/models/bboxes.json
+grasp_model_dict: datasets/models/grasp_model_dict.json
+landmarks: datasets/models/landmarks.json
+default_K: datasets/models/default_K.txt
+calc_intermediate_loss: False
