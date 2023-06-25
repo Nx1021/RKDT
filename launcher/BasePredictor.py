@@ -16,15 +16,18 @@ def get_attr_by_class(obj, class_:type):
 
 class _process_timer():
     def __init__(self, batch_size:int) -> None:
-        self.time = 0
-        self.count = 0
-        self.done = False
+        self.reset()
         self.batch_size = batch_size
 
     def update(self, time):
         self.time += time
         self.count += self.batch_size
         self.done = True
+
+    def reset(self):
+        self.time = 0
+        self.count = 0
+        self.done = False   
 
     def print(self, intent=4):
         if self.count == 0:
@@ -62,6 +65,11 @@ class FrameTimer():
         for x in process_timers.values():
             x.done = False
 
+    def reset(self):
+        process_timers:dict[str, _process_timer] = get_attr_by_class(self, _process_timer)
+        for x in process_timers.values():
+            x.reset()
+
     def set_batch_size(self, batch_size):
         process_timers:dict[str, _process_timer] = get_attr_by_class(self, _process_timer)
         for x in process_timers.values():
@@ -87,6 +95,7 @@ class FrameTimer():
             print("{}".format(name))
             # 调用每个_process_timer对象的print函数
             obj.print(intent=4)
+        print()
 
 class BasePredictor:
     def __init__(self, model, batch_size=32):

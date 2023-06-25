@@ -19,6 +19,9 @@ from post_processer.error_calculate import ErrorCalculator, ErrorResult, match_r
 from post_processer.pnpsolver import PnPSolver
 from launcher.BasePredictor import BasePredictor
 from launcher.OLDT_Dataset import OLDT_Dataset, collate_fn
+from launcher.utils import Launcher, BaseLogger
+
+from utils.yaml import yaml_load
 
 
 
@@ -161,23 +164,34 @@ class IntermediateManager:
 
         return self._load_object(class_name, index, load_pkl_func)
 
-class OLDTPredictor(BasePredictor):
-    def __init__(self, model, cfg, batch_size=32, if_postprocess = True, if_calc_error = False, intermediate_manager:IntermediateManager = None):
-        super().__init__(model, batch_size)
+class OLDTPredictor(BasePredictor, Launcher):
+    def __init__(self, model, cfg, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = None):
+        Launcher.__init__(self, model, batch_size, log_remark)
+        BasePredictor.__init__(self, model, batch_size)
         self.pnpsolver = PnPSolver(cfg)
-        self.postprocesser = PostProcesser(self.pnpsolver)
+        out_bbox_threshold = yaml_load(cfg)["out_bbox_threshold"]
+        self.postprocesser = PostProcesser(self.pnpsolver, out_bbox_threshold)
         self.error_calculator = ErrorCalculator(self.pnpsolver, model.nc)
 
         self.if_postprocess = if_postprocess or if_calc_error # 如果要计算损失，必须先执行后处理
         self.if_calc_error = if_calc_error
-        self.intermediate_manager = intermediate_manager
+
+        intermediate_root = os.path.join(self.log_root, intermediate_from)
+        if intermediate_from is not None and os.path.exists(os.path.join(intermediate_root, "intermediate_output")):
+            pass
+        else:
+            intermediate_from = self.log_dir
+        self.intermediate_manager: IntermediateManager = IntermediateManager(intermediate_root, "intermediate_output")
         self.gt_dir = "gt"
         self.predictions_dir = "list_" + LandmarkDetectionResult.__name__
         self.processed_dir = ImagePosture.__name__
         
-        self.frametimer.set_batch_size(batch_size)
+        self.frametimer.set_batch_size(self.batch_size)
 
-        self.postprocess_mode = "e" # or 'v'
+        self.postprocess_mode = "v" # or 'v'
+
+        self.logger = BaseLogger(self.log_dir)
+        self.logger.log(cfg)
 
     @property
     def save_imtermediate(self):
@@ -228,7 +242,7 @@ class OLDTPredictor(BasePredictor):
             matched = match_roi(gt_imgpstr, pred_imgpstr)
             image_error_result = []
             for m in matched:
-                one_error_result = self.error_calculator.calc_one_error(m[0], m[1], m[2])
+                one_error_result = self.error_calculator.calc_one_error(m[0], m[1], m[2], ErrorCalculator.ALL)
                 image_error_result.append(one_error_result)
             error_result.append(image_error_result)
         return error_result
@@ -266,9 +280,9 @@ class OLDTPredictor(BasePredictor):
                 # error
                 if self.if_calc_error:
                     self.calc_error(batch, processed)
-        self.frametimer.print()
-        self.error_calculator.print_result()
-        print("done")
+        with self.logger.capture_output("process record"):
+            self.frametimer.print()
+            self.error_calculator.print_result()
 
     def plot_outlier(self, error_result:list[list[tuple[ErrorResult]]], 
                      gt_list:list[ImagePosture],
@@ -285,10 +299,15 @@ class OLDTPredictor(BasePredictor):
                 target_metrics = [list(filter(lambda y: y.type == metrics, x))[0] for x in er] #one type error for one image
             except IndexError:
                 continue
-            passed = any([x.passed for x in target_metrics])
+            passed = all([x.passed for x in target_metrics])
             if not passed and len(target_metrics) > 0:
-                compare_image_posture(gt, pred)
-                self.intermediate_manager._save_object("error_outlier", None, save_figure)
+                # compare_image_posture(gt, pred)
+                # text = ""
+                # for x in target_metrics:
+                #     text += str(x.error) + "\n"
+                # plt.text(0, 1, text, ha='left', va='top', transform=plt.gca().transAxes)
+                # self.intermediate_manager._save_object("error_outlier", None, save_figure)
+                self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
 
     def postprocess_from_intermediate(self, plot_outlier = False):
         predictions_generator:Generator[list[LandmarkDetectionResult]] = \
@@ -302,8 +321,10 @@ class OLDTPredictor(BasePredictor):
             error_result:list[list[tuple[ErrorResult]]] = self.calc_error(gt, processed)
             if plot_outlier:
                 self.plot_outlier(error_result, gt, processed)
-        self.frametimer.print()
-        self.error_calculator.print_result()
+        with self.logger.capture_output("process record"):
+            self.frametimer.print()
+            self.error_calculator.print_result()
+        print("done")
 
     def calc_error_from_imtermediate(self):
         pass
@@ -319,3 +340,7 @@ class OLDTPredictor(BasePredictor):
             inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
             predictions = self.inference(inputs)
             processed_predictions = self.postprocess(predictions)
+
+    def clear(self):
+        self.frametimer.reset()
+        self.error_calculator.clear()

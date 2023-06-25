@@ -1,5 +1,5 @@
 from models.results import LandmarkDetectionResult
-from ultralytics.yolo.utils import yaml_load
+from utils.yaml import yaml_load
 import torch
 import torch.nn as nn
 import numpy as np
@@ -11,32 +11,7 @@ from torchvision.transforms.functional import crop
 import matplotlib.pyplot as plt
 
 
-#     '''
-#     yolov8_large:
-#                       from  n    params  module                                       arguments
-#      0                  -1  1      1856  ultralytics.nn.modules.conv.Conv             [3, 64, 3, 2]
-#      1                  -1  1     73984  ultralytics.nn.modules.conv.Conv             [64, 128, 3, 2]
-#      2                  -1  3    279808  ultralytics.nn.modules.block.C2f             [128, 128, 3, True]
-#      3                  -1  1    295424  ultralytics.nn.modules.conv.Conv             [128, 256, 3, 2]
-#      4                  -1  6   2101248  ultralytics.nn.modules.block.C2f             [256, 256, 6, True]
-#      5                  -1  1   1180672  ultralytics.nn.modules.conv.Conv             [256, 512, 3, 2]
-#      6                  -1  6   8396800  ultralytics.nn.modules.block.C2f             [512, 512, 6, True]
-#      7                  -1  1   2360320  ultralytics.nn.modules.conv.Conv             [512, 512, 3, 2]
-#      8                  -1  3   4461568  ultralytics.nn.modules.block.C2f             [512, 512, 3, True]
-#      9                  -1  1    656896  ultralytics.nn.modules.block.SPPF            [512, 512, 5]
-#     10                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']
-#     11             [-1, 6]  1         0  ultralytics.nn.modules.conv.Concat           [1]
-#     12                  -1  3   4723712  ultralytics.nn.modules.block.C2f             [1024, 512, 3]
-#     13                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']
-#     14             [-1, 4]  1         0  ultralytics.nn.modules.conv.Concat           [1]
-#     15                  -1  3   1247744  ultralytics.nn.modules.block.C2f             [768, 256, 3]
-#     16                  -1  1    590336  ultralytics.nn.modules.conv.Conv             [256, 256, 3, 2]
-#     17            [-1, 12]  1         0  ultralytics.nn.modules.conv.Concat           [1]
-#     18                  -1  3   4592640  ultralytics.nn.modules.block.C2f             [768, 512, 3]
-#     19                  -1  1   2360320  ultralytics.nn.modules.conv.Conv             [512, 512, 3, 2]
-#     20             [-1, 9]  1         0  ultralytics.nn.modules.conv.Concat           [1]
-#     21                  -1  3   4723712  ultralytics.nn.modules.block.C2f             [1024, 512, 3]
-#     22        [15, 18, 21]  1   5644480  ultralytics.nn.modules.head.Detect           [80, [256, 512, 512]]
+
 
 # class PyramidROIAlign(nn.Module):
 #     def __init__(self, pool_shape):

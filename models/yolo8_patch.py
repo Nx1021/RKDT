@@ -8,6 +8,8 @@ import platform
 import torch
 
 from ultralytics.yolo.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, RANK, __version__
+from ultralytics.yolo.utils.checks import check_version
+TORCH_2_0 = check_version(torch.__version__, minimum='2.0')
 
 import ultralytics.yolo.engine.predictor as _predictor
 

@@ -2,7 +2,7 @@ import os
 import json
 import numpy as np
 import open3d as o3d
-from ultralytics.yolo.utils import yaml_load
+from utils.yaml import yaml_load
 
 
 class ModelManager:
@@ -17,6 +17,7 @@ class ModelManager:
             cls._instance.model_dirs = model_dirs
             cls._instance.model_pointcloud = {}
             cls._instance.model_bbox_3d = {}
+            cls._instance.model_symmetries = {} #"symmetries_continuous": "symmetries_discrete": 
             cls._instance.model_diameter = {}
             cls._instance.model_ldmk_3d = {}
             cls._instance.landmark_info_path = landmark_info_path
@@ -86,6 +87,7 @@ class ModelManager:
             try:
                 self.model_diameter:dict[int,float] = {} ### 模型直径
                 self.model_bbox_3d:dict[int,np.ndarray] = {} ### 模型包围盒
+                self.model_symmetries:dict[int, dict] = {}
                 with open(models_info_path, 'r') as MI:
                     info = json.load(MI)
                     for k,v in info.items():
@@ -108,6 +110,10 @@ class ModelManager:
                         z =np.array([-1, 1,-1, 1,-1, 1,-1, 1]) * max_z
                         vertex = np.vstack((x, y, z)).T
                         self.model_bbox_3d.update({k: vertex}) #[8, 3]
+                        # 对称属性
+                        for symm in ["symmetries_continuous", "symmetries_discrete"]:
+                            if symm in info[str(k)]:
+                                self.model_symmetries.update({k: info[str(k)][symm]})
             except:
                 print("Error: PnPSolver cannot set_models_info_path")
             self.models_info_path = models_info_path
@@ -137,11 +143,21 @@ class ModelManager:
         ldmk_3d = self.model_ldmk_3d[class_id].copy()
         return ldmk_3d
 
-    def get_model_pcd(self, class_id:int):
+    def get_model_pcd(self, class_id:int) -> np.ndarray:
         if class_id not in self.model_pointcloud:
             self.load_model(class_id)
         pcd = self.model_pointcloud[class_id].copy()
         return pcd
+    
+    def get_model_diameter(self, class_id:int):
+        diameter = self.model_diameter[class_id]
+        return diameter
+
+    def get_model_symmetries(self, class_id:int):
+        if class_id not in self.model_symmetries:
+            return None
+        else:
+            return self.model_symmetries[class_id].copy()
     
 def create_model_manager(cfg) -> ModelManager:
     cfg_paras = yaml_load(cfg)

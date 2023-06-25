@@ -6,7 +6,7 @@ import cv2
 from scipy.optimize import dual_annealing
 TEST_RPnP = False
 
-from ultralytics.yolo.utils import yaml_load
+from utils.yaml import yaml_load
 
 class PnPSolveMode(enumerate):
     SOLVEMODE_RPNP = 0

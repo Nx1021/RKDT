@@ -122,8 +122,8 @@ class ObjPosture():
             for i, (x, y) in enumerate(self.landmarks):
                 if x == 0 and y == 0:
                     continue
-                plt.scatter(x, y, color=color)
-                plt.text(x + 1, y + 1, str(i), color=color, fontsize=8, va='top')
+                plt.scatter(x, y, color=color, s = 4)
+                plt.text(x + 1, y + 1, str(i), color=color, fontsize=4, va='top')
 
         if self.bbox_n is not None:
             # 绘制边界框
@@ -139,8 +139,8 @@ class ObjPosture():
         if self.class_id is not None:
             # 注释物体类别标识
             x = x1
-            y = y1 - 10  # 文字注释位置在边界框上方
-            plt.text(x, y, str(self.class_id), color=color, fontsize=10, fontweight='bold')
+            y = y1 - 8  # 文字注释位置在边界框上方
+            plt.text(x, y, str(self.class_id), color=color, fontsize=8, fontweight='bold')
 
         plt.axis('scaled')
         plt.xlabel('X')

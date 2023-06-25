@@ -1,4 +1,4 @@
-# from ultralytics.yolo.utils import yaml_load
+# from utils.yaml import yaml_load
 # class Config():
 #     def __init__(self, yaml) -> None =
 #                 #Ultralytics YOLO 🚀, AGPL-3.0 license

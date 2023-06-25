@@ -31,7 +31,8 @@ class WeightLoader():
                                             keys))
         return keys
 
-    def load_weights_to_layar(self, pretrained_state_dict:OrderedDict[str, torch.Tensor], load_mode:int, exclude:list[str]=[], include:list[str]=[]):
+    def load_weights_to_layar(self, pretrained_state_dict:OrderedDict[str, torch.Tensor], 
+                              load_mode:int, exclude:list[str]=[], include:list[str]=[]):
         if load_mode == WeightLoader.STRICT:
             self.model.load_state_dict(pretrained_state_dict)
         else:
@@ -158,7 +159,8 @@ class WeightLoader():
     #     if hasattr(self.f, 'close'):
     #         self.f.close()
 
-def denormalize_bbox(bbox_n:Union[torch.Tensor, np.ndarray], img_size:Union[tuple, list, torch.Tensor]):
+def denormalize_bbox(bbox_n:Union[torch.Tensor, np.ndarray], 
+                     img_size:Union[tuple, list, torch.Tensor]):
     """
     将归一化的边界框坐标还原为像素单位。
 
@@ -210,3 +212,4 @@ def tensor_to_numpy(tensor: torch.Tensor) -> np.ndarray:
     else:
         tensor = tensor.detach()
     return tensor.numpy()
+

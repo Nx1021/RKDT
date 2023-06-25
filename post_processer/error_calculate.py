@@ -12,10 +12,12 @@ import torch
 import os
 import json
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import open3d as o3d
 from typing import Iterable, Union
 from models.utils import denormalize_bbox
+import cv2
 
 def is_close_to_integer(x, tolerance=1e-6):
     return np.isclose(x, np.round(x), atol=tolerance)
@@ -94,12 +96,13 @@ class ErrorCalculator():
         self.pnpsolver = pnpsolver
         self.model_manager = self.pnpsolver.model_manager
         # 读取内参(所有内参都一样)
-        self.result_record = np.zeros((4, class_num)) # 4行分别是总数、重投影、ADD、5cm5°
+        self.pass_record = np.zeros((4, class_num)) # 4行分别是总数、重投影、ADD、5cm5°
         self.error_record = np.zeros((4, class_num)) # 4行分别是总数、重投影error和、ADDerror和、5cm5°error和
         self.class_num = class_num
 
     def clear(self):
-        self.result_record[:] = 0
+        self.pass_record[:] = 0
+        self.error_record[:] = 0
 
     def get_metrics(self, type:int = 0):
         if type == ErrorCalculator.REPROJ:
@@ -111,11 +114,12 @@ class ErrorCalculator():
         else:
             raise ValueError(f"unexpected metrics type: {type}")
 
-    def record(self, metrics_type:int, class_id:int, rlt:bool, error:float):
-        self.result_record[0, class_id] += 1
+    def record(self, error_result:list[ErrorResult], class_id):
+        self.pass_record[0, class_id] += 1
         self.error_record[0, class_id] += 1
-        self.result_record[metrics_type, class_id] += rlt
-        self.error_record[metrics_type, class_id]  += error
+        for er in error_result:
+            self.pass_record[er.type, class_id] += er.passed
+            self.error_record[er.type, class_id]  += er.error
 
     def calc_one_error(self, class_id:int, 
                        pred_vectors:np.ndarray, gt_vectors:np.ndarray, 
@@ -131,27 +135,34 @@ class ErrorCalculator():
         elif isinstance(selected_metrics, int):
             selected_metrics = [selected_metrics]
 
-        error_result = []
+        error_result:list[ErrorResult] = []
         for metrics_type in selected_metrics:
             metrics = self.get_metrics(metrics_type)
             rlt, error = metrics(class_id, pred_vector_R, pred_vector_T, gt_vector_R, gt_vector_T)
-            self.record(metrics_type, class_id, rlt, error)
             error_result.append(ErrorResult(metrics_type, rlt, error))
-        
+
+        self.record(error_result, class_id)
         return tuple(error_result)
 
     def print_result(self, print_rate=False):
-        for v in self.result_record:
-            if print_rate:
-                print(("{:<8.2f}"*self.class_num).format(*(100*v/self.result_record[0,:])))
-            else:
-                print(("{:<8}"*self.class_num).format(*v))
-        print(("{:<8}"*self.class_num).format(*self.error_record[0]))
-        for v in self.error_record[1:]:
-            if print_rate:
-                print(("{:<8.2f}"*self.class_num).format(*(v/self.error_record[0,:])))
-            else:
-                print(("{:<8.2f}"*self.class_num).format(*v))
+        col_names= [str(x) for x in range(self.class_num)]
+        row_names = ["total number", "reproj", "ADD(s)", "5cm5°"]
+
+        print("accuracy:")
+        if print_rate:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                data = self.pass_record / self.pass_record[0,:]
+        else:
+            data = self.pass_record.astype(np.int32)
+        df = pd.DataFrame(data, index=row_names, columns=col_names)
+        print(df)
+
+        print("error:")
+        with np.errstate(divide='ignore', invalid='ignore'):
+            data = self.error_record / self.error_record[0,:]
+        df = pd.DataFrame(data, index=row_names, columns=col_names)
+        print(df)
+        print()
 
     def reprojection_error(self, class_id, pred_vector_R, pred_vector_T, gt_vector_R, gt_vector_T):
         '''
@@ -181,12 +192,15 @@ class ErrorCalculator():
         from sklearn.neighbors import NearestNeighbors
         pred_m2c    = Posture(rvec = pred_vector_R, tvec = pred_vector_T).trans_mat #预测的变换矩阵
         gt_m2c      = Posture(rvec = gt_vector_R,   tvec = gt_vector_T).trans_mat #真值的变换矩阵
-        gt_pointcloud_OCS = self.get_model_pointcloud_OCS(class_id, True).astype(np.float32).T #物体坐标系下的点云
-        pred_pointcloud_OCS = np.dot(np.linalg.inv(pred_m2c), np.dot(gt_m2c, gt_pointcloud_OCS))
+        gt_pointcloud_OCS = self.model_manager.get_model_pcd(class_id).astype(np.float32) #物体坐标系下的点云
+        homo_gt_pointcloud_OCS = np.concatenate((gt_pointcloud_OCS.T, np.ones((1, gt_pointcloud_OCS.T.shape[1]))))
+        pred_pointcloud_OCS = np.dot(np.linalg.inv(pred_m2c), np.dot(gt_m2c, homo_gt_pointcloud_OCS)).T[:, :3]
+        diameter = self.model_manager.get_model_diameter(class_id) #直径
 
-        diameter = self.pnpsolver.model_diameter[class_id] #直径
-        if class_id != 3:
-            delta = pred_pointcloud_OCS.T[:,:3] - gt_pointcloud_OCS.T[:,:3]
+        symmetries = self.model_manager.get_model_symmetries(class_id)
+        if not symmetries:
+            # ADD
+            delta = pred_pointcloud_OCS - gt_pointcloud_OCS
             error = np.mean(np.linalg.norm(delta, axis= -1))
             if error < diameter * 0.1:
                 return 1, error
@@ -203,16 +217,33 @@ class ErrorCalculator():
             return 0, 0
             
     def _5cm5d_error(self, class_id, pred_vector_R, pred_vector_T, gt_vector_R, gt_vector_T):
-        # 距离，直接计算 vector_T 的差值
-        delta_T = pred_vector_T - gt_vector_T
-        distance = np.linalg.norm(delta_T)
-        # 角度，转换为
-        delta_angle = (pred_vector_R - gt_vector_R) * 180 / np.pi
-        angle = np.linalg.norm(delta_angle)
-        
-        if distance < 50 and np.all(np.abs(delta_angle) < 5):
-            rlt = 1
-        else:
-            rlt = 0
+        """
+        计算6D姿态估计的5cm5°误差。
 
-        return rlt, (distance, angle)
+        Parameters:
+            pred_vector_R (numpy.ndarray): 预测的旋转向量，形状为 (3,)。
+            pred_vector_T (numpy.ndarray): 预测的平移向量，形状为 (3,)。
+            gt_vector_R (numpy.ndarray): 真实的旋转向量，形状为 (3,)。
+            gt_vector_T (numpy.ndarray): 真实的平移向量，形状为 (3,)
+
+        Returns:
+            error (bool): 是否满足5cm5°准则，满足为True，不满足为False。
+        """
+        # 将旋转向量转换为旋转矩阵
+        pred_matrix_R = cv2.Rodrigues(pred_vector_R)[0]
+        gt_matrix_R = cv2.Rodrigues(gt_vector_R)[0]
+
+        # 计算平移向量之间的欧氏距离
+        translation_distance = np.linalg.norm(pred_vector_T - gt_vector_T)
+
+        # 计算旋转矩阵之间的角度差
+        rotation_angle = np.arccos(np.clip((np.trace(np.dot(pred_matrix_R.T, gt_matrix_R)) - 1) / 2.0, -1, 1))
+        rotation_angle_deg = np.degrees(rotation_angle)
+
+        # 判断是否满足5cm5°准则
+        if translation_distance <= 0.05 and rotation_angle_deg <= 5.0:
+            rlt = True
+        else:
+            rlt = False
+
+        return rlt, rotation_angle_deg

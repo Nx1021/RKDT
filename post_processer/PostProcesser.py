@@ -18,7 +18,7 @@ class PostProcesser():
     所有的变量名，不带_batch的表示是单个关键点对应的数据，例如坐标、热图
     带有_batch的是一整组，形状为 [N, ..., kpnum, ...]
     '''
-    def __init__(self, pnpsolver:PnPSolver, out_bbox_threshold=1/3):
+    def __init__(self, pnpsolver:PnPSolver, out_bbox_threshold=0.2):
         '''
         parameters
         -----
@@ -33,7 +33,9 @@ class PostProcesser():
         '''
         self.pnpsolver = pnpsolver
         self.model_manager = self.pnpsolver.model_manager
-        self.ldmk_out_threshold = out_bbox_threshold
+        self.ldmk_out_upper = out_bbox_threshold
+
+        self.desktop_plane:np.ndarray = None
 
     def parse_exclusively(self, rlt:LandmarkDetectionResult):
         '''
@@ -82,7 +84,42 @@ class PostProcesser():
                     (ldmks[..., 0] <= bbox[2]) &
                     (ldmks[..., 1] >= bbox[1]) &
                     (ldmks[..., 1] <= bbox[3]))
-        return np.sum(in_bbox) < int((1 - self.ldmk_out_threshold) * ldmks.shape[0])
+        return np.sum(in_bbox) < int((1 - self.ldmk_out_upper) * ldmks.shape[0])
+
+    def desktop_assumption(self, trans_vecs, points_3d):
+        '''
+        桌面假设，假设物体的最低点处于桌面上，重新计算物体的trans_vecs
+        '''
+        if self.desktop_plane is None:
+            return trans_vecs
+
+        orig_posture = Posture(rvec=trans_vecs[0], tvec=trans_vecs[1])
+
+        # 获取桌面法向量和原点到桌面的距离
+        normal_vector = self.desktop_plane[:3]
+        distance = self.desktop_plane[3]
+
+        # 计算物体在相机坐标系下的坐标点云
+        points_camera = orig_posture * points_3d
+
+        # 计算物体最低点的索引
+        lowest_point_index = np.argmax(points_camera[:, 2])
+
+        # 获取物体最低点在相机坐标系下的坐标
+        lowest_point_camera = points_camera[lowest_point_index]
+
+        # 计算物体最低点到桌面的距离
+        distance_to_desktop = np.dot(lowest_point_camera, normal_vector) - distance
+
+        # 计算平移向量
+        move_vec = np.mean(points_3d, axis=0)# 平移方向
+        normed_move_vec = move_vec / np.linalg.norm(move_vec)
+        translation_vector = -distance_to_desktop * normed_move_vec / normed_move_vec[2]
+
+        # 更新平移向量
+        updated_tvec = trans_vecs[1] + translation_vector
+
+        return (trans_vecs[0], updated_tvec)
 
     def process(self, image_list:list[np.ndarray], ldmk_detection:list[list[LandmarkDetectionResult]], mode = "e"):
         image_posture_list = []
@@ -104,6 +141,7 @@ class PostProcesser():
                     points_3d = self.model_manager.get_ldmk_3d(rlt.class_id)
                     rvec, tvec = self.pnpsolver.solvepnp(ldmks, points_3d, mask)
                     trans_vecs = (rvec, tvec)
+                    trans_vecs = self.desktop_assumption(trans_vecs, points_3d)
                 image_posture.obj_list.append(ObjPosture(ldmks, 
                                                 rlt.bbox_n, 
                                                 rlt.class_id, 

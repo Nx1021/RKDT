@@ -21,22 +21,37 @@ if __name__ == '__main__':
     ###
     train_dataset = OLDT_Dataset(data_folder, "train")
     val_dataset = OLDT_Dataset(data_folder, "val")
-    model = OLDT(yolo_weight_path, cfg, [0])  # 替换为你自己的模型
-    model.load_branch_weights(0, "./weights/20230614142113branch00.pt")
+    load_brach_i = 0
+    load_from = "./weights/20230620122636branch00_variable_length_with_rotateloss.pt"
+    model = OLDT(yolo_weight_path, cfg, [load_brach_i])  # 替换为你自己的模型    
+    model.load_branch_weights(load_brach_i, load_from)
 
     if sys == "Windows":
         batch_size = 4
         # model = torch.nn.DataParallel(model)
     elif sys == "Linux":
-        batch_size = 64 # * torch.cuda.device_count()
+        batch_size = 32 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
-    # intermediate_manager = IntermediateManager("./intermediate_output", "voting")
-    # predctor = OLDTPredictor(model, cfg, batch_size, if_postprocess=True, if_calc_error=True, intermediate_manager = intermediate_manager)
-    # predctor.postprocess_mode = 'e'
-    # # predctor.predict_from_dataset(val_dataset)
-    # predctor.postprocess_from_intermediate(plot_outlier=True)
 
-    intermediate_manager = IntermediateManager("./intermediate_output")
-    predctor = OLDTPredictor(model, cfg, batch_size, if_postprocess=True, if_calc_error=True, intermediate_manager = None)
-    predctor.postprocess_mode = 'v'
-    predctor.predict_from_dataset(val_dataset)
+    remark = "variable_length_with_rotateloss_test"
+    intermediate_from = "20230625112557Windows_variable_length_with_rotateloss"
+   
+    if intermediate_from:
+        predctor = OLDTPredictor(model, cfg, remark, batch_size, if_postprocess=True, if_calc_error=True, intermediate_from = intermediate_from)
+        predctor.postprocess_from_intermediate(plot_outlier=True)
+    else:
+        predctor = OLDTPredictor(model, cfg, batch_size, if_postprocess=False, if_calc_error=False, intermediate_manager = intermediate_from)
+        predctor.predict_from_dataset(val_dataset)
+    predctor.logger.log({
+        "System": sys,
+        "data_folder": data_folder,
+        "yolo_weight_path": yolo_weight_path,
+        "cfg": cfg,
+        "load_from": {load_brach_i: load_from},
+        "remark": remark 
+    }) 
+
+    # intermediate_manager = IntermediateManager("./logs/intermediate_output")
+    # predctor = OLDTPredictor(model, cfg, batch_size, if_postprocess=False, if_calc_error=False, intermediate_manager = intermediate_manager)
+    # predctor.postprocess_mode = 'v'
+    # predctor.predict_from_dataset(val_dataset)

@@ -15,7 +15,16 @@ max_token_num: 784
 pool_size:    [24, 24]
 use_variable_tokennum: True
 landmark_num: 24
-transformer_tgt_num: 96
+decoder_num_queries: 96
+calc_intermediate: False
+
+### loss
+class_loss_w:     1.0
+dist_loss_w:      5.0
+obj_loss_w:       1.0
+rotation_loss_w : 0.0
+
+### post progress
 pcd_models: 
   0: datasets/models/bar_clamp.ply
   1: datasets/models/gearbox.ply
@@ -31,4 +40,4 @@ bboxes: datasets/models/bboxes.json
 grasp_model_dict: datasets/models/grasp_model_dict.json
 landmarks: datasets/models/landmarks.json
 default_K: datasets/models/default_K.txt
-calc_intermediate_loss: True
+out_bbox_threshold: 1.0

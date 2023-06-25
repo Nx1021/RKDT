@@ -24,7 +24,7 @@ torch.set_default_dtype(torch.float32)
 # get_user_config_dir()
 def clear_log():
     import os, shutil
-    log_dir = "./logs"
+    log_dir = "./logs/Trainer_logs"
     weights_dir = "./weights"
 
     weights_list = os.listdir(weights_dir) 
@@ -51,7 +51,8 @@ def clear_log():
 if __name__ == '__main__':
     sys = platform.system()
     print("system:", sys)
-    clear_log()
+    if sys == "Windows":
+        clear_log()
 
     # if sys == "Windows":
     #     print("OS is Windows!!!")
@@ -70,10 +71,6 @@ if __name__ == '__main__':
     # else:
     #     pass
 
-    min_memory_idx = get_gpu_with_lowest_memory_usage()
-    device = torch.device(f"cuda:{min_memory_idx}")
-    torch.cuda.set_device(device)
-    print(f"default GPU idx: {torch.cuda.current_device()}")
 
     # 示例用法
     data_folder = './datasets/morrison'
@@ -84,9 +81,12 @@ if __name__ == '__main__':
     val_dataset = OLDT_Dataset(data_folder, "val")
     loss = LandmarkLoss(cfg)
     model = OLDT(yolo_weight_path, cfg, [0])  # 替换为你自己的模型
-    model.load_branch_weights(0, "./weights/20230616124159branch00.pt")
+    load_brach_i = 0
+    load_from = ""
+    model.load_branch_weights(load_brach_i, load_from)
     num_epochs = 200
-    learning_rate = 0.5 * 1e-4
+    warm_up = int(num_epochs * 0.1)
+    learning_rate = 1.0 * 1e-5
 
     if sys == "Windows":
         batch_size = 2
@@ -94,5 +94,20 @@ if __name__ == '__main__':
     elif sys == "Linux":
         batch_size = 16 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
-    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size, num_epochs, learning_rate, 20.0, distribute=False)
+    else:
+        raise SystemError
+    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size, num_epochs, learning_rate, warm_up, distribute=False)
+    trainer.logger.log({
+        "System": sys,
+        "data_folder": data_folder,
+        "yolo_weight_path": yolo_weight_path,
+        "cfg": cfg,
+        "num_epochs": num_epochs,
+        "warm_up": warm_up,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size, 
+        "load_from": {load_brach_i: load_from},
+        "remark": ""                      
+                              })
+    trainer.logger.log(cfg)
     trainer.train()

@@ -17,6 +17,8 @@ from torch import nn, Tensor
 import numpy as np
 import matplotlib.pyplot as plt
 
+from utils.yaml import yaml_load
+
 class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
@@ -350,7 +352,7 @@ class PositionEmbeddingSine(nn.Module):
 
 class LandmarkBranch(nn.Module):
     """ This is the LandmarkBranch module that performs object detection """
-    def __init__(self, num_queries, aux_loss=False):
+    def __init__(self, cfg, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -361,16 +363,19 @@ class LandmarkBranch(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        num_classes = 24
-        self.num_queries = num_queries
-        self.transformer = Transformer(256, activation="gelu", return_intermediate_dec=True) ###TODO###
+        self.cfg = yaml_load(cfg)
+        num_classes = self.cfg["landmark_num"]
+        self.num_queries = self.cfg["decoder_num_queries"]
+        return_intermediate_dec = self.cfg["calc_intermediate"]
+        self.transformer = Transformer(256, activation="gelu", 
+                                       return_intermediate_dec=return_intermediate_dec) ###TODO###
         hidden_dim = self.transformer.d_model
         
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1) 
         self.pos_embed = MLP(hidden_dim, hidden_dim, 2, 2)
 
         self.position_embedding = PositionEmbeddingSine(int(self.transformer.d_model/2), 24*24) ###TODO###
-        self.query_embed = nn.Embedding(num_queries, hidden_dim).to("cuda")
+        self.query_embed = nn.Embedding(self.num_queries, hidden_dim).to("cuda")
         self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1, device="cuda") ###TODO###
         self.aux_loss = aux_loss
 
