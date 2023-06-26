@@ -13,13 +13,13 @@ yolo_override:
 ### landmark detect settings
 max_token_num: 784
 pool_size:    [24, 24]
-use_variable_tokennum: True
+use_variable_tokennum: False
 landmark_num: 24
 decoder_num_queries: 96
 calc_intermediate: False
 
 ### loss
-class_loss_w:     1.0
+class_loss_w:     5.0
 dist_loss_w:      5.0
 obj_loss_w:       1.0
 rotation_loss_w : 0.0

@@ -82,11 +82,12 @@ if __name__ == '__main__':
     loss = LandmarkLoss(cfg)
     model = OLDT(yolo_weight_path, cfg, [0])  # 替换为你自己的模型
     load_brach_i = 0
+    # load_from = "./weights/20230625080939branch00_cpy.pt"
     load_from = ""
     model.load_branch_weights(load_brach_i, load_from)
     num_epochs = 200
-    warm_up = int(num_epochs * 0.1)
-    learning_rate = 1.0 * 1e-5
+    warm_up = int(num_epochs * 0.2)
+    learning_rate = 1.0 * 1e-4
 
     if sys == "Windows":
         batch_size = 2

@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 from typing import Union
 
-def calculate_scores(pk, points):
+def calculate_scores(pk, points, alpha = 0.15, beta = 0.4, eps = 1e-4):
     '''
     brief
     -----
@@ -28,9 +28,9 @@ def calculate_scores(pk, points):
     ----
     scores: [pred_num, gt_num+1]
     '''
-    alpha = 0.15
-    beta = 0.4
-    eps = 1e-4
+    alpha   = alpha
+    beta    = beta 
+    eps     = eps  
 
     distances = torch.cdist(pk, points)  # 计算每个点与每个 pk 之间的欧几里得距离
     bg_distances = torch.clamp( -distances.min(dim=-1)[0] + alpha, eps, alpha)
@@ -118,7 +118,7 @@ class LossItemGroup():
         dict_ = {}
         for item in self.list:
             dict_[item.name] = torch.sum(item.loss).item()
-        dict_["DecoderLoss"] = torch.sum(self.sum()).item()
+        dict_["Last Decoder Loss"] = torch.sum(self.sum()).item()
         return dict_
 
 class LandmarkLossRecorder():
@@ -151,7 +151,6 @@ class LandmarkLossRecorder():
         self.others_sum.clear()
         self.detect_num = 0
 
-    @property
     def mean(self) -> Tensor:
         return self.__get_mean(self.loss_sum)
 
@@ -168,14 +167,14 @@ class LandmarkLossRecorder():
         dict_:dict[str, float] = {}
         for key, sum_value in self.others_sum.items():
             dict_[self.name + ' ' + key] = self.__get_mean(sum_value)
-        dict_[self.name + ' ' + "Loss"] = self.mean.item()
+        dict_[self.name + ' ' + "Loss"] = self.mean().item()
 
         return dict_
 
     def merge(self):
         buffer = self.buffer
 
-        self._add_loss(buffer.loss_sum)
+        self._add_loss(buffer.loss_sum.detach())
         self.detect_num += buffer.detect_num
         for key, value in buffer.others_sum.items():
             self.others_sum.setdefault(key, 0.0)
@@ -261,11 +260,11 @@ class LandmarkLoss(nn.Module):
         class_loss = torch.mean(class_loss, (-1, -2)) #[match_num]
         # 正负样本损失，只考虑正样本判断的损失
         target_obj = torch.stack([torch.sum(target_probs[...,:-1], dim = -1), target_probs[..., -1]], dim=-1) # [match_num, num_queries, 2] 
-        target_obj = torch.argmax(target_obj, dim=-1) # [match_num, num_queries]
+        # target_obj = torch.argmax(target_obj, dim=-1) # [match_num, num_queries]
         obj_weight = Tensor([1.0, 1.0]).to(target_obj.device).detach() # 正负样本均衡 [match_num]
         pred_obj = torch.stack([torch.sum(out_probs[...,:-1], dim = -1), out_probs[..., -1]], dim=-1)
-        obj_loss = F.cross_entropy(pred_obj.transpose(-1, 1), target_obj, weight = obj_weight, reduction="none") # [match_num, num_queries] TODO: 正负样本均衡
-        obj_loss = torch.mean(obj_loss, -1) #[match_num]
+        obj_loss = F.binary_cross_entropy(pred_obj, target_obj, weight = obj_weight, reduction="none") # [match_num, num_queries] TODO: 正负样本均衡
+        obj_loss = torch.mean(obj_loss, (-1, -2)) #[match_num]
         ### 形位损失
         out_coord_matched = out_coord[batch_ind, pred_ind].reshape(-1, ldmk_num, 2)
         tgt_coord_matched = tgt_coord[batch_ind, target_ind].reshape(-1, ldmk_num, 2)       
@@ -278,10 +277,14 @@ class LandmarkLoss(nn.Module):
         # 距离损失
         dist_loss  = torch.mean(torch.norm(out_coord_matched - tgt_coord_matched, dim = -1), dim=-1)
         # 总体旋转损失，由于在初始训练时可能很大，因此它将被约束在一定范围内
-        rotation_loss = torch.abs(find_best_rotation(out_coord_matched, tgt_coord_matched))
-        rotation_loss = torch.clip(rotation_loss, 0, torch.pi/12)
+        # rotation_loss = torch.abs(find_best_rotation(out_coord_matched, tgt_coord_matched))
+        # rotation_loss = torch.clip(rotation_loss, 0, torch.pi/12)
 
-        group = LossItemGroup(class_loss, dist_loss, obj_loss, rotation_loss)
+        # obj_loss = torch.Tensor([0.0]).to(class_loss.device)
+        rotation_loss = torch.zeros(class_loss.shape).to(class_loss.device)
+
+        # group = LossItemGroup(class_loss, dist_loss, obj_loss, rotation_loss)
+        group = class_loss + dist_loss + obj_loss
         return group
 
     def match_landmarks(self, out_probs:Tensor, out_coord:Tensor, tgt_coord:Tensor):
@@ -320,6 +323,7 @@ class LandmarkLoss(nn.Module):
         '''
         BN = len(pred_results_list)
         group_matched_num = 0
+        loss = []
         for bn in range(BN):
             rlts = pred_results_list[bn]
             if len(rlts) == 0:
@@ -328,7 +332,7 @@ class LandmarkLoss(nn.Module):
             # with torch.no_grad():
             row_ind, col_ind = self.match_roi(gt_bboxes_n_list[bn],  #[num_roi_gt, 4]
                                             rlts) 
-            group_matched_num += len(row_ind)
+            group_matched_num += len(row_ind) 
             if len(row_ind) == 0:
                 continue # 未能找到匹配的roi
 
@@ -349,13 +353,18 @@ class LandmarkLoss(nn.Module):
                 tgt_coord = target_landmarks_n[i]
                 weight = intermediate_loss_weights[i]
                 indices = self.match_landmarks(out_probs, out_coord, tgt_coord)
-                loss_group:LossItemGroup = self.calc_loss(indices, out_probs, out_coord, tgt_coord, gt_bboxes_n_list[bn][col_ind])
-                loss_group.set_weight(weight)
-                intermediate_loss.append(loss_group)
-            # 计算总损失、末位decoder损失、末尾各部分损失
-            loss:Tensor = LossItemGroup.mean(intermediate_loss).sum()
-            loss_recoder.record(loss, intermediate_loss[-1])
-        loss = torch.mean(loss_recoder.buffer.mean)
+                # loss_group:LossItemGroup = self.calc_loss(indices, out_probs, out_coord, tgt_coord, gt_bboxes_n_list[bn][col_ind])
+                # loss_group.set_weight(weight)
+                # intermediate_loss.append(loss_group)
+                loss_group:Tensor = self.calc_loss(indices, out_probs, out_coord, tgt_coord, gt_bboxes_n_list[bn][col_ind])
+                loss.append(torch.mean(loss_group))
+        #     # 计算总损失、末位decoder损失、末尾各部分损失
+        #     loss:Tensor = LossItemGroup.mean(intermediate_loss).sum()
+        #     loss_recoder.record(loss, intermediate_loss[-1])
+        # loss = torch.mean(loss_recoder.buffer.mean())
+        loss_recoder.buffer.detect_num = group_matched_num
+        loss = torch.mean(torch.stack(loss))
+        loss_recoder.buffer.loss_sum = loss * group_matched_num
         loss_recoder.merge()
         return loss
 

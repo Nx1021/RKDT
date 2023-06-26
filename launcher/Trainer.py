@@ -156,7 +156,7 @@ class Trainer(Launcher):
                 self.cur_step += 1
 
                 # 更新进度条信息
-                progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.mean.item()), "lr": self.optimizer.param_groups[0]["lr"]})
+                progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.mean().item()), "lr": self.optimizer.param_groups[0]["lr"]})
             if TESTFLOW:
                 break
             ldmk_loss_mngr.buffer.clear()
@@ -166,7 +166,7 @@ class Trainer(Launcher):
         for key, value in ldmk_loss_mngr.to_dict().items():
             self.logger.write_epoch(key, value, self.cur_epoch)
 
-        return ldmk_loss_mngr.mean
+        return ldmk_loss_mngr.mean()
 
     def val_once(self, dataloader):
         self.model.eval()
@@ -184,7 +184,7 @@ class Trainer(Launcher):
 
                 # 计算批次的损失
                 if ldmk_loss_mngr.buffer.detect_num > 0:
-                    progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.mean.item())})
+                    progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.mean().item())})
                 if TESTFLOW:
                     break
 
@@ -192,7 +192,7 @@ class Trainer(Launcher):
         for key, value in ldmk_loss_mngr.to_dict().items():
             self.logger.write_epoch(key, value, self.cur_epoch)
 
-        return ldmk_loss_mngr.mean
+        return ldmk_loss_mngr.mean()
 
     def train(self):
         print("start to train... time:{}".format(self.start_timestamp))
