@@ -165,7 +165,7 @@ class IntermediateManager:
         return self._load_object(class_name, index, load_pkl_func)
 
 class OLDTPredictor(BasePredictor, Launcher):
-    def __init__(self, model, cfg, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = None):
+    def __init__(self, model, cfg, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = ""):
         Launcher.__init__(self, model, batch_size, log_remark)
         BasePredictor.__init__(self, model, batch_size)
         self.pnpsolver = PnPSolver(cfg)
@@ -176,12 +176,13 @@ class OLDTPredictor(BasePredictor, Launcher):
         self.if_postprocess = if_postprocess or if_calc_error # 如果要计算损失，必须先执行后处理
         self.if_calc_error = if_calc_error
 
-        intermediate_root = os.path.join(self.log_root, intermediate_from)
-        if intermediate_from is not None and os.path.exists(os.path.join(intermediate_root, "intermediate_output")):
-            pass
+        if intermediate_from and os.path.exists(os.path.join(self.log_root, intermediate_from, "intermediate_output")):
+            intermediate_root = os.path.join(self.log_root, intermediate_from)
         else:
-            intermediate_from = self.log_dir
+            intermediate_root = os.path.join(self.log_dir)
         self.intermediate_manager: IntermediateManager = IntermediateManager(intermediate_root, "intermediate_output")
+        self.save_imtermediate = True
+
         self.gt_dir = "gt"
         self.predictions_dir = "list_" + LandmarkDetectionResult.__name__
         self.processed_dir = ImagePosture.__name__
@@ -192,10 +193,6 @@ class OLDTPredictor(BasePredictor, Launcher):
 
         self.logger = BaseLogger(self.log_dir)
         self.logger.log(cfg)
-
-    @property
-    def save_imtermediate(self):
-        return bool(self.intermediate_manager)
 
     def _preprocess(self, inputs):
         '''
@@ -252,8 +249,8 @@ class OLDTPredictor(BasePredictor, Launcher):
 
         # Enable GPU if available
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self.model.to(device)
-        self.model.eval()
+        self.model:OLDT = self.model.to(device)
+        self.model.set_mode("predict")
         
         with torch.no_grad():
             num_batches = len(data_loader)
@@ -333,7 +330,7 @@ class OLDTPredictor(BasePredictor, Launcher):
         # Enable GPU if available
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = self.model.to(device)
-        self.model.eval()
+        self.model.set_mode("predict")
 
         with torch.no_grad():
             preprocessed_image = self.preprocess(image)

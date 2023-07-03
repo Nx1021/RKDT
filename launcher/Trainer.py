@@ -25,10 +25,13 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import datetime
 import platform
+import sys
+
+import time
 
 from typing import Union
-sys = platform.system()
-if sys == "Windows":
+sys_name = platform.system()
+if sys_name == "Windows":
     TESTFLOW = False
 else:
     TESTFLOW = False
@@ -67,9 +70,10 @@ class Trainer(Launcher):
                  init_lr,
                  warmup_epoch,
                  distribute = False,
-                 test=False):
+                 test=False,
+                 start_epoch = 0):
         super().__init__(model, batch_size)
-        self.model = model
+        self.model:Union[OLDT, torch.nn.DataParallel] = model
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.num_epochs = num_epochs
@@ -85,7 +89,7 @@ class Trainer(Launcher):
             self.model = torch.nn.parallel.DistributedDataParallel(self.model)
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model.to(self.device)
+        self.model = self.model.to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=init_lr)  # 初始化优化器
         self.warmup_scheduler = LambdaLR(self.optimizer, lr_lambda=lambda step: min(step / self.warmup_steps, 1.0))
@@ -100,6 +104,16 @@ class Trainer(Launcher):
             self.logger = TrainLogger(self.log_dir)
 
         self.cur_epoch = 0
+        self.start_epoch = start_epoch
+
+        self.backward_time = 0.0
+        self.loss_time = 0.0
+
+        self.freeze_modules = [self.model.landmark_branches[0].pos_embed]
+
+    @property
+    def skip(self):
+        return self.cur_epoch < self.start_epoch
 
     @property
     def inner_model(self):
@@ -118,7 +132,7 @@ class Trainer(Launcher):
 
 
     def _to_device(self, tensor_list:list[torch.Tensor]):
-        return [torch.from_numpy(np.array(x)).to(self.device) for x in tensor_list]
+        return [torch.from_numpy(np.array(x)).to(self.device).to(torch.get_default_dtype()) for x in tensor_list]
 
     def check_has_target(self, gt_labels:list[torch.Tensor], active_class:list[int]):
         for lables in gt_labels:
@@ -127,72 +141,84 @@ class Trainer(Launcher):
                     return True
         return False
 
-    def train_once(self, dataloader):
-        self.model.train()
-        ldmk_loss_mngr = LandmarkLossRecorder("Train")
-        # ldmk_last_loss_mngr = LandmarkLossRecorder()
-
-        progress = tqdm(dataloader, desc='Training', leave=True)
+    def forward_one_epoch(self, dataloader:DataLoader, backward = False):
+        for module in self.freeze_modules:
+            module.train(False)
+        desc = "Train" if backward else "Val"
+        ldmk_loss_mngr = LandmarkLossRecorder(desc)
+        if self.skip:
+            dataloader = range(len(dataloader))
+        progress = tqdm(dataloader, desc=desc, leave=True)
         for image_posture in progress:
-            images, gt_keypoints, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
-            if not self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
-                continue
-            # 前向传播
-            detection_results = self.model(images)
-            # loss, last_loss, detect_num = self.criterion(gt_keypoints, gt_bboxes_n, detection_results)
-            loss:torch.Tensor = self.criterion(gt_keypoints, gt_bboxes_n, detection_results, ldmk_loss_mngr)
-            # 反向传播和优化
-            if ldmk_loss_mngr.buffer.detect_num > 0:
-                self.optimizer.zero_grad()
-                loss.backward()
+            if not self.skip:
+                images, gt_landmarks, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
+                if self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
+                    # 前向传播
+                    detection_results = self.model(images)
+                    loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results, ldmk_loss_mngr)
+                    # 反向传播和优化
+                    if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor):
+                        self.optimizer.zero_grad()
+                        loss.backward()
+            
+            if backward:
                 self.optimizer.step()
-
                 # 更新学习率
                 if self.cur_step < self.warmup_steps:
                     self.warmup_scheduler.step()
                 else:
                     self.lr_scheduler.step()
 
-                self.cur_step += 1
-
-                # 更新进度条信息
-                progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.mean().item()), "lr": self.optimizer.param_groups[0]["lr"]})
+            # 更新进度条信息
+            progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss())})
             if TESTFLOW:
                 break
             ldmk_loss_mngr.buffer.clear()
-
-        # 将train_loss写入TensorBoard日志文件
-        self.logger.write_epoch("Learning rate", self.optimizer.param_groups[0]["lr"], self.cur_epoch)
-        for key, value in ldmk_loss_mngr.to_dict().items():
-            self.logger.write_epoch(key, value, self.cur_epoch)
-
-        return ldmk_loss_mngr.mean()
-
-    def val_once(self, dataloader):
-        self.model.eval()
-        ldmk_loss_mngr = LandmarkLossRecorder("Val")
-
-        progress = tqdm(dataloader, desc='Validation', leave=True)
-        with torch.no_grad():
-            for image_posture in progress:
-                images, gt_keypoints, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
-                if not self.check_has_target(gt_labels, self.model.landmark_branch_classes):
-                    continue
-                # 前向传播
-                detection_results = self.model(images)
-                loss = self.criterion(gt_keypoints, gt_bboxes_n, detection_results, ldmk_loss_mngr)
-
-                # 计算批次的损失
-                if ldmk_loss_mngr.buffer.detect_num > 0:
-                    progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.mean().item())})
-                if TESTFLOW:
-                    break
+            
+            self.cur_step += 1
 
         # 将val_loss写入TensorBoard日志文件
+        if backward:
+            self.logger.write_epoch("Learning rate", self.optimizer.param_groups[0]["lr"], self.cur_epoch)
         for key, value in ldmk_loss_mngr.to_dict().items():
             self.logger.write_epoch(key, value, self.cur_epoch)
 
-        return ldmk_loss_mngr.mean()
+        return ldmk_loss_mngr.loss()
+
+    def train_one_epoch(self, dataloader):
+        self.model.set_mode("train")
+        return self.forward_one_epoch(dataloader, True)
+
+    def val_one_epoch(self, dataloader):
+        self.model.set_mode("val")
+        with torch.no_grad():
+            return self.forward_one_epoch(dataloader, False)
+        # ldmk_loss_mngr = LandmarkLossRecorder("Val")
+
+        # skip = self.cur_epoch < self.start_epoch
+
+        # if skip:
+        #     dataloader = range(len(dataloader))
+
+        # progress = tqdm(dataloader, desc='Training', leave=True)
+        # with torch.no_grad():
+        #     for image_posture in progress:
+        #         if skip:
+        #             pass
+        #         else:
+        #             loss = self.forward_once(image_posture, ldmk_loss_mngr)
+
+        #         # 计算批次的损失
+        #         if ldmk_loss_mngr.buffer.detect_num > 0:
+        #             progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss())})
+        #         if TESTFLOW:
+        #             break
+
+        # # 将val_loss写入TensorBoard日志文件
+        # for key, value in ldmk_loss_mngr.to_dict().items():
+        #     self.logger.write_epoch(key, value, self.cur_epoch)
+
+        # return ldmk_loss_mngr.loss()
 
     def train(self):
         print("start to train... time:{}".format(self.start_timestamp))
@@ -202,22 +228,22 @@ class Trainer(Launcher):
         val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
 
         for epoch in range(self.num_epochs):
-            self.cur_epoch = epoch + 1
+            self.cur_epoch += 1
             tqdm.write('\nEpoch {} start...'.format(self.cur_epoch))
             # 训练阶段
-            train_loss = self.train_once(train_dataloader)
+            train_loss = self.train_one_epoch(train_dataloader)
 
             # 验证阶段
-            val_loss = self.val_once(val_dataloader)
+            val_loss = self.val_one_epoch(val_dataloader)
 
             # 如果验证损失低于历史最小值，则保存模型权重
-            if val_loss < self.best_val_loss:
+            if val_loss < self.best_val_loss and not self.skip:
                 print("new best val_loss: {}, saving...".format(val_loss))
                 self.best_val_loss = val_loss
                 self.inner_model.save_branch_weights("./weights/", self.start_timestamp)
 
             # 更新进度条信息
-            tqdm.write('Epoch {} - Train Loss: {:.4f} - Val Loss: {:.4f}'.format(self.cur_epoch, train_loss.item(), val_loss.item()))
+            tqdm.write('Epoch {} - Train Loss: {:.4f} - Val Loss: {:.4f}'.format(self.cur_epoch, train_loss, val_loss))
 
         # 保存TensorBoard日志文件
         if not self.test:

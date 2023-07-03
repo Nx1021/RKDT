@@ -3,6 +3,49 @@ import json
 import numpy as np
 import open3d as o3d
 from utils.yaml import yaml_load
+from MyLib.posture import Posture
+
+class ModelInfo:
+    def __init__(self,
+                 mesh, 
+                 bbox_3d: np.ndarray = None, 
+                 symmetries:dict = None, 
+                 diameter:float = None,  
+                 ldmk_3d: np.ndarray = None,
+                 name = "",
+                 class_id = -1) -> None:
+        self.mesh = mesh
+        self.bbox_3d: np.ndarray    = bbox_3d
+        self.symmetries:dict        = symmetries #"symmetries_continuous": "symmetries_discrete": 
+        self.diameter: float        = diameter
+        self.ldmk_3d: np.ndarray    = ldmk_3d
+
+        self.name = name
+        self.class_id = class_id
+
+
+    @property
+    def pcd(self):
+        return np.asarray(self.mesh.vertices)
+    
+    @property
+    def normals(self):
+        return np.asarray(self.mesh.vertex_normals)
+
+    def transform(self, posture:Posture, copy = True):
+        new_mesh = o3d.geometry.TriangleMesh(self.mesh)
+        new_mesh = new_mesh.transform(posture.trans_mat)
+
+        new_bbox = posture * self.bbox_3d
+        new_ldmk = posture * self.ldmk_3d
+
+        if copy:
+            return ModelInfo(new_mesh, new_bbox, self.symmetries, self.diameter, new_ldmk, self.name, self.class_id)
+        else:
+            self.mesh = new_mesh
+            self.bbox_3d = new_bbox
+            self.ldmk_3d = new_ldmk
+            return self
 
 
 class ModelManager:
@@ -14,17 +57,26 @@ class ModelManager:
     def __new__(cls, landmark_info_path, models_info_path, model_dirs: dict[int, str]):
         if not cls._instance:
             cls._instance = super(ModelManager, cls).__new__(cls)
-            cls._instance.model_dirs = model_dirs
-            cls._instance.model_pointcloud = {}
-            cls._instance.model_bbox_3d = {}
-            cls._instance.model_symmetries = {} #"symmetries_continuous": "symmetries_discrete": 
-            cls._instance.model_diameter = {}
-            cls._instance.model_ldmk_3d = {}
-            cls._instance.landmark_info_path = landmark_info_path
-            cls._instance.models_info_path = models_info_path
-            cls._instance.load_landmarks(landmark_info_path)
-            cls._instance.load_models_info(models_info_path)
         return cls._instance
+
+    def __init__(self, landmark_info_path, models_info_path, model_dirs: dict[int, str]) -> None:
+        self.model_dirs: dict[int, str] = model_dirs
+        self.model_names : dict[int, str]      = {}
+        for id_, path in self.model_dirs.items():
+            # 模型名称
+            name = os.path.splitext(os.path.split(path)[-1])[0]
+            self.model_names.update({id_: name}) 
+        self.model_meshes       = {}
+        self.model_pointcloud   = {}
+        self.model_normals      = {}
+        self.model_bbox_3d          = {}
+        self.model_symmetries = {} #"symmetries_continuous": "symmetries_discrete": 
+        self.model_diameter = {}
+        self.model_ldmk_3d = {}
+        self.landmark_info_path = landmark_info_path
+        self.models_info_path = models_info_path
+        self.load_landmarks(landmark_info_path)
+        self.load_models_info(models_info_path)
 
     @staticmethod
     def farthest_point_sample(point_cloud, npoint): 
@@ -66,13 +118,19 @@ class ModelManager:
 
     def load_model(self, model_id:int):
         # 模型路径下的名称目录
-        pcd = o3d.io.read_point_cloud(self.model_dirs[model_id])
+        mesh = o3d.io.read_triangle_mesh(self.model_dirs[model_id])
         # 获取点云的顶点位置
-        vertices = np.asarray(pcd.points)
+        vertices = np.asarray(mesh.vertices)  # 顶点坐标
         if vertices.max() - vertices.min() > 10:
             vertices = vertices / 1000 # 转换单位为m
+        normals = np.asarray(mesh.vertex_normals)  # 法矢
+        normals_normalized = normals / np.linalg.norm(normals, axis=1, keepdims=True) # 归一化法矢
 
         self.model_pointcloud.update({model_id: vertices})    
+        self.model_normals.update({model_id: normals_normalized})   
+        self.model_meshes.update({model_id: mesh})   
+
+  
 
     def load_models_info(self, models_info_path: str):
         '''
@@ -143,12 +201,30 @@ class ModelManager:
         ldmk_3d = self.model_ldmk_3d[class_id].copy()
         return ldmk_3d
 
+    def get_model_name(self, class_id:int) -> str:
+        if class_id not in self.model_pointcloud:
+            self.load_model(class_id)
+        name = self.model_names[class_id]
+        return name
+
     def get_model_pcd(self, class_id:int) -> np.ndarray:
         if class_id not in self.model_pointcloud:
             self.load_model(class_id)
         pcd = self.model_pointcloud[class_id].copy()
         return pcd
-    
+
+    def get_model_normal(self, class_id:int) -> np.ndarray:
+        if class_id not in self.model_normals:
+            self.load_model(class_id)
+        normal = self.model_normals[class_id].copy()
+        return normal
+
+    def get_model_mesh(self, class_id:int) -> np.ndarray:
+        if class_id not in self.model_meshes:
+            self.load_model(class_id)
+        mesh = o3d.geometry.TriangleMesh(self.model_meshes[class_id])
+        return mesh
+
     def get_model_diameter(self, class_id:int):
         diameter = self.model_diameter[class_id]
         return diameter
@@ -159,6 +235,17 @@ class ModelManager:
         else:
             return self.model_symmetries[class_id].copy()
     
+    def export_one_model(self, class_id:int):
+        mesh                = self.get_model_mesh(class_id)
+        bbox_3d     = self.get_bbox_3d(class_id)
+        symmetries  = self.get_model_symmetries(class_id) #"symmetries_continuous": "symmetries_discrete": 
+        diameter: float    = self.get_model_diameter(class_id)
+        ldmk_3d     = self.get_ldmk_3d(class_id)
+
+        name = self.get_model_name(class_id)
+
+        return ModelInfo(mesh, bbox_3d, symmetries, diameter, ldmk_3d, name = name, class_id = class_id)
+
 def create_model_manager(cfg) -> ModelManager:
     cfg_paras = yaml_load(cfg)
     model_manager = ModelManager(cfg_paras["landmarks"],

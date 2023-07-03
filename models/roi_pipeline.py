@@ -3,7 +3,7 @@ from utils.yaml import yaml_load
 import torch
 import torch.nn as nn
 import numpy as np
-from models.utils import denormalize_bbox, normalize_bbox
+from models.utils import denormalize_bbox, normalize_bbox, _KW
 
 from torchvision.ops import roi_align
 from torchvision.transforms.functional import crop
@@ -228,8 +228,9 @@ class CropLayer(nn.Module):
                     used_bbox_n += _used_bbox_n
                     croped += _croped # [?, C, pool_size, pool_size]
                 
-                croped      = [x for _, x in sorted(zip(np.argsort(idx_order), croped))]
-                used_bbox_n = [x for _, x in sorted(zip(np.argsort(idx_order), used_bbox_n))]
+                resort = np.argsort(idx_order)
+                croped      = [croped[i] for i in resort]
+                used_bbox_n = [used_bbox_n[i] for i in np.argsort(idx_order)]
 
             all_croped.append(croped)
             all_used_bbox_n.append(used_bbox_n)
@@ -312,14 +313,17 @@ class FeatureMapDistribution(nn.Module):
 def gather_results(class_ids:list[torch.Tensor], 
             bboxes:list[torch.Tensor], 
             org_idx:dict[int, list[list[int]]], 
-            landmark_dict:dict[int, tuple[torch.Tensor]],
+            landmark_dict:dict[int, dict[str, torch.Tensor]],
             input_size_list: list[tuple]) -> list[list[LandmarkDetectionResult]]:
     # with torch.no_grad():
     BN = len(class_ids)
     detection_results = [[None for _ in range(class_ids[bn].shape[0])] for bn in range(BN)] # 用None占空
     for id_ in org_idx.keys():
-        try:    coords, probs = landmark_dict[id_] # 获取landmarks坐标
-        except KeyError : continue # 不属于active
+        if id_ not in landmark_dict:
+            continue
+        else:
+            coords = landmark_dict[id_][_KW.LDMKS]
+            probs = landmark_dict[id_][_KW.PROBS]
         oi = org_idx[id_] # 坐标对应的原位
         # 循环还原坐标到原位，通过LandmarkDetectionResult将每个roi的类别、bbox、landmarks绑定
         for ci, idx in enumerate(oi):

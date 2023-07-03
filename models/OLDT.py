@@ -1,7 +1,7 @@
 from typing import Any
 from models.roi_pipeline import FeatureMapDistribution, gather_results, NestedTensor
 from models.transformer import LandmarkBranch
-from models.utils import WeightLoader, normalize_bbox
+from models.utils import WeightLoader, normalize_bbox, _KW
 import models.yolo8_patch 
 import ultralytics
 from ultralytics import YOLO, yolo
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 
 import numpy as np
 import os
-
+import time
 import matplotlib.pyplot as plt
 
 class yolo_detection_predict_once():
@@ -96,6 +96,7 @@ class OLDT(nn.Module):
         self.yolo_detection._predict_once = self.get_feature_callback
 
         self.feature_map_distribution = FeatureMapDistribution(cfg)
+        self.if_gather = True
 
         self.landmark_branch_classes = landmark_branch_classes
         
@@ -164,15 +165,18 @@ class OLDT(nn.Module):
         detect_rlt:list[Results] = self._backbone.predict(input)
         self.last_detect_rlt = detect_rlt
         input_size = [x.orig_shape[::-1] for x in detect_rlt] #list[(w,h)]
+        
         ### 整合特征图
-        # P3, P4, P5 = self._backbone.model.feature_map
         P3, P4, P5 = self.get_feature_callback.feature_map
-        # P3 = torch.rand(len(input), 256, 60, 80)
         feature_map = self.reshape_feature_maps((P3,))
         class_ids, bboxes_n = self.parse_results(detect_rlt) #[bn, num_roi?] [bn, num_roi?, 4]
-        roi_feature_dict, org_idx, bboxes_n = self.feature_map_distribution(class_ids, bboxes_n, feature_map)
-        
-        landmark_dict = {}
+        distribution = self.feature_map_distribution(class_ids, bboxes_n, feature_map)
+        roi_feature_dict:dict[int, NestedTensor]    = distribution[0]
+        org_idx:dict[int, list[list[int]]]          = distribution[1]
+        bboxes_n:list[torch.Tensor]                 = distribution[2]
+
+        ### LDT
+        landmark_dict:dict[int, dict[str, torch.Tensor]] = {}
         for class_id in self.landmark_branch_classes:
             try:
                 rois:torch.Tensor = roi_feature_dict[class_id].tensor #[num_landmark_group?, C, H, W]
@@ -181,21 +185,46 @@ class OLDT(nn.Module):
                 continue # 只选取关注的class
             branch = self.landmark_branches[class_id]
             landmark_coords, landmark_probs = branch(rois, masks) #[decoder_num, num_landmark_group?, landmarknum, 2]
-            landmark_dict[class_id] = (landmark_coords, landmark_probs)
-
-        # 重新汇聚
-        detection_results = gather_results(class_ids, bboxes_n, org_idx, landmark_dict, input_size)
+            landmark_dict[class_id] = {_KW.LDMKS:landmark_coords, _KW.PROBS:landmark_probs}
+        
+        if not self.if_gather:
+            # 用于计算损失，
+            for id_ in landmark_dict.keys():
+                origin = org_idx[id_]
+                bbox_n_list = []
+                for idx in origin:
+                    bbox_n_list.append(bboxes_n[idx[0]][idx[1]])
+                bbox_ns = torch.stack(bbox_n_list)
+                bn_list = torch.Tensor([x[0] for x in origin]).to(bbox_ns.device)
+                input_size_list = torch.Tensor([input_size[x[0]] for x in origin]).to(bbox_ns.device)
+                landmark_dict[id_].update({_KW.BBOX_N:bbox_ns, _KW.BACTH:bn_list, _KW.INPUT_SIZE:input_size_list})
+            detection_results = landmark_dict
+        else:
+            # 重新汇聚
+            detection_results =\
+                  gather_results(class_ids, bboxes_n, org_idx, landmark_dict, input_size)
 
         return detection_results
 
-    def train(self, mode: bool = True):
-        self.yolo_detection.eval()
-        for branch in self.landmark_branches.values():
-            branch.train(mode)
-
-    def eval(self):
-        for branch in self.landmark_branches.values():
-            branch.eval()
+    def set_mode(self, mode):
+        '''
+        mode: "train" / "val" / "predict"
+        '''
+        assert mode == "train" or mode == "val" or mode == "predict" 
+        if mode == "train":
+            super().train(True)
+            self.yolo_detection.eval()
+            for branch in self.landmark_branches.values():
+                branch.train(True)
+            self.if_gather = False
+        elif mode == "val":
+            super().eval()
+            self.if_gather = False
+        elif mode == "predict":
+            super().eval()
+            self.if_gather = True
+        else:
+            raise ValueError
 
     def freeze_detection(self):
         for p in self.yolo_detection.parameters():

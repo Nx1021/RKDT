@@ -75,19 +75,21 @@ if __name__ == '__main__':
     # 示例用法
     data_folder = './datasets/morrison'
     yolo_weight_path = "weights/best.pt"
-    cfg = "cfg/train_yolo.yaml"
+    cfg = "cfg/config.yaml"
     ###
     train_dataset = OLDT_Dataset(data_folder, "train")
     val_dataset = OLDT_Dataset(data_folder, "val")
     loss = LandmarkLoss(cfg)
     model = OLDT(yolo_weight_path, cfg, [0])  # 替换为你自己的模型
     load_brach_i = 0
-    # load_from = "./weights/20230625080939branch00_cpy.pt"
-    load_from = ""
+    load_from = "./weights/20230629063922branch00.pt"
+    # load_from = ""
     model.load_branch_weights(load_brach_i, load_from)
     num_epochs = 200
-    warm_up = int(num_epochs * 0.2)
+    warm_up = int(num_epochs * 0.1)
     learning_rate = 1.0 * 1e-4
+    start_epoch = 1
+
 
     if sys == "Windows":
         batch_size = 2
@@ -97,13 +99,16 @@ if __name__ == '__main__':
         # model = torch.nn.DataParallel(model)
     else:
         raise SystemError
-    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size, num_epochs, learning_rate, warm_up, distribute=False)
+    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size, num_epochs, learning_rate, warm_up, 
+                      distribute=False,
+                      start_epoch = start_epoch)
     trainer.logger.log({
         "System": sys,
         "data_folder": data_folder,
         "yolo_weight_path": yolo_weight_path,
         "cfg": cfg,
         "num_epochs": num_epochs,
+        "start_epoch": start_epoch,
         "warm_up": warm_up,
         "learning_rate": learning_rate,
         "batch_size": batch_size, 

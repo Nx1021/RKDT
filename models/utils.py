@@ -11,6 +11,16 @@ import time
 from typing import OrderedDict, Union
 import torch
 
+#keywords:
+class _KW:
+    LDMKS = "ldmks"
+    PROBS = "probs"
+    BBOX_N = "bbox_n"
+    BBOX = "bbox"
+    BACTH = "batch"
+    INPUT_SIZE = "input_size"
+
+
 class WeightLoader():
     STRICT     = 0
     NOT_STRICT = 1      

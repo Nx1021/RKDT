@@ -26,10 +26,10 @@ class OLDT_Dataset(Dataset):
     def __init__(self, data_folder, set_):
         self.data_folder = data_folder
         self.set = set_
-        self.image_folder = os.path.join(data_folder, 'images', set_)
-        self.landmarks_folder = os.path.join(data_folder, 'landmarks', set_)
-        self.labels_folder = os.path.join(data_folder, 'labels', set_)
-        self.trans_vecs_folder = os.path.join(data_folder, 'trans_vecs', set_)
+        self.image_folder       = os.path.join(data_folder, 'images', set_)
+        self.landmarks_folder   = os.path.join(data_folder, 'landmarks', set_)
+        self.labels_folder      = os.path.join(data_folder, 'labels', set_)
+        self.trans_vecs_folder  = os.path.join(data_folder, 'trans_vecs', set_)
         self.data_files = os.listdir(self.image_folder)
 
     def __len__(self):
