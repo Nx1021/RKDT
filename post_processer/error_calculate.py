@@ -1,9 +1,8 @@
-from post_processer.model_manager import ModelManager, create_model_manager
 from post_processer.pnpsolver import PnPSolver
 from models.results import ImagePosture
 
 
-from MyLib.posture import Posture
+from posture_6d.posture import Posture
 
 from scipy.optimize import linear_sum_assignment
 from torchvision.ops import generalized_box_iou
@@ -25,19 +24,6 @@ def is_close_to_integer(x, tolerance=1e-6):
 def match_roi(gt:ImagePosture, pred:ImagePosture):
     gt_image, gt_landmarks, gt_class_ids, gt_bboxes, gt_trans_vecs = gt.split()
     pred_image, pred_landmarks, pred_class_ids, pred_bboxes, pred_trans_vecs = pred.split()
-    # ### 先过滤gt，landmark在bbox以外的超过一定比例的，不参与匹配
-    # gt_bboxes_tensor = denormalize_bbox(Tensor(np.array(gt_bboxes)), gt_image.shape[:2][::-1])
-    # gt_landmarks_tensor = Tensor(np.array(gt_landmarks))
-    # in_bbox = ((gt_landmarks_tensor[..., 0] >= gt_bboxes_tensor[..., 0].unsqueeze(-1)) &
-    #         (gt_landmarks_tensor[..., 0] <= gt_bboxes_tensor[..., 2].unsqueeze(-1)) &
-    #         (gt_landmarks_tensor[..., 1] >= gt_bboxes_tensor[..., 1].unsqueeze(-1)) &
-    #         (gt_landmarks_tensor[..., 1] <= gt_bboxes_tensor[..., 3].unsqueeze(-1)))
-    # mask = torch.where(in_bbox.sum(dim=1) > int(in_bbox.shape[-1] * 2 /3))[0]
-    
-    # gt_landmarks    = [gt_landmarks[int(i)] for i in mask]
-    # gt_class_ids    = [gt_class_ids[int(i)] for i in mask]
-    # gt_bboxes       = [gt_bboxes[int(i)] for i in mask]    
-    # gt_trans_vecs   = [gt_trans_vecs[int(i)] for i in mask]
     ### 匹配，类别必须一致，bbox用giou评估
     M = len(gt_class_ids)
     N = len(pred_class_ids)

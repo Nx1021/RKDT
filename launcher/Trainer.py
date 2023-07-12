@@ -19,7 +19,7 @@ from models.loss import LandmarkLossRecorder
 from models.results import ImagePosture
 from launcher.OLDT_Dataset import collate_fn
 from launcher.utils import BaseLogger, Launcher
-from utils.yaml import yaml_dump
+from utils.yaml import yaml_load
 import cv2
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -35,6 +35,47 @@ if sys_name == "Windows":
     TESTFLOW = False
 else:
     TESTFLOW = False
+
+class TrainFlow():
+    def __init__(self, trainer:"Trainer", flowfile) -> None:
+        self.trainer = trainer
+        self.epoch = 1
+        self.flow:dict = yaml_load(flowfile, False)
+        self.stage_segment = list(self.flow.keys())
+        if self.stage_segment[0] != 1:
+            raise ValueError("the first stage must start at epoch 1!")
+        self.last_stage = 0
+        self.lr_func = None
+
+    @property
+    def cur_stage(self):
+        return sum([self.epoch >= x for x in self.stage_segment])
+
+    def get_lr_func(self, lr_name, totol_step, coeff):
+        if lr_name == "warmup":
+            return LambdaLR(self.trainer.optimizer, 
+                            lr_lambda=lambda step: coeff * min(step / totol_step, 1.0))
+        if lr_name == "cosine":
+            for param_group in self.trainer.optimizer.param_groups:
+                param_group['lr'] = coeff
+            return optim.lr_scheduler.CosineAnnealingLR(self.trainer.optimizer, 
+                                                        totol_step)
+    
+    def enter_new_stage(self):
+        stage_info = self.flow[self.stage_segment[self.cur_stage]]
+        totol_step = self.stage_segment[self.cur_stage + 1] - self.stage_segment[self.cur_stage]
+        self.lr_func = self.get_lr_func(stage_info["lr_func"], totol_step, stage_info["lr"])
+
+        if "cfg" in stage_info:
+            self.trainer.inner_model.cfg.update(stage_info["cfg"])
+
+        self.epoch += 1
+
+    def update(self):
+        if self.last_stage != self.cur_stage:
+            self.enter_new_stage()
+        self.lr_func.step()
+        self.epoch += 1
 
 
 
@@ -56,8 +97,6 @@ class TrainLogger(BaseLogger):
 
         with open(log_file, 'a') as f:
             f.write(log_line)
-    
-
 
 class Trainer(Launcher):
     def __init__(self,
@@ -71,11 +110,14 @@ class Trainer(Launcher):
                  warmup_epoch,
                  distribute = False,
                  test=False,
-                 start_epoch = 0):
+                 start_epoch = 0,
+                 flowfile = ""):
         super().__init__(model, batch_size)
         self.model:Union[OLDT, torch.nn.DataParallel] = model
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
+
+        # self.flow = TrainFlow(self, flowfile)
         self.num_epochs = num_epochs
         self.init_lr = init_lr
         self.epoch_step = int(np.ceil(len(train_dataset) /self.batch_size))
@@ -109,7 +151,7 @@ class Trainer(Launcher):
         self.backward_time = 0.0
         self.loss_time = 0.0
 
-        self.freeze_modules = [self.model.landmark_branches[0].pos_embed]
+        self.freeze_modules = [self.inner_model.landmark_branches[0].pos_embed]
 
     @property
     def skip(self):
@@ -156,6 +198,10 @@ class Trainer(Launcher):
                     # 前向传播
                     detection_results = self.model(images)
                     loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results, ldmk_loss_mngr)
+                    if torch.isnan(loss).item():
+                        print("loss nan, break!")
+                        self.inner_model.save_branch_weights("./weights/", self.start_timestamp)
+                        sys.exit()
                     # 反向传播和优化
                     if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor):
                         self.optimizer.zero_grad()
@@ -163,11 +209,6 @@ class Trainer(Launcher):
             
             if backward:
                 self.optimizer.step()
-                # 更新学习率
-                if self.cur_step < self.warmup_steps:
-                    self.warmup_scheduler.step()
-                else:
-                    self.lr_scheduler.step()
 
             # 更新进度条信息
             progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss())})
@@ -180,17 +221,19 @@ class Trainer(Launcher):
         # 将val_loss写入TensorBoard日志文件
         if backward:
             self.logger.write_epoch("Learning rate", self.optimizer.param_groups[0]["lr"], self.cur_epoch)
+            # 更新学习率
+            self.flow.update()
         for key, value in ldmk_loss_mngr.to_dict().items():
             self.logger.write_epoch(key, value, self.cur_epoch)
 
         return ldmk_loss_mngr.loss()
 
     def train_one_epoch(self, dataloader):
-        self.model.set_mode("train")
+        self.inner_model.set_mode("train")
         return self.forward_one_epoch(dataloader, True)
 
     def val_one_epoch(self, dataloader):
-        self.model.set_mode("val")
+        self.inner_model.set_mode("val")
         with torch.no_grad():
             return self.forward_one_epoch(dataloader, False)
         # ldmk_loss_mngr = LandmarkLossRecorder("Val")

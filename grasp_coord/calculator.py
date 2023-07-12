@@ -1,5 +1,5 @@
-from MyLib.posture import Posture
-from post_processer.model_manager import ModelInfo
+from posture_6d.posture import Posture
+from posture_6d.mesh_manager import MeshMeta
 
 import numpy as np
 import open3d as o3d
@@ -17,7 +17,6 @@ from grasp_coord.object_pcd import ObjectPcd, create_ObjectPcd_from_file
 from grasp_coord.gripper import Gripper, MyThreeFingerGripper
 from grasp_coord import MODELS_DIR
 
-from utils.yaml import yaml_load
 
 def compute_angle(v1, v2):
     """
@@ -33,8 +32,12 @@ def compute_angle(v1, v2):
     # 归一化向量
     v1_norm = np.linalg.norm(v1, axis=-1, keepdims=True)
     v2_norm = np.linalg.norm(v2, axis=-1, keepdims=True)
-    v1_normalized = v1 / v1_norm
-    v2_normalized = v2 / v2_norm
+    with np.errstate(divide='ignore', invalid='ignore'):
+        v1_normalized = v1 / v1_norm
+        v2_normalized = v2 / v2_norm
+
+    v1_normalized[np.isnan(v1_normalized)] = 0.0
+    v2_normalized[np.isnan(v2_normalized)] = 0.0
 
     # 计算夹角的余弦值
     cos_angle = np.sum(v1_normalized * v2_normalized, axis=-1)
@@ -77,14 +80,18 @@ class InitAngle:
         # ax.scatter(vecs[:,0], vecs[:,1], vecs[:,2], s=5, marker="o", c='r')
         # plt.show()
 
+    @staticmethod
+    def get_rvec_from_destination(dest, base = [0,0,1]):
+        ### 转换为旋转向量
+        base = np.tile(base, [dest.shape[0],1]).astype(np.float32)
+        times = np.sum( dest * base, axis=-1)
+        angle = np.arccos(times) #旋转角度
+        rot = np.cross(base, dest)
+        return rot * np.tile(np.expand_dims(angle/ np.linalg.norm(rot, axis=-1), -1), [1,3])
+
     def get_rvec(self):   
         vecs = self.vecs 
-        ### 转换为旋转向量
-        base = np.tile([0,0,1], [vecs.shape[0],1])
-        times = np.sum( vecs * base, axis=-1)
-        angle = np.arccos(times) #旋转角度
-        rot = np.cross(base, vecs)
-        self.rvec = rot * np.tile(np.expand_dims(angle/ np.linalg.norm(rot, axis=-1), -1), [1,3])        
+        self.rvec = self.get_rvec_from_destination(vecs)
 
 class SphereAngle(InitAngle):
     def __init__(self) -> None:
@@ -119,6 +126,8 @@ class Voxelized():
         self.surf_indices =\
               np.array(np.where(self.surf_cube)).T
         
+        self.surf_points =\
+              self.restore_mat[:3, :3].dot(self.surf_indices.T).T + self.restore_mat[:3, 3]
         self.surf_normals = self.calc_surf_normal()
 
         self.entity_query = np.full(self.entity_cube.shape, -1, np.int64)
@@ -130,9 +139,6 @@ class Voxelized():
         self.surf_query[self.surf_indices[:,0], 
                         self.surf_indices[:,1], 
                         self.surf_indices[:,2]] = np.array(range(self.surf_indices.shape[0]), np.int64)
-
-    def surf_points(self):
-        return self.restore_mat[:3, :3].dot(self.surf_indices.T).T + self.restore_mat[:3, 3]
 
     @property
     def shape(self):
@@ -187,6 +193,9 @@ class Voxelized():
         for i in range(len(surf.points)):
             _, indices, _ = kdtree.search_knn_vector_3d(surf.points[i], k)
             interpolated_normals[i] = ref_pcd_normals[indices]
+
+        # 归一化
+        interpolated_normals = interpolated_normals / np.linalg.norm(interpolated_normals, axis=-1, keepdims=True)
         surf.normals = o3d.utility.Vector3dVector(interpolated_normals)
 
         return interpolated_normals
@@ -196,6 +205,12 @@ class Voxelized():
         normals = self.surf_normals[idx]
         normals[np.any(idx == -1, -1)] = 0.0
         return normals
+    
+    def query_surf_points(self, indices):
+        idx = self.surf_query[indices[..., 0], indices[..., 1], indices[..., 2]]
+        points = self.surf_points[idx]
+        points[np.any(idx == -1, -1)] = 0.0
+        return points
 
     @staticmethod
     def from_mesh(mesh, voxel_size):
@@ -300,7 +315,7 @@ class Triangle_Hough():
 
         return cropped_image, (min_row, min_col)
 
-    def plot(self, triangles:np.ndarray, image:cv2.Mat):
+    def plot(self, triangles:np.ndarray, image:cv2.Mat, show = True):
         def generate_triangle(center, radius, phase):
             angles = np.linspace(phase, phase + 2*np.pi, num=4)
             y = center[0] + radius * np.cos(angles)
@@ -315,8 +330,8 @@ class Triangle_Hough():
             phase = triangle[3]
             vertices = generate_triangle(center, radius, phase)
             plt.plot(vertices[:, 0], vertices[:, 1], '-')
-        
-        plt.show()
+        if show:
+            plt.show()
 
     def parse(self, result):
         rsls = np.array([
@@ -347,6 +362,12 @@ class Triangle_Hough():
         return triangles, co_marks
 
     def run(self, image:cv2.Mat, ifplot = False):
+        '''
+        x,y 表示在当前图像坐标系下的x,y
+        X,Y 表示在物体坐标系下的X,Y
+        y == X 
+        x == Y
+        '''
         start = time.time()
         croped, org = self.crop_nonzero_region(image)
 
@@ -374,14 +395,13 @@ class Triangle_Hough():
             r_quant[r_quant > self.r_step] = self.r_step
             r_quant[r_quant < 0] = self.r_step
 
-            theta = np.arctan2(diff[:, 1] , diff[:, 0])
+            theta = np.arctan2(diff[:, 1] , diff[:, 0]) # 为了后续处理方便，定义theta = arctan(dx/dy) = arctan(dY/dX)
             theta = np.mod(theta, 2*np.pi/3)
             theta_quant = np.round(theta / self.theta_rsl).astype(np.int32) #[P]
             theta_quant[theta_quant == self.theta_step] = 0
 
             hough_space[points[:,0], points[:,1], r_quant, theta_quant] = 1
             hough_space = hough_space[:, :, :-1, :]
-            # hough_space = ndimage.binary_dilation(hough_space, ndimage.generate_binary_structure(4, 1))
             hough_space_list.append(hough_space)
             summary += hough_space
 
@@ -408,7 +428,7 @@ class Triangle_Hough():
         
     def _loop_method(self, image):
         '''
-        do not use
+        DO NOT USE
         just for comparing the time cost with hough method
         '''
         graspable_index_GCS = []
@@ -597,7 +617,8 @@ class _CoordSearcher():
         for i, gi in enumerate(graps_indices):
             self.gripper.set_u(us[i])
             ### transform index to positions
-            center = gi[:3]
+            center = gi[:3].copy()
+            center[2] += 0.5
             center = self.voxelized.restore_mat[:3,:3].dot(center) + self.voxelized.restore_mat[:3,3]
             center[2] -= self.gripper.finger_gripping_bottom[2]
             angle = gi[3]
@@ -625,39 +646,120 @@ class CandiCoordCalculator():
             voxel_size = int(self.modelinfo.pointcloud_size.min() / 30) + 1
         self.voxel_size = voxel_size
 
-    def plot(self, obj_rvec, local_grasp_pose, voxelized:Voxelized):
-        rvec = local_grasp_pose[:3]
-        tvec = local_grasp_pose[3:6]
-        u =  local_grasp_pose[6]
-        
-        # 进行体素化
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(voxelized.surf_points())
-        voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, 3)
-        # mesh = self.modelinfo.mesh
-        # mesh.compute_vertex_normals()
-
-        self.gripper.set_u(u)
-        gripper_o3d_geo, gripper_trans_mat = self.gripper.get_gripper_o3d_geo()
-
-        gripper_posture = Posture(rvec=-obj_rvec) * Posture(rvec= rvec, tvec=tvec)  # * Posture(tvec=[0,0,-gripper.finger_gripping_bottom[2]])
-        for geo, mat in zip(gripper_o3d_geo, gripper_trans_mat):
-            # mat = np.dot(gripper.posture_WCS.trans_mat, mat)
-            geo.transform(gripper_posture.trans_mat)    
-        # sence_center_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=self.mesh.get_center())
-        # sence_robot_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=[0,0,0])
-        gripper_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=[0,0,0])
-        gripper_frame.transform(gripper_posture.trans_mat)
-        showing_geometrys = [voxel_grid] + gripper_o3d_geo + [gripper_frame]
-        
-        o3d.visualization.draw_geometries(showing_geometrys, width=1280, height=720)
-
-    def calc_candidate_coord(self, show = False):
+    def calc_candidate_coord(self, show = False, create_process_mesh = False):
         '''
         v_friction_angle  垂直方向死锁角
         h_friction_angle  水平方向死锁角
         voxel_size: 体素化尺寸
         '''
+        def _create_process_mesh():
+            def get_gripper_mesh(lgp):
+                g_rvec = lgp[:3]
+                g_tvec = lgp[3:6]
+                g_u =  lgp[6]
+
+                self.gripper.set_u(g_u)
+                # self.gripper.set_u(0)
+                gripper_o3d_geo, gripper_trans_mat = self.gripper.get_gripper_o3d_geo()
+
+                gripper_posture = Posture(rvec= g_rvec, tvec=g_tvec)  # * Posture(tvec=[0,0,-gripper.finger_gripping_bottom[2]])
+                for geo, mat in zip(gripper_o3d_geo, gripper_trans_mat):
+                    # mat = np.dot(gripper.posture_WCS.trans_mat, mat)
+                    geo.transform(gripper_posture.trans_mat)    
+
+                gripper_combined = o3d.geometry.TriangleMesh()
+                for mesh in gripper_o3d_geo:
+                    gripper_combined += mesh 
+                return gripper_combined 
+            
+            def get_arrow_mesh(start, end):
+                # 创建箭头几何体对象
+                diff = end - start
+                normed = diff / np.linalg.norm(diff)
+                arrow_length = np.linalg.norm(diff)
+                arrow_rvec = InitAngle.get_rvec_from_destination(np.expand_dims(normed, 0))
+                arrow = o3d.geometry.TriangleMesh.create_arrow(
+                    cylinder_radius=arrow_length * 0.05,
+                    cone_radius=arrow_length * 0.1,
+                    cylinder_height=arrow_length * 0.8,
+                    cone_height=arrow_length * 0.2
+                )
+                arrow.transform(Posture(rvec=arrow_rvec, tvec=start).trans_mat)
+                return arrow
+
+            orig_z = contacted[0,0,2]
+            #### 创建正方体组合mesh, 为每个体素创建一个立方体网格
+            # 分别创建上、中、下3个部分
+            voxel_size = voxelized.restore_mat[0,0]
+            mesh_cube = o3d.geometry.TriangleMesh.create_box(voxel_size, voxel_size, voxel_size)
+            meshes_dict:dict[str, list] = {}
+            mesh_part_names = ["below", "mid", "above"]
+            for voxel, ind in zip(voxelized.surf_points, voxelized.surf_indices):
+                _mesh_cube = o3d.geometry.TriangleMesh(mesh_cube)
+                mesh = _mesh_cube.translate(voxel - np.array([voxel_size, voxel_size, voxel_size])/2)
+                if ind[2] < orig_z:
+                    meshes_dict.setdefault(mesh_part_names[0], []).append(mesh)
+                elif ind[2] == orig_z:
+                    meshes_dict.setdefault(mesh_part_names[1], []).append(mesh)
+                elif ind[2] > orig_z:
+                    meshes_dict.setdefault(mesh_part_names[2], []).append(mesh)
+            # 合并网格对象
+            combined = {key: value for key, value in zip(mesh_part_names, [o3d.geometry.TriangleMesh() for _ in range(3)])}
+            for key, meshes in meshes_dict.items():
+                for mesh in meshes:
+                    combined[key] += mesh
+                combined[key].compute_triangle_normals()
+            
+            local_grasp_pose = searcher.restore(np.array([0, 0, 0.0]), vaild_graps_indices, us)
+            vaild_graps_indices_orig = vaild_graps_indices.copy()
+            vaild_graps_indices_orig[:, 2] = orig_z
+            local_grasp_pose_orig = searcher.restore(np.array([0, 0, 0.0]), vaild_graps_indices_orig, us)
+            
+            grasp = get_gripper_mesh(local_grasp_pose[0])
+            grasp_orig = get_gripper_mesh(local_grasp_pose_orig[0])
+            rot_mesh = o3d.geometry.TriangleMesh(modelinfo.mesh)
+
+            # 接触点法向箭头
+            normals = voxelized.query_surf_normal(contacted[0])
+            start = voxelized.query_surf_points(contacted[0])
+            end = start + normals * voxel_size * 7
+            normals_arrow = o3d.geometry.TriangleMesh()
+            for s, e in zip(start, end):
+                arrow = get_arrow_mesh(s, e)
+                normals_arrow += arrow
+            # 夹持方向箭头
+            grasp_dire = contacted[0][:, :2] - triangles[0][:2]
+            grasp_dire = np.pad(grasp_dire, ((0,0), (0,1)), constant_values=0.0)
+            grasp_dire = grasp_dire / np.linalg.norm(grasp_dire, axis=-1, keepdims=True)
+            start = voxelized.query_surf_points(contacted[0])
+            end = start + grasp_dire * voxel_size * 7
+            gripper_arrow = o3d.geometry.TriangleMesh()
+            for s, e in zip(start, end):
+                arrow = get_arrow_mesh(s, e)
+                gripper_arrow += arrow
+
+            for m in [*combined.values(), grasp, grasp_orig, rot_mesh, normals_arrow, gripper_arrow]:
+                m.compute_triangle_normals()
+                m.transform(Posture(rvec = [np.pi, 0, 0]).trans_mat)
+
+            os.makedirs("./logs/grasp_illustration", exist_ok=True)
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/voxelized_above.stl", combined[mesh_part_names[0]])
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/voxelized_mid.stl", combined[mesh_part_names[1]])
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/voxelized_below.stl", combined[mesh_part_names[2]])
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/maxdepth_grasp.stl", grasp)
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/orig_grasp.stl", grasp_orig)
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/contact_mesh_normals.stl", normals_arrow)
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/contact_gripper_normals.stl", gripper_arrow)
+            # 切片
+            searcher.hough_solver.plot(triangles[0:1, :], voxelized.surf_cube[:,:,orig_z], False)
+            plt.savefig("./logs/grasp_illustration/layer.svg")
+            # 原模型
+            self.modelinfo.mesh.compute_triangle_normals()
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/mesh.stl", self.modelinfo.mesh)
+            # 旋转模型
+            modelinfo.mesh.compute_triangle_normals()
+            o3d.io.write_triangle_mesh("./logs/grasp_illustration/rot_mesh.stl", rot_mesh)
+
         print("start to calculate for {}".format(self.modelinfo.name))
         ia = SphereAngle()
         voxel_size = self.voxel_size
@@ -679,6 +781,12 @@ class CandiCoordCalculator():
             triangles, contacted, us = searcher.get_h_stable_grasp(triangles, contacted)
             vaild_graps_indices = searcher.calculate_max_depth(triangles, contacted, us)
             local_grasp_poses = searcher.restore(rvec, vaild_graps_indices, us)
+
+            ###
+            if create_process_mesh and len(local_grasp_poses) > 0:
+                _create_process_mesh()
+            ###
+
             # for lp in local_grasp_poses:
             #     self.plot(rvec, lp, voxelized)
             global_grasp_poses.append(local_grasp_poses)

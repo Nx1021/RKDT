@@ -8,7 +8,8 @@ from torchvision.ops.boxes import box_area
 from torchvision.ops import generalized_box_iou
 from scipy.optimize import linear_sum_assignment
 from models.roi_pipeline import LandmarkDetectionResult
-from models.utils import _KW, denormalize_bbox
+from models.utils import _KW, denormalize_bbox, tensor_to_numpy
+from models import SYS
 import platform
 import matplotlib.pyplot as plt
 
@@ -16,8 +17,6 @@ from typing import Union
 
 import time
 
-
-        
 
 def calculate_scores(pk, points, alpha = 0.15, beta = 0.4, eps = 1e-4):
     '''
@@ -224,15 +223,38 @@ class LandmarkLoss(nn.Module):
         super().__init__()
         self.cfg = yaml_load(cfg)
         self.landmark_num:int = self.cfg["landmark_num"]
-        self.calc_intermediate:bool = self.cfg["calc_intermediate"]
-        self.class_loss_w      = self.cfg["class_loss_w"]
-        self.dist_loss_w       = self.cfg["dist_loss_w"]
-        self.PN_loss_w         = self.cfg["PN_loss_w"]
-        self.rotation_loss_w   = self.cfg["rotation_loss_w"]
+    
+    @property
+    def calc_intermediate(self):
+        return self.cfg["calc_intermediate"]
+    
+    @property
+    def class_loss_w(self):       
+        return self.cfg["class_loss_w"]
+    
+    @property
+    def dist_loss_w(self):
+        return self.cfg["dist_loss_w"]
+    
+    @property
+    def PN_loss_w(self):               
+        return self.cfg["PN_loss_w"]
+    
+    @property
+    def rotation_loss_w(self):         
+        return self.cfg["rotation_loss_w"]
 
-        self.alpha  = self.cfg["score_alpha"]
-        self.beta   = self.cfg["score_beta"]
-        self.eps    = self.cfg["score_eps"]
+    @property
+    def alpha(self):                   
+        return self.cfg["score_alpha"]
+    
+    @property
+    def beta(self):                    
+        return self.cfg["score_beta"]
+    
+    @property
+    def eps(self):                     
+        return self.cfg["score_eps"]
 
     def match_roi(self, gt_bbox_n, rlts: list[LandmarkDetectionResult]):
         pred_bbox_n = torch.stack([x.bbox_n for x in rlts]) # [num_roi_active, 4]
@@ -246,19 +268,6 @@ class LandmarkLoss(nn.Module):
                 filtered_row_ind = np.append(filtered_row_ind, ri)
                 filtered_col_ind = np.append(filtered_col_ind, ci)
         return filtered_row_ind, filtered_col_ind
-
-    # def get_target(self, gt_landmarks:Tensor, row_ind, col_ind, output_num:int, rlts:list[LandmarkDetectionResult]):
-    #     pred_bbox           = torch.stack([x.bbox for x in rlts])   # [num_roi_active, 4]
-    #     target_landmarks    = gt_landmarks[col_ind]   # [match_num, ldmk_num, 2]
-    #     matched_pred_bbox   = pred_bbox[row_ind]      # [match_num, 4]
-    #     matched_lt          = matched_pred_bbox[:, :2] # [match_num, (x, y)]
-    #     matched_wh          = matched_pred_bbox[:, 2:] - matched_pred_bbox[:, :2] # [match_num, (w, h)]
-    #     matched_lt          = matched_lt.unsqueeze(1).repeat(1, self.landmark_num, 1) # [match_num, ldmk_num, (w, h)]
-    #     matched_wh          = matched_wh.unsqueeze(1).repeat(1, self.landmark_num, 1) # [match_num, ldmk_num, (w, h)]
-    #     target_landmarks_n  = (target_landmarks - matched_lt) / matched_wh # [match_num, ldmk_num, (w, h)]
-    #     target_landmarks_n  = target_landmarks_n.unsqueeze(0).repeat(output_num, 1, 1, 1) # [output_num, match_num, ldmk_num, (w, h)]
-
-    #     return target_landmarks_n
 
     @staticmethod
     def get_target(gt_landmarks:Tensor, matched_pred_bbox:Tensor):
@@ -292,59 +301,6 @@ class LandmarkLoss(nn.Module):
         output_num = matched_pred_landmarks_n.shape[0]
         return (matched_pred_landmarks_n, matched_pred_landmarks_probs), output_num
 
-    # def calc_loss(self, indices, out_probs, out_coord, tgt_coord, bbox) -> LossItemGroup:
-    #     '''
-    #     indices     : [match_num, ldmk_num, 2]
-    #     out_probs   : [match_num, num_queries, (w, h)]
-    #     out_coord   : [match_num, num_queries, ldmk_num + 1]
-    #     tgt_coord   : [match_num, ldmk_num, (w, h)]
-    #     bbox        : [match_num, (x1, y1, x2, y2)]
-    #     '''
-    #     match_num = out_probs.shape[0]
-    #     ldmk_num = tgt_coord.shape[-2]
-    #     # out_probs = out_probs.transpose(2, 1) # [match_num, ldmk_num + 1, num_queries]
-    #     pred_class_id_lmdk = indices[..., 0]   # [match_num, ldmk_num]
-    #     target_class_id_lmdk = indices[..., 1] # [match_num, ldmk_num]由于target_landmarks的数量和顺序都是固定的，因此对应的索引就是类别
-
-    #     batch_ind = torch.arange(0, pred_class_id_lmdk.shape[0], dtype=torch.int64)
-    #     batch_ind = batch_ind.unsqueeze(-1).repeat(1, pred_class_id_lmdk.shape[1]).view(-1)
-    #     pred_ind    = pred_class_id_lmdk.reshape(-1)    # [ldmk_num * match_num]
-    #     target_ind  = target_class_id_lmdk.reshape(-1)  # [ldmk_num * match_num]
-
-    #     ### 计算损失 ###
-    #     ### 分类损失
-    #     # 类别损失
-    #     target_probs = calculate_scores(out_coord, tgt_coord).detach() #[match_num, num_queries, ldmk_num + 1]
-    #     class_loss = F.binary_cross_entropy(out_probs, target_probs, reduction='none')
-    #     class_loss = torch.mean(class_loss, (-1, -2)) #[match_num]
-    #     # 正负样本损失，只考虑正样本判断的损失
-    #     target_obj = torch.stack([torch.sum(target_probs[...,:-1], dim = -1), target_probs[..., -1]], dim=-1) # [match_num, num_queries, 2]
-    #     # target_obj = torch.argmax(target_obj, dim=-1) # [match_num, num_queries]
-    #     obj_weight = Tensor([1.0, 1.0]).to(target_obj.device).detach() # 正负样本均衡 [match_num]
-    #     pred_obj = torch.stack([torch.sum(out_probs[...,:-1], dim = -1), out_probs[..., -1]], dim=-1)
-    #     obj_loss = F.binary_cross_entropy(pred_obj, target_obj, weight = obj_weight, reduction="none") # [match_num, num_queries] TODO: 正负样本均衡
-    #     obj_loss = torch.mean(obj_loss, (-1, -2)) #[match_num]
-    #     ### 形位损失
-    #     out_coord_matched = out_coord[batch_ind, pred_ind].reshape(-1, ldmk_num, 2)
-    #     tgt_coord_matched = tgt_coord[batch_ind, target_ind].reshape(-1, ldmk_num, 2)
-    #     w = bbox[:, 2:3] - bbox[:, 0:1] #[match_num, 1]
-    #     h = bbox[:, 3:4] - bbox[:, 1:2] #[match_num, 1]
-    #     ratio = (w / h) #[match_num, 1]
-    #     alpha = torch.sqrt(1/(torch.square(ratio) + 1)) #[match_num, 1]
-    #     out_coord_matched = out_coord_matched * torch.concat([alpha * ratio, alpha], dim=-1).unsqueeze(1).to(bbox.device)
-    #     tgt_coord_matched = tgt_coord_matched * torch.concat([alpha * ratio, alpha], dim=-1).unsqueeze(1).to(bbox.device)
-    #     # 距离损失
-    #     dist_loss  = torch.mean(torch.norm(out_coord_matched - tgt_coord_matched, dim = -1), dim=-1)
-    #     # 总体旋转损失，由于在初始训练时可能很大，因此它将被约束在一定范围内
-    #     # rotation_loss = torch.abs(find_best_rotation(out_coord_matched, tgt_coord_matched))
-    #     # rotation_loss = torch.clip(rotation_loss, 0, torch.pi/12)
-
-    #     # obj_loss = torch.Tensor([0.0]).to(class_loss.device)
-    #     rotation_loss = torch.zeros(class_loss.shape).to(class_loss.device)
-
-    #     # group = LossItemGroup(class_loss, dist_loss, obj_loss, rotation_loss)
-    #     group = class_loss + dist_loss + obj_loss
-    #     return group
 
     def match_landmarks(self, out_probs:Tensor, out_coord:Tensor, tgt_coord:Tensor):
         '''
@@ -362,7 +318,7 @@ class LandmarkLoss(nn.Module):
 
         # Final cost matrix
         # C = cost_dist + cost_class
-        C = cost_class #cost_dist + 
+        C = cost_dist#cost_class + cost_dist
         C = C.detach().cpu().numpy()
         # 使用匈牙利算法匹配预测的关键点
         indices = [Tensor(np.array(linear_sum_assignment(c))).transpose(0,1) for c in C]
@@ -370,62 +326,6 @@ class LandmarkLoss(nn.Module):
         indices = indices.to(torch.int64)
 
         return indices, cost_dist, cost_class
-
-    # def forward(self,
-    #             gt_landmarks_list:list[Tensor],
-    #             gt_bboxes_n_list:list[Tensor],
-    #             pred_results_list:list[list[LandmarkDetectionResult]],
-    #             loss_recoder:LandmarkLossRecorder):
-    #     '''
-    #     parameters
-    #     -----
-    #     '''
-    #     BN = len(pred_results_list)
-    #     group_matched_num = 0
-    #     loss = []
-    #     for bn in range(BN):
-    #         rlts = pred_results_list[bn]
-    #         if len(rlts) == 0:
-    #             continue
-    #         ### 将关键点真值（pixel）在预测的bboxes内归一化
-    #         # with torch.no_grad():
-    #         row_ind, col_ind = self.match_roi(gt_bboxes_n_list[bn],  #[num_roi_gt, 4]
-    #                                         rlts)
-    #         group_matched_num += len(row_ind)
-    #         if len(row_ind) == 0:
-    #             continue # 未能找到匹配的roi
-
-    #         (matched_pred_landmarks_n, matched_pred_landmarks_probs), output_num = self.get_pred(row_ind, rlts)
-    #         target_landmarks_n = self.get_target(gt_landmarks_list[bn],
-    #                                                 row_ind, col_ind, output_num,
-    #                                                 rlts).detach().to(torch.float32)
-    #         ### 计算损失
-    #         intermediate_loss:list[LossItemGroup] = []
-    #         intermediate_loss_weights = torch.linspace(0.5, 1, output_num) if output_num > 1 else Tensor([1.0])
-    #         intermediate_loss_weights = torch.square(intermediate_loss_weights).to(matched_pred_landmarks_probs.device)
-    #         selected_output_idx = list(range(output_num))
-    #         if not self.calc_intermediate:
-    #             selected_output_idx = [selected_output_idx[-1]]
-    #         for i in selected_output_idx:
-    #             out_probs = matched_pred_landmarks_probs[i]
-    #             out_coord = matched_pred_landmarks_n[i]
-    #             tgt_coord = target_landmarks_n[i]
-    #             weight = intermediate_loss_weights[i]
-    #             indices = self.match_landmarks(out_probs, out_coord, tgt_coord)
-    #             # loss_group:LossItemGroup = self.calc_loss(indices, out_probs, out_coord, tgt_coord, gt_bboxes_n_list[bn][col_ind])
-    #             # loss_group.set_weight(weight)
-    #             # intermediate_loss.append(loss_group)
-    #             loss_group:Tensor = self.calc_loss(indices, out_probs, out_coord, tgt_coord, gt_bboxes_n_list[bn][col_ind])
-    #             loss.append(torch.mean(loss_group))
-    #     #     # 计算总损失、末位decoder损失、末尾各部分损失
-    #     #     loss:Tensor = LossItemGroup.mean(intermediate_loss).sum()
-    #     #     loss_recoder.record(loss, intermediate_loss[-1])
-    #     # loss = torch.mean(loss_recoder.buffer.mean())
-    #     loss_recoder.buffer.detect_num = group_matched_num
-    #     loss = torch.mean(torch.stack(loss))
-    #     loss_recoder.buffer.loss_sum = loss * group_matched_num
-    #     loss_recoder.merge()
-    #     return loss
 
     def distribute_gt(self,
                       gt_labels_list:list[Tensor],
@@ -495,9 +395,34 @@ class LandmarkLoss(nn.Module):
 
         return matched
 
-    def probs_loss(self, pred, target):
-        probs_loss = F.binary_cross_entropy(pred, target, reduction='none')
-        probs_loss = torch.mean(probs_loss, (-1, -2)) #[output_num, match_num]
+    def probs_loss(self, pred, target, with_weight = False):
+        P_threshold = 0.4
+        # 进一步处理target，大于P_threshold被记为正例，中间的丢弃
+        target[target >= P_threshold] = 1.0
+        target[target < P_threshold] = 0.0 #[o, m, N, C]
+        valid_mask = torch.max(target, dim=-1)[0] == 1# [o, m, N] 必须属于一个类，否则不计算
+
+        ###
+        if SYS == "Windows":
+            plt.subplot(1,2,1)
+            plt.imshow(tensor_to_numpy(pred[0,0]))
+            plt.subplot(1,2,2)
+            plt.imshow(tensor_to_numpy(target[0,0]))
+            plt.show()
+        ###
+
+        if with_weight:
+            weight = torch.sum(target, dim=(0,1,2)) #[C]
+            weight[weight == 0] = 1.0
+            weight = weight[-1] / weight #正负样本均衡
+            weight = torch.clip(weight, 0, 10)
+            ce = F.binary_cross_entropy(pred, target, weight, reduction='none') # [o, m, N]
+        else:
+            ce = F.binary_cross_entropy(pred, target, reduction='none') # [o, m, N]
+        ce = torch.mean(ce, -1)
+        probs_loss = torch.sum((ce * valid_mask), dim=-1) / torch.sum(valid_mask, dim=-1) # [o, m]
+        # 处理 nan
+        probs_loss[torch.isnan(probs_loss)] = 0.0
         return probs_loss
 
     def calculate_cluster_scores(self, pred_coord, target_coord):
@@ -576,11 +501,11 @@ class LandmarkLoss(nn.Module):
         ### 分类损失
         # 类别损失
         target_probs: Tensor = self.calculate_cluster_scores(pred_landmarks_n, target_landmarks_n).detach() #[output_num, match_num, num_queries, ldmk_num + 1]
-        class_loss: Tensor = self.probs_loss(pred_landmarks_probs, target_probs) #[output_num, match_num]
+        class_loss: Tensor = self.probs_loss(pred_landmarks_probs, target_probs, with_weight=True) #[output_num, match_num]
         # 正负样本损失，只考虑正样本判断的损失
-        target_obj = torch.stack([torch.sum(target_probs[...,:-1], dim = -1), target_probs[..., -1]], dim=-1) # [match_num, num_queries, 2]
-        pred_obj = torch.stack([torch.sum(pred_landmarks_probs[...,:-1], dim = -1), pred_landmarks_probs[..., -1]], dim=-1)
-        obj_loss = self.probs_loss(pred_obj, target_obj) #[output_num, match_num]
+        # target_obj = torch.stack([torch.sum(target_probs[...,:-1], dim = -1), target_probs[..., -1]], dim=-1) # [match_num, num_queries, 2]
+        # pred_obj = torch.stack([torch.sum(pred_landmarks_probs[...,:-1], dim = -1), pred_landmarks_probs[..., -1]], dim=-1)
+        # obj_loss = self.probs_loss(pred_obj, target_obj, with_weight=True) #[output_num, match_num]
 
         # 中间输出权重
         output_num = class_loss.shape[0]
@@ -588,10 +513,10 @@ class LandmarkLoss(nn.Module):
         intermediate_loss_weights = torch.square(intermediate_loss_weights).to(class_loss.device)
 
         # 生成损失结果
-        loss_Tensor = torch.stack([dist_loss, class_loss, obj_loss])
+        loss_Tensor = torch.stack([dist_loss, class_loss])
         loss_Tensor = torch.transpose(loss_Tensor, 0, 2)
-        item_weights = torch.Tensor([self.dist_loss_w, self.class_loss_w, self.PN_loss_w])
-        result = LossResult(loss_Tensor, item_weights, [LossKW.DIST, LossKW.CLS, LossKW.PN], intermediate_loss_weights)
+        item_weights = torch.Tensor([self.dist_loss_w, self.class_loss_w])
+        result = LossResult(loss_Tensor, item_weights, [LossKW.DIST, LossKW.CLS], intermediate_loss_weights)
         return result
 
     def forward(self,

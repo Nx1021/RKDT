@@ -1,3 +1,5 @@
+import OLDT_setup
+
 from launcher.Predictor import OLDTPredictor, IntermediateManager
 
 from models.OLDT import OLDT
@@ -9,7 +11,17 @@ import torch
 import numpy as np
 from PIL import Image
 from typing import Iterable
+import os
 
+def find_record(weight_path, default = "cfg/config.yaml"):
+    stamp = os.path.splitext(os.path.split(weight_path)[-1])[0][:14]
+    dirs = os.listdir("./logs/Trainer_logs")
+    for d in dirs:
+        if d[:14] == stamp:
+            cfg_path = os.path.join("./logs/Trainer_logs", d, "config.yaml")
+            if os.path.exists(cfg_path):
+                return cfg_path
+    return default
 
 if __name__ == '__main__':
     sys = platform.system()
@@ -17,12 +29,14 @@ if __name__ == '__main__':
 
     data_folder = './datasets/morrison'
     yolo_weight_path = "weights/best.pt"
-    cfg = "cfg/config.yaml"
     ###
     train_dataset = OLDT_Dataset(data_folder, "train")
     val_dataset = OLDT_Dataset(data_folder, "val")
     load_brach_i = 0
-    load_from = "./weights/20230628005350branch00.pt"
+    load_from = "./weights/20230710202254branch00.pt"
+    # cfg = find_record(load_from, "cfg/config.yaml")
+    cfg = "cfg/config.yaml"
+    print("config file: ", cfg)
     model = OLDT(yolo_weight_path, cfg, [load_brach_i])  # 替换为你自己的模型    
     model.load_branch_weights(load_brach_i, load_from)
     model.set_mode("predict")

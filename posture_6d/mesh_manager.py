@@ -2,10 +2,11 @@ import os
 import json
 import numpy as np
 import open3d as o3d
-from utils.yaml import yaml_load
-from MyLib.posture import Posture
+from .posture import Posture
+from .utils import JsonIO
 
-class ModelInfo:
+
+class MeshMeta:
     def __init__(self,
                  mesh, 
                  bbox_3d: np.ndarray = None, 
@@ -23,7 +24,6 @@ class ModelInfo:
         self.name = name
         self.class_id = class_id
 
-
     @property
     def pcd(self):
         return np.asarray(self.mesh.vertices)
@@ -31,6 +31,10 @@ class ModelInfo:
     @property
     def normals(self):
         return np.asarray(self.mesh.vertex_normals)
+
+    @property
+    def tris(self):
+        return np.asarray(self.mesh.triangles)
 
     def transform(self, posture:Posture, copy = True):
         new_mesh = o3d.geometry.TriangleMesh(self.mesh)
@@ -40,7 +44,7 @@ class ModelInfo:
         new_ldmk = posture * self.ldmk_3d
 
         if copy:
-            return ModelInfo(new_mesh, new_bbox, self.symmetries, self.diameter, new_ldmk, self.name, self.class_id)
+            return MeshMeta(new_mesh, new_bbox, self.symmetries, self.diameter, new_ldmk, self.name, self.class_id)
         else:
             self.mesh = new_mesh
             self.bbox_3d = new_bbox
@@ -48,35 +52,53 @@ class ModelInfo:
             return self
 
 
-class ModelManager:
-    '''
-    单例类
-    '''
+class MeshManager:
     _instance = None
 
-    def __new__(cls, landmark_info_path, models_info_path, model_dirs: dict[int, str]):
+    def __new__(cls, *arg, **kw):
         if not cls._instance:
-            cls._instance = super(ModelManager, cls).__new__(cls)
+            cls._instance = super(MeshManager, cls).__new__(cls)
         return cls._instance
-
-    def __init__(self, landmark_info_path, models_info_path, model_dirs: dict[int, str]) -> None:
-        self.model_dirs: dict[int, str] = model_dirs
-        self.model_names : dict[int, str]      = {}
-        for id_, path in self.model_dirs.items():
+    
+    def __init__(self, root, model_names: dict[int, str], load_all = False, modify_class_id_pairs:list[tuple[int]]=[]) -> None:
+        self.model_names: dict[int, str] = model_names
+        self.model_dirs : dict[int, str]      = {}
+        for id_, name in self.model_names.items():
             # 模型名称
-            name = os.path.splitext(os.path.split(path)[-1])[0]
-            self.model_names.update({id_: name}) 
+            dir_ = os.path.join(root, name)
+            self.model_dirs.update({id_: dir_}) 
+            name = os.path.splitext((os.path.split(name)[-1]))[0]
+            self.model_names[id_] = name
         self.model_meshes       = {}
-        self.model_pointcloud   = {}
-        self.model_normals      = {}
         self.model_bbox_3d          = {}
         self.model_symmetries = {} #"symmetries_continuous": "symmetries_discrete": 
         self.model_diameter = {}
         self.model_ldmk_3d = {}
-        self.landmark_info_path = landmark_info_path
-        self.models_info_path = models_info_path
-        self.load_landmarks(landmark_info_path)
-        self.load_models_info(models_info_path)
+        self.landmark_info_path = os.path.join(root, "landmarks.json")
+        self.models_info_path = os.path.join(root, "models_info.json")
+        self.load_landmarks(self.landmark_info_path)
+        self.load_models_info(self.models_info_path)
+        if load_all or len(modify_class_id_pairs)>0:
+            for key in self.model_dirs:
+                if key not in self.model_meshes:
+                    self.load_model(key)
+        if len(modify_class_id_pairs)>0:
+            self.modify_class_id(modify_class_id_pairs)
+
+    def modify_class_id(self, modify_class_id_pairs):
+        orig_keys = [x[0] for x in modify_class_id_pairs]
+        new_keys = [x[0] for x in modify_class_id_pairs]
+        assert len(orig_keys) == len(set(orig_keys))
+        assert len(new_keys)  == len(set(new_keys))
+        for name, orig_dict in vars(self).items():
+            if isinstance(orig_dict, dict):
+                new_dict = {}
+                for pair in modify_class_id_pairs:
+                    if pair[0] in orig_dict:
+                        new_dict[pair[1]] = orig_dict[pair[0]]
+                        orig_dict.pop(pair[0]) 
+                new_dict.update(orig_dict)
+                self.__setattr__(name, new_dict)
 
     @staticmethod
     def farthest_point_sample(point_cloud, npoint): 
@@ -119,18 +141,9 @@ class ModelManager:
     def load_model(self, model_id:int):
         # 模型路径下的名称目录
         mesh = o3d.io.read_triangle_mesh(self.model_dirs[model_id])
-        # 获取点云的顶点位置
-        vertices = np.asarray(mesh.vertices)  # 顶点坐标
-        if vertices.max() - vertices.min() > 10:
-            vertices = vertices / 1000 # 转换单位为m
-        normals = np.asarray(mesh.vertex_normals)  # 法矢
-        normals_normalized = normals / np.linalg.norm(normals, axis=1, keepdims=True) # 归一化法矢
-
-        self.model_pointcloud.update({model_id: vertices})    
-        self.model_normals.update({model_id: normals_normalized})   
-        self.model_meshes.update({model_id: mesh})   
-
+        mesh.normalize_normals()
   
+        self.model_meshes.update({model_id: mesh})   
 
     def load_models_info(self, models_info_path: str):
         '''
@@ -142,56 +155,53 @@ class ModelManager:
         2_______4        
         '''
         if os.path.exists(models_info_path):
-            try:
-                self.model_diameter:dict[int,float] = {} ### 模型直径
-                self.model_bbox_3d:dict[int,np.ndarray] = {} ### 模型包围盒
-                self.model_symmetries:dict[int, dict] = {}
-                with open(models_info_path, 'r') as MI:
-                    info = json.load(MI)
-                    for k,v in info.items():
-                        k = int(k)
-                        self.model_diameter.update({k: v["diameter"]})
-                        min_x =  info[str(k)]["min_x"]
-                        min_y =  info[str(k)]["min_y"]
-                        min_z =  info[str(k)]["min_z"]
-                        size_x = info[str(k)]["size_x"]
-                        size_y = info[str(k)]["size_y"]
-                        size_z = info[str(k)]["size_z"]
-                        # 计算顶点坐标并以ndarray返回
-                        max_x = min_x + size_x
-                        max_y = min_y + size_y
-                        max_z = min_z + size_z
-                        # 计算顶点坐标并以ndarray返回
-                        #   0,  1,  2,  3,  4,  5,  6,  7
-                        x =np.array([-1,-1, 1, 1, 1, 1,-1,-1]) * max_x
-                        y =np.array([-1,-1,-1,-1, 1, 1, 1, 1]) * max_y
-                        z =np.array([-1, 1,-1, 1,-1, 1,-1, 1]) * max_z
-                        vertex = np.vstack((x, y, z)).T
-                        self.model_bbox_3d.update({k: vertex}) #[8, 3]
-                        # 对称属性
-                        for symm in ["symmetries_continuous", "symmetries_discrete"]:
-                            if symm in info[str(k)]:
-                                self.model_symmetries.update({k: info[str(k)][symm]})
-            except:
-                print("Error: PnPSolver cannot set_models_info_path")
+            self.model_diameter:dict[int,float] = {} ### 模型直径
+            self.model_bbox_3d:dict[int,np.ndarray] = {} ### 模型包围盒
+            self.model_symmetries:dict[int, dict] = {}
+            # with open(models_info_path, 'r') as MI:
+            #     info = json.load(MI)
+            info = JsonIO.load_json(models_info_path)
+            for k,v in info.items():
+                self.model_diameter.update({k: v["diameter"]})
+                min_x =  info[k]["min_x"]
+                min_y =  info[k]["min_y"]
+                min_z =  info[k]["min_z"]
+                size_x = info[k]["size_x"]
+                size_y = info[k]["size_y"]
+                size_z = info[k]["size_z"]
+                # 计算顶点坐标并以ndarray返回
+                max_x = min_x + size_x
+                max_y = min_y + size_y
+                max_z = min_z + size_z
+                # 计算顶点坐标并以ndarray返回
+                #   0,  1,  2,  3,  4,  5,  6,  7
+                x =np.array([-1,-1, 1, 1, 1, 1,-1,-1]) * max_x
+                y =np.array([-1,-1,-1,-1, 1, 1, 1, 1]) * max_y
+                z =np.array([-1, 1,-1, 1,-1, 1,-1, 1]) * max_z
+                vertex = np.vstack((x, y, z)).T
+                self.model_bbox_3d.update({k: vertex}) #[8, 3]
+                # 对称属性
+                for symm in ["symmetries_continuous", "symmetries_discrete"]:
+                    if symm in info[k]:
+                        self.model_symmetries.update({k: info[k][symm]})
             self.models_info_path = models_info_path
         else:
             print("Warning: models_info_path doesn't exist")
 
     def load_landmarks(self, landmark_info_path: str):
+        recalc = True
         if os.path.exists(landmark_info_path):
-            try:
-                self.model_ldmk_3d:dict[int,np.ndarray]  = {} ### 模型关键点
-                with open(landmark_info_path, 'r') as ldmkf:
-                    ldmks_info = json.load(ldmkf)
-                    for k,v in ldmks_info.items():
-                        v = np.reshape(np.array(v), (-1, 3))
-                        self.model_ldmk_3d.update({int(k): v})
-            except:
-                print("Error: PnPSolver cannot set_landmark_info_path")
             self.landmark_info_path = landmark_info_path
-        else:
-            print("Warning: landmark_info_path doesn't exist")
+            self.model_ldmk_3d:dict[int,np.ndarray] = JsonIO.load_json(landmark_info_path)
+            if set(self.model_ldmk_3d.keys()) == set(self.model_dirs.keys()):
+                recalc = False
+        if recalc:
+            for class_id in self.model_dirs:
+                points = self.get_model_pcd(class_id)
+                centroids, farthest_idx_array = self.farthest_point_sample(points, 24)
+                self.model_ldmk_3d.update({class_id: centroids})
+            JsonIO.dump_json(landmark_info_path, self.model_ldmk_3d)
+            print("Warning: landmark_info_path doesn't exist, calculated")
 
     def get_bbox_3d(self, class_id:int):
         bbox_3d = self.model_bbox_3d[class_id].copy()
@@ -202,21 +212,21 @@ class ModelManager:
         return ldmk_3d
 
     def get_model_name(self, class_id:int) -> str:
-        if class_id not in self.model_pointcloud:
+        if class_id not in self.model_names:
             self.load_model(class_id)
         name = self.model_names[class_id]
         return name
 
     def get_model_pcd(self, class_id:int) -> np.ndarray:
-        if class_id not in self.model_pointcloud:
+        if class_id not in self.model_meshes:
             self.load_model(class_id)
-        pcd = self.model_pointcloud[class_id].copy()
+        pcd = np.asarray(self.model_meshes[class_id].vertices)
         return pcd
 
     def get_model_normal(self, class_id:int) -> np.ndarray:
-        if class_id not in self.model_normals:
+        if class_id not in self.model_meshes:
             self.load_model(class_id)
-        normal = self.model_normals[class_id].copy()
+        normal = np.asarray(self.model_meshes[class_id].vertex_normals)
         return normal
 
     def get_model_mesh(self, class_id:int) -> np.ndarray:
@@ -235,7 +245,7 @@ class ModelManager:
         else:
             return self.model_symmetries[class_id].copy()
     
-    def export_one_model(self, class_id:int):
+    def export_meta(self, class_id:int):
         mesh                = self.get_model_mesh(class_id)
         bbox_3d     = self.get_bbox_3d(class_id)
         symmetries  = self.get_model_symmetries(class_id) #"symmetries_continuous": "symmetries_discrete": 
@@ -244,12 +254,11 @@ class ModelManager:
 
         name = self.get_model_name(class_id)
 
-        return ModelInfo(mesh, bbox_3d, symmetries, diameter, ldmk_3d, name = name, class_id = class_id)
-
-def create_model_manager(cfg) -> ModelManager:
-    cfg_paras = yaml_load(cfg)
-    model_manager = ModelManager(cfg_paras["landmarks"],
-                                 cfg_paras["models_info"],
-                                 cfg_paras["pcd_models"])
-    return model_manager
-
+        return MeshMeta(mesh, bbox_3d, symmetries, diameter, ldmk_3d, name = name, class_id = class_id)
+    
+    def get_meta_dict(self):
+        meta_dict = {}
+        for key in self.model_dirs:
+            meta = self.export_meta(key)
+            meta_dict[key] = meta
+        return meta_dict

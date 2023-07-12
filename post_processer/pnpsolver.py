@@ -1,12 +1,16 @@
-from post_processer.model_manager import create_model_manager
-import os
-import json
+from posture_6d.mesh_manager import MeshManager
 import numpy as np
 import cv2
-from scipy.optimize import dual_annealing
 TEST_RPnP = False
 
 from utils.yaml import yaml_load
+
+def create_model_manager(cfg) -> MeshManager:
+    cfg_paras = yaml_load(cfg)
+    model_manager = MeshManager(cfg_paras["models_dir"],
+                                 cfg_paras["pcd_models"])
+    return model_manager
+
 
 class PnPSolveMode(enumerate):
     SOLVEMODE_RPNP = 0
@@ -93,25 +97,15 @@ class PnPSolver():
                         points_3d   :np.ndarray,
                         points_visib:np.ndarray = np.array([]),  # type: ignore
                         K           :np.ndarray = np.array([]),  # type: ignore
-                        D           :np.ndarray = np.array([]),  # type: ignore
-                        mode        :int    = PnPSolveMode.SOLVEMODE_EPNP):
+                        D           :np.ndarray = np.array([])  # type: ignore
+                        ):
         '''
         point_type: 'kp', 'bbox'
         '''
-        assert mode == PnPSolveMode.SOLVEMODE_EPNP or mode == PnPSolveMode.SOLVEMODE_RPNP
-        if TEST_RPnP:
-            from RPnP import solveRPnP
-        else:
-            from MyLib.RPnP import solveRPnP
         K,D = self.__filter_cam_parameter(K, D)
         points, points_3d = self.__filter_visib(points, points_3d, points_visib)
         # 计算
-        if mode == PnPSolveMode.SOLVEMODE_EPNP:
-            success, vector_R, vector_T  = cv2.solvePnP(points_3d, points, K, D, flags=cv2.SOLVEPNP_EPNP)
-        elif mode == PnPSolveMode.SOLVEMODE_RPNP:
-            success, vector_R, vector_T  = solveRPnP(points_3d, points, K)
-        else:
-            vector_R, vector_T = np.zeros(3), np.zeros(3)
+        success, vector_R, vector_T  = cv2.solvePnP(points_3d, points, K, D, flags=cv2.SOLVEPNP_EPNP)
         return vector_R, vector_T
 
     def solvepnp_batch(self, 
@@ -162,7 +156,6 @@ class PnPSolver():
             points_visib_batch = np.ones(points_batch.shape[:2], np.bool_)
 
         for points, points_3d, points_visib in zip(points_batch, points_3d_batch, points_visib_batch):
-            points = utils.inv_resize_pointarray(points, 0.8, [(64, 64), (0, 0), (0, 0)], None) #还原要尺寸
             vector_R, vector_T = self.solvepnp(points[:, [1,0]], points_3d, points_visib, K, D)
             results.append([vector_R, vector_T])
         return results
@@ -189,13 +182,11 @@ class PnPSolver():
         '''
         bbox_2d_list = []
         for kp, id, visib in zip(keypoints, class_ids, points_visib):
-            kp = utils.inv_resize_pointarray(kp, 0.8, [(64, 64), (0, 0), (0, 0)], None)
             kp_3d = self.get_kp_3d(id)
             vecter_R, vector_T = self.solvepnp(kp[:, [1,0]], kp_3d, points_visib = visib)
             bbox_3d = self.get_bbox_3d(id)
             bbox_2d = self.calc_reproj(vecter_R, vector_T, bbox_3d)
             bbox_2d = bbox_2d[:, [1,0]]
-            bbox_2d = utils.resize_pointarray(bbox_2d, 0.8, [(64, 64), (0, 0), (0, 0)], None)
             bbox_2d_list.append(bbox_2d)
         bboxes_2d = np.stack(bbox_2d_list, 0)
         return bboxes_2d
@@ -211,7 +202,6 @@ class PnPSolver():
             bbox_3d = self.get_bbox_3d(id)
             bbox_2d = self.calc_reproj(vecter_R, vector_T, bbox_3d)
             bbox_2d = bbox_2d[:, [1,0]]
-            bbox_2d = utils.resize_pointarray(bbox_2d, 0.8, [(64, 64), (0, 0), (0, 0)], None)
             bbox_2d_list.append(bbox_2d)
         bboxes_2d = np.stack(bbox_2d_list, 0)
         return bboxes_2d
