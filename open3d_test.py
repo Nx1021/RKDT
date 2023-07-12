@@ -29,30 +29,30 @@ if __name__ == "__main__":
     #     obj.plot(gripper=gripper, gripper_posture_O=Posture(rvec=rvecs[i], tvec=tvecs[i]), u = us[i])
 
 
-    scene = Scene()
+    # scene = Scene()
 
-    for i in range(3):
-        obj = create_ObjectPcd_from_file(i)
-        scene.add_object(obj, Posture(rvec=np.array([0., 0,0]), tvec=np.array([400.0 + np.random.randint(-100, 100), np.random.randint(-100, 100), 0])))
-    start = time.time()
-    for obj in scene.object_list:
-        success, gp, u = scene.calc_grasp_posture(obj)
-        if success:
-            scene.gripper.set_u(u)
-            scene.gripper.posture_WCS = gp
-            scene.show_scene()
-        else:
-            print("find no feasible grasp coordinate")
-        # for obj in scene.object_list:
-        #     success, gp, u = scene.calc_grasp_posture(obj)
-        #     if success:
-        #         scene.gripper.set_u(u)
-        #         scene.gripper.posture_inR = gp
-        #         # scene.show_scene()
-        #     else:
-        #         print("find no feasible grasp coordinate")
-    stop = time.time()
-    print(stop - start)
+    # for i in range(3):
+    #     obj = create_ObjectPcd_from_file(i)
+    #     scene.add_object(obj, Posture(rvec=np.array([0., 0,0]), tvec=np.array([400.0 + np.random.randint(-100, 100), np.random.randint(-100, 100), 0])))
+    # start = time.time()
+    # for obj in scene.object_list:
+    #     success, gp, u = scene.calc_grasp_posture(obj)
+    #     if success:
+    #         scene.gripper.set_u(u)
+    #         scene.gripper.posture_WCS = gp
+    #         scene.show_scene()
+    #     else:
+    #         print("find no feasible grasp coordinate")
+    #     # for obj in scene.object_list:
+    #     #     success, gp, u = scene.calc_grasp_posture(obj)
+    #     #     if success:
+    #     #         scene.gripper.set_u(u)
+    #     #         scene.gripper.posture_inR = gp
+    #     #         # scene.show_scene()
+    #     #     else:
+    #     #         print("find no feasible grasp coordinate")
+    # stop = time.time()
+    # print(stop - start)
 
     # gripper = Gripper()
 
@@ -71,6 +71,6 @@ if __name__ == "__main__":
     # hough._loop_method(test_image)
     # print(time.time() - start)
     # calc = CandiCoordCalculator(create_ObjectPcd_from_file(0), gripper)
-    for i in range(1):
+    for i in range(2, 9):
         calc = CandiCoordCalculator(create_ObjectPcd_from_file(i), gripper)
-        calc.calc_candidate_coord()
+        calc.calc_candidate_coord(False)

@@ -224,7 +224,7 @@ class Voxelized():
         _entity = _entity[1:-1, 1:-1, 1:-1]
 
         ### 填充实体       
-        entity = fill_3d(_entity)
+        entity = Voxelized.fill_3d(_entity)
 
         ### 过滤部分离群点
         idx = np.array(np.where(entity)).T
@@ -242,8 +242,29 @@ class Voxelized():
         return Voxelized(entity, restore_mat, orig_mesh = mesh)
 
     @staticmethod
-    def from_pcd(self):
-        pass
+    def fill_3d(voxel_array:np.ndarray):
+        '''
+        沿不同方向累加，累加值为奇数的是内部
+        '''
+        padded_array = np.pad(voxel_array, ((1, 1), (1, 1), (1, 1)), mode='constant', constant_values=0)
+        # padded_array = padded_array.astype(np.int8)
+        cum_list = []
+        for i in range(3):
+            padding = tuple([(1,0) if p == i else (0,0) for p in range(3)])
+            padded_array = np.pad(voxel_array, padding, mode='constant', constant_values=0)
+            diff = np.diff(padded_array, axis = i)
+            # diff = np.swapaxes(diff, 0, i)[:-1]
+            # diff = np.swapaxes(diff, 0, i)
+            diff = diff > 0
+            cum = (np.cumsum(diff, axis=i) / 2).astype(np.uint16)
+            cum_list.append(cum)
+        cum = np.stack(cum_list) # [3, W, H, D]
+        odd = np.mod(cum, 2) == 1 # [3, W, H, D]
+        in_voting = np.sum(odd, axis=0) > 2
+
+        entity = voxel_array.copy()
+        entity[in_voting] = 1
+        return entity
 
 class Triangle_Hough():
     def __init__(self, resolution:float, r_max:float, r_min:float, theta_resolution:float) -> None:
@@ -567,41 +588,6 @@ class _CoordSearcher():
 
     def merge_similar(self):
         pass
-
-        # posture_gripper_trans__ = Posture(homomat = np.linalg.multi_dot( (
-        #                                                         posture_t.trans_mat, 
-        #                                                         posture_z_rot.trans_mat)))         
-        # gripper.show_claw(posture_gripper_trans__.trans_mat, geometrys=[surf_normal_voxel_grid])  
-
-        ## score the posture, consider about the voxels near the grasped voxel
-        ## the more their normals parallel to the grasp vectors, the higher the score is.
-        ## The closer the gripping center is to the center of gravity, the higher the score is.
-        scores = []              
-        # gather the neighborhood
-        for _s in range(3):
-            # normal
-            _box = np.zeros(surf_box.shape, np.uint8)
-            _box[tuple(gig[_s])] = 1
-            structure = np.ones((1,1,3), np.uint)
-            _dilated_body = ndimage.binary_dilation(_box, structure=structure, iterations=1)
-            neighborhood = np.where(_dilated_body)
-            neighborhood_indices = grid_indices_box[neighborhood]
-            neighborhood_indices = neighborhood_indices[neighborhood_indices != -1]
-            neighborhood_normals = grid_surf_normals[neighborhood_indices, :3]
-            grasp_vector = grasp_direction[_s]
-            grasp_vector = grasp_vector / np.linalg.norm(grasp_vector)
-            inner_product = np.sum(neighborhood_normals * grasp_vector) / np.sum(_dilated_body)
-            # gravity
-            gravity = np.mean(np.array(np.where(body_box)).T, axis = 0)
-            force_arm = np.linalg.norm(gig_center[:2] - gravity[:2])
-            gravity_score = (-force_arm+self.gripper.finger_gripping_length) / (force_arm+self.gripper.finger_gripping_length)  #in [-1, 1]
-            scores.append(inner_product + gravity_score)
-        grasp_score = np.mean(scores)
-        ## record
-        local_grasp_poses[gcount, :3] = posture_gripper_trans.rvec
-        local_grasp_poses[gcount, 3:6] = posture_gripper_trans.tvec
-        local_grasp_poses[gcount, 6]  = u
-        local_grasp_poses[gcount, 7]  = grasp_score
 
     def restore(self, rvec, graps_indices, us):
         '''
