@@ -109,7 +109,7 @@ class Trainer(Launcher):
         self.backward_time = 0.0
         self.loss_time = 0.0
 
-        self.freeze_modules = [self.model.landmark_branches[0].pos_embed]
+        self.freeze_modules = [self.inner_model.landmark_branches[0].pos_embed]
 
     @property
     def skip(self):
@@ -156,6 +156,10 @@ class Trainer(Launcher):
                     # 前向传播
                     detection_results = self.model(images)
                     loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results, ldmk_loss_mngr)
+                    if torch.isnan(loss).item():
+                        print("loss nan, break!")
+                        self.inner_model.save_branch_weights("./weights/", self.start_timestamp)
+                        sys.exit()
                     # 反向传播和优化
                     if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor):
                         self.optimizer.zero_grad()
@@ -186,11 +190,11 @@ class Trainer(Launcher):
         return ldmk_loss_mngr.loss()
 
     def train_one_epoch(self, dataloader):
-        self.model.set_mode("train")
+        self.inner_model.set_mode("train")
         return self.forward_one_epoch(dataloader, True)
 
     def val_one_epoch(self, dataloader):
-        self.model.set_mode("val")
+        self.inner_model.set_mode("val")
         with torch.no_grad():
             return self.forward_one_epoch(dataloader, False)
         # ldmk_loss_mngr = LandmarkLossRecorder("Val")

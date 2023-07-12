@@ -8,7 +8,8 @@ from torchvision.ops.boxes import box_area
 from torchvision.ops import generalized_box_iou
 from scipy.optimize import linear_sum_assignment
 from models.roi_pipeline import LandmarkDetectionResult
-from models.utils import _KW, denormalize_bbox
+from models.utils import _KW, denormalize_bbox, tensor_to_numpy
+from models import SYS
 import platform
 import matplotlib.pyplot as plt
 
@@ -362,7 +363,7 @@ class LandmarkLoss(nn.Module):
 
         # Final cost matrix
         # C = cost_dist + cost_class
-        C = cost_class #cost_dist + 
+        C = cost_dist#cost_class + cost_dist
         C = C.detach().cpu().numpy()
         # 使用匈牙利算法匹配预测的关键点
         indices = [Tensor(np.array(linear_sum_assignment(c))).transpose(0,1) for c in C]
@@ -495,9 +496,34 @@ class LandmarkLoss(nn.Module):
 
         return matched
 
-    def probs_loss(self, pred, target):
-        probs_loss = F.binary_cross_entropy(pred, target, reduction='none')
-        probs_loss = torch.mean(probs_loss, (-1, -2)) #[output_num, match_num]
+    def probs_loss(self, pred, target, with_weight = False):
+        P_threshold = 0.4
+        # 进一步处理target，大于P_threshold被记为正例，中间的丢弃
+        target[target >= P_threshold] = 1.0
+        target[target < P_threshold] = 0.0 #[o, m, N, C]
+        valid_mask = torch.max(target, dim=-1)[0] == 1# [o, m, N] 必须属于一个类，否则不计算
+
+        ###
+        if SYS == "Windows":
+            plt.subplot(1,2,1)
+            plt.imshow(tensor_to_numpy(pred[0,0]))
+            plt.subplot(1,2,2)
+            plt.imshow(tensor_to_numpy(target[0,0]))
+            plt.show()
+        ###
+
+        if with_weight:
+            weight = torch.sum(target, dim=(0,1,2)) #[C]
+            weight[weight == 0] = 1.0
+            weight = weight[-1] / weight #正负样本均衡
+            weight = torch.clip(weight, 0, 10)
+            ce = F.binary_cross_entropy(pred, target, weight, reduction='none') # [o, m, N]
+        else:
+            ce = F.binary_cross_entropy(pred, target, reduction='none') # [o, m, N]
+        ce = torch.mean(ce, -1)
+        probs_loss = torch.sum((ce * valid_mask), dim=-1) / torch.sum(valid_mask, dim=-1) # [o, m]
+        # 处理 nan
+        probs_loss[torch.isnan(probs_loss)] = 0.0
         return probs_loss
 
     def calculate_cluster_scores(self, pred_coord, target_coord):
@@ -576,11 +602,11 @@ class LandmarkLoss(nn.Module):
         ### 分类损失
         # 类别损失
         target_probs: Tensor = self.calculate_cluster_scores(pred_landmarks_n, target_landmarks_n).detach() #[output_num, match_num, num_queries, ldmk_num + 1]
-        class_loss: Tensor = self.probs_loss(pred_landmarks_probs, target_probs) #[output_num, match_num]
+        class_loss: Tensor = self.probs_loss(pred_landmarks_probs, target_probs, with_weight=True) #[output_num, match_num]
         # 正负样本损失，只考虑正样本判断的损失
-        target_obj = torch.stack([torch.sum(target_probs[...,:-1], dim = -1), target_probs[..., -1]], dim=-1) # [match_num, num_queries, 2]
-        pred_obj = torch.stack([torch.sum(pred_landmarks_probs[...,:-1], dim = -1), pred_landmarks_probs[..., -1]], dim=-1)
-        obj_loss = self.probs_loss(pred_obj, target_obj) #[output_num, match_num]
+        # target_obj = torch.stack([torch.sum(target_probs[...,:-1], dim = -1), target_probs[..., -1]], dim=-1) # [match_num, num_queries, 2]
+        # pred_obj = torch.stack([torch.sum(pred_landmarks_probs[...,:-1], dim = -1), pred_landmarks_probs[..., -1]], dim=-1)
+        # obj_loss = self.probs_loss(pred_obj, target_obj, with_weight=True) #[output_num, match_num]
 
         # 中间输出权重
         output_num = class_loss.shape[0]
@@ -588,10 +614,10 @@ class LandmarkLoss(nn.Module):
         intermediate_loss_weights = torch.square(intermediate_loss_weights).to(class_loss.device)
 
         # 生成损失结果
-        loss_Tensor = torch.stack([dist_loss, class_loss, obj_loss])
+        loss_Tensor = torch.stack([dist_loss, class_loss])
         loss_Tensor = torch.transpose(loss_Tensor, 0, 2)
-        item_weights = torch.Tensor([self.dist_loss_w, self.class_loss_w, self.PN_loss_w])
-        result = LossResult(loss_Tensor, item_weights, [LossKW.DIST, LossKW.CLS, LossKW.PN], intermediate_loss_weights)
+        item_weights = torch.Tensor([self.dist_loss_w, self.class_loss_w])
+        result = LossResult(loss_Tensor, item_weights, [LossKW.DIST, LossKW.CLS], intermediate_loss_weights)
         return result
 
     def forward(self,

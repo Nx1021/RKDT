@@ -1,22 +1,23 @@
-from MyLib.posture import Posture
-from post_processer.model_manager import ModelInfo, create_model_manager
+from posture_6d.posture import Posture
+from posture_6d.mesh_manager import MeshMeta, MeshManager
+
 import numpy as np
 import open3d as o3d
 import os
 import time
 import matplotlib.pyplot as plt 
 
-
-from grasp_coord import MODELS_DIR
+from utils.yaml import yaml_load
+from grasp_coord import MODELS_DIR, PCD_MODELS
 from grasp_coord.gripper import Gripper, MyThreeFingerGripper
 
 def create_ObjectPcd_from_file(class_id):
-    mm = create_model_manager("./cfg/config.yaml")
-    return ObjectPcd(mm.export_one_model(class_id))
+    mm = MeshManager(MODELS_DIR, PCD_MODELS)
+    return ObjectPcd(mm.export_meta(class_id))
 
-class ObjectPcd(ModelInfo):
+class ObjectPcd(MeshMeta):
     def __init__(self, 
-                 modelinfo:ModelInfo,
+                 modelinfo:MeshMeta,
                  posture:Posture = None) -> None:
         super().__init__(   modelinfo.mesh, 
                             modelinfo.bbox_3d, 

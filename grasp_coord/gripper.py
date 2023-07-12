@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 import open3d as o3d
-from MyLib.posture import Posture
+from posture_6d.posture import Posture
 
 from sko.GA import GA
 

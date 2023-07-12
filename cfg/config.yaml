@@ -29,20 +29,20 @@ score_beta : 0.4
 score_eps : 0.0001
 
 ### post progress
-models_dir: datasets/models
+models_dir: datasets/morrison/models
 pcd_models: 
-  0: datasets/models/bar_clamp.ply
-  1: datasets/models/gearbox.ply
-  2: datasets/models/nozzle.ply
-  3: datasets/models/part1.ply
-  4: datasets/models/part3.ply
-  5: datasets/models/pawn.ply
-  6: datasets/models/turbine_housing.ply
-  7: datasets/models/vase.ply
-  8: datasets/models/ape.ply
-models_info: datasets/models/models_info.json
-bboxes: datasets/models/bboxes.json
-grasp_model_dict: datasets/models/grasp_model_dict.json
-landmarks: datasets/models/landmarks.json
-default_K: datasets/models/default_K.txt
+  0: bar_clamp.ply
+  1: gearbox.ply
+  2: nozzle.ply
+  3: part1.ply
+  4: part3.ply
+  5: pawn.ply
+  6: turbine_housing.ply
+  7: vase.ply
+  8: ape.ply
+models_info: models_info.json
+# bboxes: datasets/models/bboxes.json
+# grasp_model_dict: datasets/models/grasp_model_dict.json
+# landmarks: datasets/morrison/landmarks.json
+default_K: datasets/morrison/default_K.txt
 out_bbox_threshold: 1.0

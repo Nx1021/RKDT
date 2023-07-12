@@ -1,6 +1,6 @@
 from post_processer.pnpsolver import PnPSolver
 
-from MyLib.posture import Posture
+from posture_6d.posture import Posture
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt

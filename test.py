@@ -1,24 +1,14 @@
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
-import torch.nn.functional as F
-from models.loss import calculate_scores
+import OLDT_setup
+import sys
+from posture_6d.utils import JsonIO
+from posture_6d.posture import Posture
 
-from launcher.utils import compare_train_log
-from models.utils import normalize_bbox
-from models.loss import LandmarkLoss
-import time
+Posture()
 
-if __name__ == "__main__":
-    compare_train_log(["20230629032403Linux", "20230629040700Linux"])
-    # out_probs = torch.rand(6, 1, 3, 4).to("cuda")
-    # target_probs = torch.rand(6, 1, 3, 4 rget_probs, reduction='none')[0])
-    # print(F.binary_cross_entropy(out_prob[0], target_probs[0], reduction='none'))
+json_data = JsonIO.load_json(r"E:\shared\code\OLDT\datasets\morrison\models\models_info.json")
+for k1, v1 in json_data.items():
+    for k2, v2 in v1.items():
+        v1[k2] = v2 * 1000
+json_data = JsonIO.dump_json('path.json', json_data)
 
-    # bbox = torch.Tensor([[0.0, 0.0, 50.0, 50.0]]).repeat(1, 1)#.to("cuda")
-    # ldml = (torch.rand(1, 24, 2)*50)#.to("cuda")
-    # start = time.time()
-    # for i in range(100000):
-    #     LandmarkLoss.get_target(ldml, bbox)
-    # print(time.time() - start)
-
+    

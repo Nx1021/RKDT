@@ -2,7 +2,7 @@ from torch import Tensor
 import torch
 from models.utils import denormalize_bbox, normalize_bbox, tensor_to_numpy
 
-from MyLib.posture import Posture
+from posture_6d.posture import Posture
 
 import matplotlib.pyplot as plt
 import numpy as np
