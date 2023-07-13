@@ -10,12 +10,10 @@ import os
 import shutil
 import cv2
 import time
-import png
 import json
 import scipy.ndimage as image
 import skimage
 import scipy.spatial as spt
-from sko.GA import GA
 
 from abc import ABC, abstractmethod
 from typing import Union, Callable
@@ -344,7 +342,9 @@ class DatasetFormat(ABC):
         '''
         if not ignore_warning:
             y = input("All files in {} will be deleted, please enter 'y' to confirm".format(self.directory))
-        if y == 'y' or ignore_warning:
+        else:
+            y = 'y'
+        if y == 'y':
             for path in list(self.elements.keys()) + list(self.base_json.keys()):
                 if os.path.exists(path):
                     if os.path.isdir(path):
@@ -352,6 +352,7 @@ class DatasetFormat(ABC):
                         os.makedirs(path)
                     else:
                         os.remove(path)
+            [x.clear() for x in self.base_json.values()]
         self._updata_data_num()
 
 class LinemodFormat(DatasetFormat):
@@ -359,7 +360,7 @@ class LinemodFormat(DatasetFormat):
     KW_GT_t = "cam_t_m2c"
     KW_GT_ID = "obj_id"
     
-    class __MasksElements(DatasetFormat._Elements):
+    class _MasksElements(DatasetFormat._Elements):
         def id_format(self, class_id):
             id_format = "_" + str(class_id).rjust(6, "0")
             return id_format
@@ -375,8 +376,8 @@ class LinemodFormat(DatasetFormat):
             return masks
         
         def write(self, data_i, masks:dict[int, np.ndarray]):
-            for id_, mask in masks.items():
-                super().write(data_i, mask, appname=self.id_format(id_))
+            for n, mask in enumerate(masks.values()):
+                super().write(data_i, mask, appname=self.id_format(n))
 
     def __init__(self, directory) -> None:
         super().__init__(directory)
@@ -386,7 +387,7 @@ class LinemodFormat(DatasetFormat):
 
         self.rgb_elements   = self._Elements(self, self.rgb_dir,      cv2.imread,                                    cv2.imwrite, '.png')
         self.depth_elements = self._Elements(self, self.depth_dir,    lambda x:cv2.imread(x, cv2.IMREAD_ANYDEPTH),   cv2.imwrite, '.png')
-        self.masks_elements = self.__MasksElements(self, self.mask_dir,lambda x:cv2.imread(x, cv2.IMREAD_GRAYSCALE), cv2.imwrite, '.png')
+        self.masks_elements = self._MasksElements(self, self.mask_dir,lambda x:cv2.imread(x, cv2.IMREAD_GRAYSCALE), cv2.imwrite, '.png')
 
         self.scene_gt_file              = os.path.join(self.directory, "scene_gt.json")
         self.scene_gt_info              = self._load_basejson(self.scene_gt_file)
@@ -557,7 +558,7 @@ class VocFormat(DatasetFormat):
         #
         depth = self.depth_elements.read(data_i, appdir=sub_set)
         #
-        ids = self.labels_elements.read(data_i)[:,0].astype(np.int32).tolist()
+        ids = self.labels_elements.read(data_i, appdir=sub_set)[:,0].astype(np.int32).tolist()
         masks = self.masks_elements.read(data_i, appdir=sub_set)
         masks_dict:dict[int, np.ndarray] = dict(zip(ids, masks))
         #
@@ -576,4 +577,25 @@ class VocFormat(DatasetFormat):
                         landmarks_dict,
                         visib_fract)
 
-    
+class _LinemodFormat_sub1(LinemodFormat):
+    class _MasksElements(DatasetFormat._Elements):
+        def id_format(self, class_id):
+            id_format = "_" + str(class_id).rjust(6, "0")
+            return id_format
+
+        def read(self, data_i):
+            masks = {}
+            for n in range(100):
+                mask = super().read(data_i, appname=self.id_format(n))
+                if mask is None:
+                    continue
+                masks[n] = mask
+            return masks
+        
+        def write(self, data_i, masks:dict[int, np.ndarray]):
+            for id_, mask in masks.items():
+                super().write(data_i, mask, appname=self.id_format(id_))
+
+    def __init__(self, directory) -> None:
+        super().__init__(directory)
+        self.rgb_elements   = self._Elements(self, self.rgb_dir,      cv2.imread,                                    cv2.imwrite, '.jpg')

@@ -12,23 +12,13 @@ from models.OLDT import OLDT
 import time
 
 import os
+import shutil
 
 # print("waiting...")
 # time.sleep(60 * 60 *4)
 
-
-
-
 torch.set_default_dtype(torch.float32)
-# Load the model
-# dm = DetectionModel(cfg='yolov8l.yaml')
-# image = cv2.cvtColor(cv2.imread("test.jpg"), cv2.COLOR_BGR2RGB)
-# image = torch.Tensor(image)
-# image = torch.unsqueeze(image, 0)
-# image = torch.transpose(image, 1, 3)
-# dm(image)
 
-# get_user_config_dir()
 def clear_log():
     import os, shutil
     log_dir = "./logs/Trainer_logs"
@@ -63,10 +53,13 @@ if __name__ == '__main__':
     if sys == "Windows":
         clear_log()
 
-
     data_folder = './datasets/morrison'
     if USE_DATA_IN_SERVER and sys == "Linux":
+        orig_data_folder = data_folder
         data_folder = os.path.join(SERVER_PERSONAL_DIR, data_folder)
+        if not os.path.exists(data_folder):
+            # copy
+            shutil.copytree(orig_data_folder, data_folder)
         print("use data on the server: ", data_folder)
     yolo_weight_path = "weights/best.pt"
     cfg = "cfg/config.yaml"
@@ -76,9 +69,9 @@ if __name__ == '__main__':
     loss = LandmarkLoss(cfg)
     model = OLDT(yolo_weight_path, cfg, [0])  # 替换为你自己的模型
     load_brach_i = 0
-    load_from = "./weights/20230707013957branch00.pt"
+    # load_from = "./weights/20230707013957branch00.pt"
     # load_from = "./weights/20230710004623branch00.pt"
-    # load_from = ""
+    load_from = ""
     model.load_branch_weights(load_brach_i, load_from)
     num_epochs = 400
     warm_up = int(num_epochs * 0.2)
@@ -94,10 +87,11 @@ if __name__ == '__main__':
         # model = torch.nn.DataParallel(model)
     else:
         raise SystemError
-    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size, num_epochs, learning_rate, warm_up, 
+    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
+                      flowfile= "./cfg/train_flow.yaml",
                       distribute=False,
-                      start_epoch = start_epoch,
-                      flowfile= "./cfg/train_flow.yaml")
+                      start_epoch = start_epoch
+                      )
     trainer.logger.log({
         "System": sys,
         "data_folder": data_folder,

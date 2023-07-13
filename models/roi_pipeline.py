@@ -241,9 +241,9 @@ class CropLayer(nn.Module):
         return all_croped, all_used_bbox_n
 
 class FeatureMapDistribution(nn.Module):
-    def __init__(self, cfg_file) -> None:
+    def __init__(self, cfg) -> None:
         super().__init__()
-        self.cfg = yaml_load(cfg_file)
+        self.cfg = cfg
         max_token_num  = self.cfg["max_token_num"]
         pool_size      = self.cfg["pool_size"]
         self.crop_layer = CropLayer(self.cfg, max_token_num, pool_size)

@@ -32,7 +32,7 @@ import time
 from typing import Union
 sys_name = platform.system()
 if sys_name == "Windows":
-    TESTFLOW = True
+    TESTFLOW = False
 else:
     TESTFLOW = False
 
@@ -108,24 +108,16 @@ class Trainer(Launcher):
                  val_dataset,
                  criterion,
                  batch_size,
-                 num_epochs:int,
-                 init_lr,
-                 warmup_epoch,
+                 flowfile = "",
                  distribute = False,
                  test=False,
-                 start_epoch = 0,
-                 flowfile = ""):
+                 start_epoch = 0):
         super().__init__(model, batch_size)
         self.model:Union[OLDT, torch.nn.DataParallel] = model
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
 
         self.flow = TrainFlow(self, flowfile)
-        self.num_epochs = num_epochs
-        self.init_lr = init_lr
-        self.epoch_step = int(np.ceil(len(train_dataset) /self.batch_size))
-        self.total_steps = int(self.epoch_step * self.num_epochs)
-        self.warmup_steps = int(warmup_epoch * self.epoch_step)
         self.distribute = distribute
         self.test = test
 
@@ -138,8 +130,6 @@ class Trainer(Launcher):
         self.model = self.model.to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters())  # 初始化优化器
-        self.warmup_scheduler = LambdaLR(self.optimizer, lr_lambda=lambda step: min(step / self.warmup_steps, 1.0))
-        self.lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, self.total_steps - self.warmup_steps)
         self.criterion = criterion
 
         self.best_val_loss = float('inf')  # 初始化最佳验证损失为正无穷大
@@ -151,9 +141,6 @@ class Trainer(Launcher):
 
         self.cur_epoch = 0
         self.start_epoch = start_epoch
-
-        self.backward_time = 0.0
-        self.loss_time = 0.0
 
         self.freeze_modules = [self.inner_model.landmark_branches[0].pos_embed]
 

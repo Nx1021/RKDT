@@ -363,7 +363,7 @@ class LandmarkBranch(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        self.cfg = yaml_load(cfg)
+        self.cfg = cfg
         num_classes = self.cfg["landmark_num"]
         self.num_queries = self.cfg["decoder_num_queries"]
         return_intermediate_dec = self.cfg["calc_intermediate"]

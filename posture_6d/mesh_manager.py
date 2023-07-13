@@ -3,7 +3,7 @@ import json
 import numpy as np
 import open3d as o3d
 from .posture import Posture
-from .utils import JsonIO
+from .utils import JsonIO, modify_class_id, get_meta_dict
 
 
 class MeshMeta:
@@ -86,19 +86,8 @@ class MeshManager:
             self.modify_class_id(modify_class_id_pairs)
 
     def modify_class_id(self, modify_class_id_pairs):
-        orig_keys = [x[0] for x in modify_class_id_pairs]
-        new_keys = [x[0] for x in modify_class_id_pairs]
-        assert len(orig_keys) == len(set(orig_keys))
-        assert len(new_keys)  == len(set(new_keys))
-        for name, orig_dict in vars(self).items():
-            if isinstance(orig_dict, dict):
-                new_dict = {}
-                for pair in modify_class_id_pairs:
-                    if pair[0] in orig_dict:
-                        new_dict[pair[1]] = orig_dict[pair[0]]
-                        orig_dict.pop(pair[0]) 
-                new_dict.update(orig_dict)
-                self.__setattr__(name, new_dict)
+        orig_dict_list = get_meta_dict(self)
+        modify_class_id(orig_dict_list, modify_class_id_pairs)
 
     @staticmethod
     def farthest_point_sample(point_cloud, npoint): 

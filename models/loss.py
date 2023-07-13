@@ -18,8 +18,6 @@ from typing import Union
 import time
 
 
-        
-
 def calculate_scores(pk, points, alpha = 0.15, beta = 0.4, eps = 1e-4):
     '''
     brief
@@ -224,17 +222,39 @@ class LandmarkLoss(nn.Module):
     def __init__(self, cfg) -> None:
         super().__init__()
         self.cfg = yaml_load(cfg)
-        
         self.landmark_num:int = self.cfg["landmark_num"]
-        self.calc_intermediate:bool = self.cfg["calc_intermediate"]
-        self.class_loss_w      = self.cfg["class_loss_w"]
-        self.dist_loss_w       = self.cfg["dist_loss_w"]
-        self.PN_loss_w         = self.cfg["PN_loss_w"]
-        self.rotation_loss_w   = self.cfg["rotation_loss_w"]
+    
+    @property
+    def calc_intermediate(self):
+        return self.cfg["calc_intermediate"]
+    
+    @property
+    def class_loss_w(self):       
+        return self.cfg["class_loss_w"]
+    
+    @property
+    def dist_loss_w(self):
+        return self.cfg["dist_loss_w"]
+    
+    @property
+    def PN_loss_w(self):               
+        return self.cfg["PN_loss_w"]
+    
+    @property
+    def rotation_loss_w(self):         
+        return self.cfg["rotation_loss_w"]
 
-        self.alpha  = self.cfg["score_alpha"]
-        self.beta   = self.cfg["score_beta"]
-        self.eps    = self.cfg["score_eps"]
+    @property
+    def alpha(self):                   
+        return self.cfg["score_alpha"]
+    
+    @property
+    def beta(self):                    
+        return self.cfg["score_beta"]
+    
+    @property
+    def eps(self):                     
+        return self.cfg["score_eps"]
 
     def match_roi(self, gt_bbox_n, rlts: list[LandmarkDetectionResult]):
         pred_bbox_n = torch.stack([x.bbox_n for x in rlts]) # [num_roi_active, 4]
@@ -280,6 +300,7 @@ class LandmarkLoss(nn.Module):
 
         output_num = matched_pred_landmarks_n.shape[0]
         return (matched_pred_landmarks_n, matched_pred_landmarks_probs), output_num
+
 
     def match_landmarks(self, out_probs:Tensor, out_coord:Tensor, tgt_coord:Tensor):
         '''

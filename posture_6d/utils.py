@@ -1,7 +1,11 @@
 import numpy as np
 from _ctypes import PyObj_FromPtr
 import json
+import os
+import shutil
 import re
+from typing import Any
+import time
 
 def get_bbox_connections(bbox_3d_proj:np.ndarray):
     '''
@@ -29,6 +33,27 @@ def get_bbox_connections(bbox_3d_proj:np.ndarray):
     ]
     lines = np.stack(lines)
     return lines #[12, ..., ((x1,x2), (y1,y2))]
+
+def modify_class_id(dict_list:list[dict[int, Any]], modify_class_id_pairs:list[tuple[int]]):
+    orig_keys = [x[0] for x in modify_class_id_pairs]
+    new_keys  = [x[1] for x in modify_class_id_pairs]
+    assert len(orig_keys) == len(set(orig_keys))
+    assert len(new_keys)  == len(set(new_keys))
+    assert all([len(x) == 2 for x in modify_class_id_pairs])
+    for orig_dict in dict_list:
+        new_dict = {}
+        for pair in modify_class_id_pairs:
+            if pair[0] in orig_dict:
+                new_dict[pair[1]] = orig_dict[pair[0]]
+        orig_dict.clear()
+        orig_dict.update(new_dict)    
+
+def get_meta_dict(obj):
+    orig_dict_list = []
+    for name, orig_dict in vars(obj).items():
+        if isinstance(orig_dict, dict) and all([isinstance(x, int) for x in orig_dict.keys()]):
+            orig_dict_list.append(orig_dict)
+    return orig_dict_list
 
 class JsonIO():
     class _NoIndent(object):
@@ -101,15 +126,15 @@ class JsonIO():
                     key = int(key)
                 except ValueError:
                     pass
-            
             if isinstance(value, np.ndarray):
-                new_value = value.tolist()
+                new_value = np.around(value, decimals=4).tolist()
                 new_value = JsonIO._NoIndent(new_value)
             elif isinstance(value, list):
                 new_value = [JsonIO.__convert_dict_to_json(item) if isinstance(item, dict) else item for item in value]
             elif isinstance(value, dict):
                 new_value = JsonIO.__convert_dict_to_json(value)
-                if list(new_value.values()) == list(value.values()):
+                if not any([isinstance(x, JsonIO._NoIndent) for x in new_value.values()]) and\
+                list(new_value.values()) == list(value.values()):
                     new_value = JsonIO._NoIndent(new_value)
             else:
                 new_value = value
@@ -125,9 +150,18 @@ class JsonIO():
         return dict_
 
     @staticmethod
-    def dump_json(path, dict_):
-        dict_ = JsonIO.__convert_dict_to_json(dict_)
-        with open(path, 'w') as fw:
-            # 整理格式，list部分不换行
-            json_data = json.dumps(dict_, cls=JsonIO._MyEncoder, ensure_ascii=False, sort_keys=True, indent=2)
-            fw.write(json_data)
+    def dump_json(path, to_dump_dict, seperately = False):
+        to_dump_dict = JsonIO.__convert_dict_to_json(to_dump_dict)
+        if seperately:
+            string = ""            
+            for k, v in to_dump_dict.items():
+                json_data = json.dumps({k: v}, cls=JsonIO._MyEncoder, ensure_ascii=False, sort_keys=True, indent=2)
+                string += json_data[1:-2] + ','
+            string = '{' + string[:-1] + '\n}'
+            with open(path, 'w') as fw:
+                fw.write(string)
+        else:
+            with open(path, 'w') as fw:
+                # 整理格式，list部分不换行
+                json_data = json.dumps(to_dump_dict, cls=JsonIO._MyEncoder, ensure_ascii=False, sort_keys=True, indent=2)
+                fw.write(json_data)

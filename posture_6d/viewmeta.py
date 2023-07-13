@@ -11,7 +11,7 @@ from .posture import Posture
 from .intr import CameraIntr
 from .mesh_manager import MeshMeta
 from .derive import calc_bbox_3d_proj, calc_landmarks_proj, calc_masks
-from .utils import get_bbox_connections
+from .utils import get_bbox_connections, modify_class_id, get_meta_dict
 import inspect
 
 def copy_by_rect(crop_rect, org:np.ndarray):
@@ -312,7 +312,27 @@ class ViewMeta():
         self.landmarks:dict[int, ndarray]   = self.__set_element(ViewMeta.LandmarksAP,   landmarks,  lambda x:self.__reshape_array_in_dict(x, (-1,2)))
         self.visib_fract: dict[int, float]  = self.__set_element(ViewMeta.VisibFractAP,  visib_fract)
         # self.keypoints_visib                = copy.deepcopy(keypoints_visib)
- 
+
+    @property
+    def bbox_2d(self) -> dict[int, np.ndarray]:
+        '''
+        (x1, y1, x2, y2)
+        '''
+        bbox_2d = {}
+        for id_, mask in self.masks.items():
+            where = np.where(mask)
+            if where[0].size == 0:
+                bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
+            else:
+                lt = np.min(where, -1)
+                rb = np.max(where, -1)
+                bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
+        return bbox_2d
+
+    def modify_class_id(self, modify_class_id_pairs:list[tuple[int]]):
+        orig_dict_list = get_meta_dict(self)
+        modify_class_id(orig_dict_list, modify_class_id_pairs)
+
     def calc_by_base(self, mesh_dict:dict[int, MeshMeta], cover = False):
         assert self.rgb is not None
         assert self.extr_vecs is not None
@@ -370,6 +390,8 @@ class ViewMeta():
         self.__init_parameters_keys.pop(matched_idx)
         self.__init_parameters_values.pop(matched_idx)
         value = func(copy.deepcopy(value))
+        if isinstance(value, dict):
+            value = dict(sorted(value.items(), key=lambda x: x[0]))
         ### 初始化增强
         ap = ap_type(self)
         self.agmts.update({key: ap})

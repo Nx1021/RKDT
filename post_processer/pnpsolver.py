@@ -1,6 +1,7 @@
 from posture_6d.mesh_manager import MeshManager
 import numpy as np
 import cv2
+import os
 TEST_RPnP = False
 
 from utils.yaml import yaml_load
@@ -20,7 +21,7 @@ class PnPSolver():
     '''
     解PnP
     '''
-    def __init__(self, cfg:str, image_resize = ((640, 480), (640, 480)), matrix_camera = None) -> None:
+    def __init__(self, cfg_file:str, image_resize = ((640, 480), (640, 480)), matrix_camera = None) -> None:
         '''
         brief
         -----
@@ -33,11 +34,11 @@ class PnPSolver():
         models_info_path: 模型信息路径
         keypoint_info_path: 关键点位置信息路径
         '''
-        cfg_paras = yaml_load(cfg)
-        self.model_manager = create_model_manager(cfg)
+        cfg = yaml_load(cfg_file)
+        self.model_manager = create_model_manager(cfg_file)
         if matrix_camera is None:
             # 读取内参(所有内参都一样)
-            self.matrix_camera = np.loadtxt(cfg_paras["default_K"])
+            self.matrix_camera = np.loadtxt(os.path.join(cfg["models_dir"], cfg["default_K"]))
             # 由于图像已经缩放，内参也会变化
             self.matrix_camera = self.transform_K(self.matrix_camera, image_resize)
         self.distortion_coeffs = np.zeros((5,1))

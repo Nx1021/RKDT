@@ -80,11 +80,11 @@ class OLDT(nn.Module):
     -----
     
     '''
-    def __init__(self, yolo_weight_path, cfg, landmark_branch_classes:list[int] = [], *args, **kwargs) -> None:
+    def __init__(self, yolo_weight_path, cfg_file, landmark_branch_classes:list[int] = [], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._backbone = YOLO(yolo_weight_path, "detect")
         self._backbone.to(f"cuda:{torch.cuda.current_device()}")
-        self.cfg = yaml_load(cfg)
+        self.cfg = yaml_load(cfg_file)
         self._backbone.overrides.update(self.cfg["yolo_override"])
         self._backbone.overrides.update({"device": self._backbone.device})
         self.yolo_detection:DetectionModel = self._backbone.model
@@ -95,7 +95,7 @@ class OLDT(nn.Module):
         print("replaced")
         self.yolo_detection._predict_once = self.get_feature_callback
 
-        self.feature_map_distribution = FeatureMapDistribution(cfg)
+        self.feature_map_distribution = FeatureMapDistribution(self.cfg)
         self.if_gather = True
 
         self.landmark_branch_classes = landmark_branch_classes
@@ -103,7 +103,7 @@ class OLDT(nn.Module):
         self.landmark_branches:dict[int, LandmarkBranch] = {}
         for branch_i in landmark_branch_classes:
             assert isinstance(branch_i, int)
-            branch = LandmarkBranch(cfg).to("cuda")
+            branch = LandmarkBranch(self.cfg).to("cuda")
             self.add_module(f"LandmarkBranch_{str(branch_i).rjust(2,'0')}", branch)
             self.landmark_branches[branch_i] = branch
             self.set_branch_trainable(branch_i)

@@ -227,7 +227,7 @@ class ErrorCalculator():
         rotation_angle_deg = np.degrees(rotation_angle)
 
         # 判断是否满足5cm5°准则
-        if translation_distance <= 0.05 and rotation_angle_deg <= 5.0:
+        if translation_distance <= 50 and rotation_angle_deg <= 5.0:
             rlt = True
         else:
             rlt = False
