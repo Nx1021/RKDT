@@ -63,19 +63,17 @@ if __name__ == '__main__':
         print("use data on the server: ", data_folder)
     yolo_weight_path = "weights/best.pt"
     cfg = "cfg/config.yaml"
+    flow = "./cfg/train_flow.yaml"
     ###
     train_dataset = OLDT_Dataset(data_folder, "train")
     val_dataset = OLDT_Dataset(data_folder, "val")
     loss = LandmarkLoss(cfg)
-    model = OLDT(yolo_weight_path, cfg, [0])  # 替换为你自己的模型
+    model = OLDT(yolo_weight_path, cfg, [0])  
     load_brach_i = 0
     # load_from = "./weights/20230707013957branch00.pt"
     # load_from = "./weights/20230710004623branch00.pt"
     load_from = ""
     model.load_branch_weights(load_brach_i, load_from)
-    num_epochs = 400
-    warm_up = int(num_epochs * 0.2)
-    learning_rate = 2.0 * 1e-4
     start_epoch = 1
 
 
@@ -88,7 +86,7 @@ if __name__ == '__main__':
     else:
         raise SystemError
     trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
-                      flowfile= "./cfg/train_flow.yaml",
+                      flowfile= flow,
                       distribute=False,
                       start_epoch = start_epoch
                       )
@@ -97,13 +95,11 @@ if __name__ == '__main__':
         "data_folder": data_folder,
         "yolo_weight_path": yolo_weight_path,
         "cfg": cfg,
-        "num_epochs": num_epochs,
         "start_epoch": start_epoch,
-        "warm_up": warm_up,
-        "learning_rate": learning_rate,
         "batch_size": batch_size, 
         "load_from": {load_brach_i: load_from},
         "remark": "class loss has weight, no pn loss P_threshold = 0.4"                      
                               })
     trainer.logger.log(cfg)
+    trainer.logger.log(flow)
     trainer.train()

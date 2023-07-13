@@ -5,8 +5,8 @@ import MyLib
 try:
     import MyLib
     sys.path.insert(0, MyLib.__path__[0])
-    # shutil.rmtree("./posture_6d")
-    # shutil.copytree(MyLib.posture_6d.__path__[0], "./posture_6d")
+    shutil.rmtree("./posture_6d")
+    shutil.copytree(MyLib.posture_6d.__path__[0], "./posture_6d")
 except:
     pass
 

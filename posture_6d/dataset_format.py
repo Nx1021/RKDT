@@ -4,16 +4,11 @@
 from MyLib.posture_6d.viewmeta import ViewMeta
 import matplotlib.pyplot as plt
 import numpy as np
-import open3d as o3d
 from open3d import geometry, utility, io
 import os
 import shutil
 import cv2
 import time
-import json
-import scipy.ndimage as image
-import skimage
-import scipy.spatial as spt
 
 from abc import ABC, abstractmethod
 from typing import Union, Callable
@@ -460,10 +455,10 @@ class VocFormat(DatasetFormat):
         self.images_elements     = self._Elements(self, self.images_dir,     cv2.imread, cv2.imwrite,                ".jpg")
         self.depth_elements      = self._Elements(self, self.depths_dir,     lambda x:cv2.imread(x, cv2.IMREAD_ANYDEPTH), cv2.imwrite, '.png')
         self.masks_elements      = self._Elements(self, self.masks_dir,      np.load,    np.save,                    ".npy")
-        self.labels_elements     = self._Elements(self, self.labels_dir,     np.loadtxt, self.savetxt_func("%8.4f"), ".txt")
-        self.bbox_3ds_elements   = self._Elements(self, self.bbox_3ds_dir,   np.loadtxt, self.savetxt_func("%12.6f"), ".txt")   
-        self.landmarks_elements  = self._Elements(self, self.landmarks_dir,  np.loadtxt, self.savetxt_func("%12.6f"), ".txt")
-        self.extr_vecs_elements  = self._Elements(self, self.trans_vecs_dir, np.loadtxt, self.savetxt_func("%12.6f"), ".txt")
+        self.labels_elements     = self._Elements(self, self.labels_dir,     self.loadtxt_func((-1, 5)), self.savetxt_func("%8.4f"), ".txt")
+        self.bbox_3ds_elements   = self._Elements(self, self.bbox_3ds_dir,   self.loadtxt_func((-1, 8, 2)), self.savetxt_func("%12.6f"), ".txt")   
+        self.landmarks_elements  = self._Elements(self, self.landmarks_dir,  self.loadtxt_func((-1, 24, 2)), self.savetxt_func("%12.6f"), ".txt")
+        self.extr_vecs_elements  = self._Elements(self, self.trans_vecs_dir, self.loadtxt_func((-1, 2, 3)), self.savetxt_func("%12.6f"), ".txt")
 
         self.train_txt = os.path.join(self.directory,   VocFormat.KW_TRAIN + ".txt")
         self.val_txt = os.path.join(self.directory,     VocFormat.KW_VAL + ".txt")
@@ -472,6 +467,10 @@ class VocFormat(DatasetFormat):
     @staticmethod
     def savetxt_func(fmt=...):
         return lambda path, x: np.savetxt(path, x, fmt=fmt, delimiter='\t')
+
+    @staticmethod
+    def loadtxt_func(shape:tuple[int]):
+        return lambda path: np.loadtxt(path).reshape(shape)
 
     def get_split_file(self, data_num, split_rate):
         create = False

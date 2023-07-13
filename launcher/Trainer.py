@@ -66,6 +66,8 @@ class TrainFlow():
             return
         totol_step = self.stage_segment[self.cur_stage + 1] - self.stage_segment[self.cur_stage]
         self.scheduler = self.get_lr_func(stage_info["lr_func"], totol_step, stage_info["lr"])
+        self.trainer.optimizer.zero_grad()
+        self.trainer.optimizer.step()
         if "cfg" in stage_info:
             self.trainer.inner_model.cfg.update(stage_info["cfg"])
 
@@ -74,11 +76,11 @@ class TrainFlow():
     
     def __next__(self):
         if self.epoch >= self.stage_segment[-1]:
-            raise StopIteration  
-        if self.scheduler is not None:
-            self.scheduler.step()        
+            raise StopIteration      
         if self.epoch in self.stage_segment:
-            self.enter_new_stage()        
+            self.enter_new_stage()    
+        if self.scheduler is not None:
+            self.scheduler.step()             
         self.epoch += 1 
         return self.epoch
 
