@@ -1,7 +1,8 @@
 import yaml
 
+loaded_cfg = {}
 
-def yaml_load(file='data.yaml'):
+def yaml_load(path='data.yaml', assingle = False)->dict:
     """
     Load YAML data from a file.
 
@@ -12,8 +13,17 @@ def yaml_load(file='data.yaml'):
     Returns:
         (dict): YAML data and file name.
     """
-    with open(file, 'r') as file:
-        yaml_data: dict = yaml.safe_load(file)
+    def load():
+        with open(path, 'r') as file:
+            return yaml.safe_load(file)
+    if assingle:
+        if path in loaded_cfg:
+            yaml_data = loaded_cfg[path]
+        else:
+            yaml_data = load()
+            loaded_cfg[path] = yaml_data
+    else:
+        yaml_data = load()
     return yaml_data
 
 def yaml_dump(file_path, data):

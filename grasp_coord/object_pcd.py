@@ -7,7 +7,6 @@ import os
 import time
 import matplotlib.pyplot as plt 
 
-from utils.yaml import yaml_load
 from grasp_coord import MODELS_DIR, PCD_MODELS
 from grasp_coord.gripper import Gripper, MyThreeFingerGripper
 

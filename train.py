@@ -96,7 +96,8 @@ if __name__ == '__main__':
         raise SystemError
     trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size, num_epochs, learning_rate, warm_up, 
                       distribute=False,
-                      start_epoch = start_epoch)
+                      start_epoch = start_epoch,
+                      flowfile= "./cfg/train_flow.yaml")
     trainer.logger.log({
         "System": sys,
         "data_folder": data_folder,

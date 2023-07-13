@@ -19,7 +19,7 @@ from models.loss import LandmarkLossRecorder
 from models.results import ImagePosture
 from launcher.OLDT_Dataset import collate_fn
 from launcher.utils import BaseLogger, Launcher
-from utils.yaml import yaml_dump
+from utils.yaml import yaml_load
 import cv2
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -32,11 +32,55 @@ import time
 from typing import Union
 sys_name = platform.system()
 if sys_name == "Windows":
-    TESTFLOW = False
+    TESTFLOW = True
 else:
     TESTFLOW = False
 
+class TrainFlow():
+    def __init__(self, trainer:"Trainer", flowfile) -> None:
+        self.trainer = trainer
+        self.epoch = 0
+        self.flow:dict = yaml_load(flowfile, False)
+        self.stage_segment = list(self.flow.keys())
+        if self.stage_segment[0] != 0:
+            raise ValueError("the first stage must start at epoch 0!")
+        self.scheduler = None
 
+    @property
+    def cur_stage(self):
+        return sum([self.epoch >= x for x in self.stage_segment]) - 1
+
+    def get_lr_func(self, lr_name, totol_step, initial_lr):
+        for param_group in self.trainer.optimizer.param_groups:
+            param_group['initial_lr'] = initial_lr
+        if lr_name == "warmup":
+            return LambdaLR(self.trainer.optimizer, 
+                            lr_lambda=lambda step: min(step / totol_step, 1.0))
+        if lr_name == "cosine":
+            return optim.lr_scheduler.CosineAnnealingLR(self.trainer.optimizer, 
+                                                        totol_step)
+    
+    def enter_new_stage(self):
+        stage_info = self.flow[self.stage_segment[self.cur_stage]]
+        if stage_info is None:
+            return
+        totol_step = self.stage_segment[self.cur_stage + 1] - self.stage_segment[self.cur_stage]
+        self.scheduler = self.get_lr_func(stage_info["lr_func"], totol_step, stage_info["lr"])
+        if "cfg" in stage_info:
+            self.trainer.inner_model.cfg.update(stage_info["cfg"])
+
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        if self.epoch >= self.stage_segment[-1]:
+            raise StopIteration  
+        if self.scheduler is not None:
+            self.scheduler.step()        
+        if self.epoch in self.stage_segment:
+            self.enter_new_stage()        
+        self.epoch += 1 
+        return self.epoch
 
 class TrainLogger(BaseLogger):
     def __init__(self, log_dir):
@@ -56,8 +100,6 @@ class TrainLogger(BaseLogger):
 
         with open(log_file, 'a') as f:
             f.write(log_line)
-    
-
 
 class Trainer(Launcher):
     def __init__(self,
@@ -71,19 +113,23 @@ class Trainer(Launcher):
                  warmup_epoch,
                  distribute = False,
                  test=False,
-                 start_epoch = 0):
+                 start_epoch = 0,
+                 flowfile = ""):
         super().__init__(model, batch_size)
         self.model:Union[OLDT, torch.nn.DataParallel] = model
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
+
+        self.flow = TrainFlow(self, flowfile)
         self.num_epochs = num_epochs
         self.init_lr = init_lr
         self.epoch_step = int(np.ceil(len(train_dataset) /self.batch_size))
         self.total_steps = int(self.epoch_step * self.num_epochs)
         self.warmup_steps = int(warmup_epoch * self.epoch_step)
+        self.distribute = distribute
         self.test = test
 
-        if distribute:
+        if self.distribute:
             # 初始化分布式环境
             dist.init_process_group(backend='nccl', init_method='tcp://localhost:23456', world_size=torch.cuda.device_count(), rank=torch.cuda.current_device())
             self.model = torch.nn.parallel.DistributedDataParallel(self.model)
@@ -91,7 +137,7 @@ class Trainer(Launcher):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = self.model.to(self.device)
 
-        self.optimizer = optim.Adam(self.model.parameters(), lr=init_lr)  # 初始化优化器
+        self.optimizer = optim.Adam(self.model.parameters())  # 初始化优化器
         self.warmup_scheduler = LambdaLR(self.optimizer, lr_lambda=lambda step: min(step / self.warmup_steps, 1.0))
         self.lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, self.total_steps - self.warmup_steps)
         self.criterion = criterion
@@ -167,11 +213,6 @@ class Trainer(Launcher):
             
             if backward:
                 self.optimizer.step()
-                # 更新学习率
-                if self.cur_step < self.warmup_steps:
-                    self.warmup_scheduler.step()
-                else:
-                    self.lr_scheduler.step()
 
             # 更新进度条信息
             progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss())})
@@ -179,8 +220,6 @@ class Trainer(Launcher):
                 break
             ldmk_loss_mngr.buffer.clear()
             
-            self.cur_step += 1
-
         # 将val_loss写入TensorBoard日志文件
         if backward:
             self.logger.write_epoch("Learning rate", self.optimizer.param_groups[0]["lr"], self.cur_epoch)
@@ -197,42 +236,15 @@ class Trainer(Launcher):
         self.inner_model.set_mode("val")
         with torch.no_grad():
             return self.forward_one_epoch(dataloader, False)
-        # ldmk_loss_mngr = LandmarkLossRecorder("Val")
-
-        # skip = self.cur_epoch < self.start_epoch
-
-        # if skip:
-        #     dataloader = range(len(dataloader))
-
-        # progress = tqdm(dataloader, desc='Training', leave=True)
-        # with torch.no_grad():
-        #     for image_posture in progress:
-        #         if skip:
-        #             pass
-        #         else:
-        #             loss = self.forward_once(image_posture, ldmk_loss_mngr)
-
-        #         # 计算批次的损失
-        #         if ldmk_loss_mngr.buffer.detect_num > 0:
-        #             progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss())})
-        #         if TESTFLOW:
-        #             break
-
-        # # 将val_loss写入TensorBoard日志文件
-        # for key, value in ldmk_loss_mngr.to_dict().items():
-        #     self.logger.write_epoch(key, value, self.cur_epoch)
-
-        # return ldmk_loss_mngr.loss()
 
     def train(self):
         print("start to train... time:{}".format(self.start_timestamp))
         self.cur_epoch = 0
-        self.cur_step = 0
         train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn)
         val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
 
-        for epoch in range(self.num_epochs):
-            self.cur_epoch += 1
+        for epoch in self.flow:
+            self.cur_epoch = epoch
             tqdm.write('\nEpoch {} start...'.format(self.cur_epoch))
             # 训练阶段
             train_loss = self.train_one_epoch(train_dataloader)
@@ -253,6 +265,6 @@ class Trainer(Launcher):
         if not self.test:
             self.logger.writer.flush()
             self.logger.writer.close()
-
-        dist.destroy_process_group()
+        if self.distribute:
+            dist.destroy_process_group()
 
