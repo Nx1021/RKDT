@@ -2,7 +2,7 @@ import yaml
 
 loaded_cfg = {}
 
-def yaml_load(path='data.yaml', assingle = False)->dict:
+def yaml_load(path='data.yaml', assingle = True)->dict:
     """
     Load YAML data from a file.
 

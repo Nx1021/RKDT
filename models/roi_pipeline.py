@@ -126,13 +126,17 @@ class NestedTensor(object):
                             torch.cat(mask_list))
 
 class CropLayer(nn.Module):
-    def __init__(self, max_token_num = 784, pool_size = (24, 24), use_variable_tokennum = False) -> None:
+    def __init__(self, cfg, max_token_num = 784, pool_size = (24, 24)) -> None:
         super().__init__()
         self.max_token_num = max_token_num
         self.min_token_num = int(max_token_num / 4)
 
         self.pool_size = pool_size
-        self.use_variable_tokennum = use_variable_tokennum
+        self.cfg = cfg
+
+    @property
+    def use_variable_tokennum(self):
+        return self.cfg["use_variable_tokennum"]
 
     def _choose_crop_idx(self, bbox_areas:torch.Tensor):
         for i in range(bbox_areas.size()[0]):
@@ -237,13 +241,16 @@ class CropLayer(nn.Module):
         return all_croped, all_used_bbox_n
 
 class FeatureMapDistribution(nn.Module):
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg_file) -> None:
         super().__init__()
-        self.cfg = yaml_load(cfg)
-        self.max_token_num  = self.cfg["max_token_num"]
-        self.pool_size      = self.cfg["pool_size"]
-        self.use_variable_tokennum = self.cfg["use_variable_tokennum"]
-        self.crop_layer = CropLayer(self.max_token_num, self.pool_size, self.use_variable_tokennum)
+        self.cfg = yaml_load(cfg_file)
+        max_token_num  = self.cfg["max_token_num"]
+        pool_size      = self.cfg["pool_size"]
+        self.crop_layer = CropLayer(self.cfg, max_token_num, pool_size)
+
+    @property
+    def use_variable_tokennum(self):
+        return self.cfg["use_variable_tokennum"]
 
     def distribute(self, class_ids, croped_feature_map:list[list[torch.Tensor]]) -> tuple[dict[int, NestedTensor], dict[int, list[list[int]]]]:
         roi_feature_dict:dict[int, list[torch.Tensor]] = {}
