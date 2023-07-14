@@ -14,3 +14,6 @@ except:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # 切换工作目录到当前脚本所在的目录
 os.chdir(script_dir)
+
+os.makedirs("weights", exist_ok=True)
+os.makedirs("datasets", exist_ok=True)
