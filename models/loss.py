@@ -7,9 +7,9 @@ from torch import Tensor
 from torchvision.ops.boxes import box_area
 from torchvision.ops import generalized_box_iou
 from scipy.optimize import linear_sum_assignment
-from models.roi_pipeline import LandmarkDetectionResult
-from models.utils import _KW, denormalize_bbox, tensor_to_numpy
-from models import SYS
+from .roi_pipeline import LandmarkDetectionResult
+from .utils import _KW, denormalize_bbox, tensor_to_numpy
+from . import SYS
 import platform
 import matplotlib.pyplot as plt
 

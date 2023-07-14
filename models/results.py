@@ -1,14 +1,12 @@
 from torch import Tensor
 import torch
-from models.utils import denormalize_bbox, normalize_bbox, tensor_to_numpy
+from .utils import denormalize_bbox, normalize_bbox, tensor_to_numpy
 
 from posture_6d.posture import Posture
 
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Union
-
-from models.utils import denormalize_bbox
 
 class LandmarkDetectionResult():
     def __init__(self, bbox_n:Tensor, class_id:int, landmarks_n:Tensor, landmarks_probs:Tensor, img_size:Tensor) -> None:

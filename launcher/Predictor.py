@@ -17,9 +17,9 @@ from models.results import LandmarkDetectionResult, ImagePosture, compare_image_
 from post_processer.PostProcesser import PostProcesser
 from post_processer.error_calculate import ErrorCalculator, ErrorResult, match_roi
 from post_processer.pnpsolver import PnPSolver
-from launcher.BasePredictor import BasePredictor
-from launcher.OLDT_Dataset import OLDT_Dataset, collate_fn
-from launcher.utils import Launcher, BaseLogger
+from .BasePredictor import BasePredictor
+from .OLDTDataset import OLDTDataset, collate_fn
+from .BaseLauncher import Launcher, BaseLogger
 
 from utils.yaml import yaml_load
 
@@ -337,6 +337,8 @@ class OLDTPredictor(BasePredictor, Launcher):
             inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
             predictions = self.inference(inputs)
             processed_predictions = self.postprocess(predictions)
+
+        return processed_predictions
 
     def clear(self):
         self.frametimer.reset()

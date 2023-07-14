@@ -1,4 +1,4 @@
-from launcher.OLDT_Dataset import transpose_data
+from . import SCRIPT_DIR, WEIGHTS_DIR
 
 import os
 import shutil
@@ -9,7 +9,6 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pad_sequence
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 
@@ -17,8 +16,9 @@ import numpy as np
 from models.OLDT import OLDT
 from models.loss import LandmarkLossRecorder
 from models.results import ImagePosture
-from launcher.OLDT_Dataset import collate_fn
-from launcher.utils import BaseLogger, Launcher
+from .OLDTDataset import transpose_data
+from .OLDTDataset import collate_fn
+from .BaseLauncher import BaseLogger, Launcher
 from utils.yaml import yaml_load
 import cv2
 from tqdm import tqdm
@@ -51,13 +51,14 @@ class TrainFlow():
         return sum([self.epoch >= x for x in self.stage_segment]) - 1
 
     def get_lr_func(self, lr_name, totol_step, initial_lr):
+        totol_step = totol_step * int(np.round(len(self.trainer.train_dataset) / self.trainer.batch_size))
         for param_group in self.trainer.optimizer.param_groups:
             param_group['initial_lr'] = initial_lr
         if lr_name == "warmup":
             return LambdaLR(self.trainer.optimizer, 
                             lr_lambda=lambda step: min(step / totol_step, 1.0))
         if lr_name == "cosine":
-            return optim.lr_scheduler.CosineAnnealingLR(self.trainer.optimizer, 
+            return CosineAnnealingLR(self.trainer.optimizer, 
                                                         totol_step)
     
     def enter_new_stage(self):
@@ -66,8 +67,8 @@ class TrainFlow():
             return
         totol_step = self.stage_segment[self.cur_stage + 1] - self.stage_segment[self.cur_stage]
         self.scheduler = self.get_lr_func(stage_info["lr_func"], totol_step, stage_info["lr"])
-        self.trainer.optimizer.zero_grad()
-        self.trainer.optimizer.step()
+        # self.trainer.optimizer.zero_grad()
+        # self.trainer.optimizer.step()
         if "cfg" in stage_info:
             self.trainer.inner_model.cfg.update(stage_info["cfg"])
 
@@ -79,8 +80,8 @@ class TrainFlow():
             raise StopIteration      
         if self.epoch in self.stage_segment:
             self.enter_new_stage()    
-        if self.scheduler is not None:
-            self.scheduler.step()             
+        # if self.scheduler is not None:
+        #     self.scheduler.step()             
         self.epoch += 1 
         return self.epoch
 
@@ -193,18 +194,19 @@ class Trainer(Launcher):
                     loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results, ldmk_loss_mngr)
                     if torch.isnan(loss).item():
                         print("loss nan, break!")
-                        self.inner_model.save_branch_weights("./weights/", self.start_timestamp)
+                        self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp)
                         sys.exit()
                     # 反向传播和优化
+                    self.optimizer.zero_grad()
                     if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor):
-                        self.optimizer.zero_grad()
                         loss.backward()
             
             if backward:
                 self.optimizer.step()
+                self.flow.scheduler.step()
 
             # 更新进度条信息
-            progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss())})
+            progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss()), "Lr": "{:>2.7f}".format(self.optimizer.param_groups[0]["lr"])})
             if TESTFLOW:
                 break
             ldmk_loss_mngr.buffer.clear()
@@ -245,7 +247,7 @@ class Trainer(Launcher):
             if val_loss < self.best_val_loss and not self.skip:
                 print("new best val_loss: {}, saving...".format(val_loss))
                 self.best_val_loss = val_loss
-                self.inner_model.save_branch_weights("./weights/", self.start_timestamp)
+                self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp)
 
             # 更新进度条信息
             tqdm.write('Epoch {} - Train Loss: {:.4f} - Val Loss: {:.4f}'.format(self.cur_epoch, train_loss, val_loss))

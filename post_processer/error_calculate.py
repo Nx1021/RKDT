@@ -1,7 +1,5 @@
-from post_processer.pnpsolver import PnPSolver
+from .pnpsolver import PnPSolver
 from models.results import ImagePosture
-
-
 from posture_6d.posture import Posture
 
 from scipy.optimize import linear_sum_assignment

@@ -24,7 +24,7 @@ def transpose_data(batch_data) -> tuple[list]:
 def collate_fn(batch_data):
     return batch_data
 
-class OLDT_Dataset(Dataset):
+class OLDTDataset(Dataset):
     def __init__(self, data_folder, set_):
         self.data_folder = data_folder
         self.vocformat = VocFormat(data_folder)

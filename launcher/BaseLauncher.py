@@ -1,47 +1,14 @@
+from . import LOGS_DIR, _get_sub_log_dir
+
 import torch
 import sys
 import io
-import subprocess
 from typing import Union
 import platform
 import os
 import shutil
 import datetime
 from utils.yaml import yaml_dump, yaml_load
-
-
-def get_gpu_with_lowest_memory_usage():
-    command = "nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv,nounits,noheader"
-    output = subprocess.check_output(command, shell=True).decode()
-    lines = output.strip().split("\n")
-    
-    lowest_memory_usage = float('inf')
-    gpu_with_lowest_memory = None
-    
-    for line in lines:
-        index, name, used_memory, total_memory = line.split(",")
-        used_memory = int(used_memory)
-        total_memory = int(total_memory)
-        
-        memory_info = f"{used_memory}/{total_memory} MB"
-        
-        gpu_info = f"GPU {index}: {name}, Memory Usage: {memory_info}"
-        print(gpu_info)
-        
-        if used_memory < lowest_memory_usage:
-            lowest_memory_usage = used_memory
-            gpu_with_lowest_memory = int(index)
-    
-    return gpu_with_lowest_memory
-
-import os
-import shutil
-import io
-import sys
-import datetime
-import platform
-from typing import Union
-from utils.yaml import yaml_dump
 import pandas as pd
 
 class BaseLogger():
@@ -124,47 +91,10 @@ class Launcher():
         # 获取当前时间戳，并创建日志保存目录
         current_time = datetime.datetime.now()
         self.start_timestamp: str = current_time.strftime("%Y%m%d%H%M%S")
-        self.log_root: str  = "./logs/{}_logs/".format(self.__class__.__name__) 
+        self.log_root: str  = _get_sub_log_dir(self.__class__)
         self.log_dir: str   = self.log_root + self.start_timestamp + self.sys
         if log_remark != '':
             self.log_dir += '_' + log_remark # TensorBoard日志文件保存目录
         os.makedirs(self.log_dir, exist_ok=True)
-
-def compare_train_log(sub_dirs):
-    root_dir = "./logs/Trainer_logs"
-    yaml_names = ["setup.yaml", "config.yaml"]
-    for yaml_name in yaml_names:
-        compare_yaml_files(root_dir, sub_dirs, yaml_name)
-
-def compare_yaml_files(root_dir, sub_dirs, yaml_name):
-    data = {}
-    all_keys = set()
-
-    for subdirectory in sub_dirs:
-        setup_path = os.path.join(root_dir, subdirectory, yaml_name)
-
-        yaml_data = yaml_load(setup_path)
-
-        data[subdirectory] = yaml_data
-        all_keys.update(yaml_data.keys())
-
-    diff_data = {}
-    for key in all_keys:
-        values = {}
-        for subdir, subdir_data in data.items():
-            value = subdir_data.get(key)
-            values[subdir] = value
-        value_list = list(values.values())
-        try:
-            set_ = set(value_list)
-        except TypeError:
-            set_ = set([str(x) for x in value_list])
-        if len(set_) > 1:
-            diff_data[key] = values
-
-    diff_df = pd.DataFrame(diff_data)
-    print(yaml_name)
-    print(diff_df)
-    print()
 
 

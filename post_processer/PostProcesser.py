@@ -1,4 +1,4 @@
-from post_processer.pnpsolver import PnPSolver
+from .pnpsolver import PnPSolver
 
 from posture_6d.posture import Posture
 import numpy as np

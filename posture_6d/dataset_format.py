@@ -1,7 +1,6 @@
 # from compute_gt_poses import GtPostureComputer
 
 # from toolfunc import *
-from MyLib.posture_6d.viewmeta import ViewMeta
 import matplotlib.pyplot as plt
 import numpy as np
 from open3d import geometry, utility, io

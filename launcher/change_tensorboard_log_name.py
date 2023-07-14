@@ -1,9 +1,11 @@
+from . import LOGS_DIR
+
 from tensorboard.backend.event_processing import event_accumulator
 from torch.utils.tensorboard import SummaryWriter  
 import os
 import shutil
 
-root = "./logs/Trainer_logs/"
+root = f"{LOGS_DIR}/Trainer_logs/"
 
 for r,d,f in os.walk(root):
     for file in f:
