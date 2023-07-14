@@ -337,7 +337,6 @@ class ViewMeta():
         assert self.rgb is not None
         assert self.extr_vecs is not None
         assert self.intr is not None
-        assert self.depth_scale is not None
 
         camera_intr = CameraIntr(self.intr, self.rgb.shape[1], self.rgb.shape[0], self.depth_scale)
         postures = []

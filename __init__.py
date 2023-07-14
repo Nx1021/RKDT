@@ -1,8 +1,6 @@
 import sys
 import os
 import shutil
-
-
 # # 获取当前脚本所在的目录路径
 # script_dir = os.path.dirname(os.path.abspath(__file__))
 # # 切换工作目录到当前脚本所在的目录
@@ -19,20 +17,22 @@ def _get_sub_log_dir(type):
     return f"{LOGS_DIR}/{type.__name__}_logs/"
 
 try:
-    import MyLib
+    import MyLib.posture_6d
     sys.path.insert(0, MyLib.__path__[0])
     shutil.rmtree(f"{SCRIPT_DIR}/posture_6d")
     shutil.copytree(MyLib.posture_6d.__path__[0], f"{SCRIPT_DIR}/posture_6d")
 except:
     pass
 
+###
+try:
+    from .models.results import ImagePosture, ObjPosture
+except:
+    pass
 
 def build_predictor(yolo_weight_path, branches_weight:dict[int, str], cfg_path):
-    from models import OLDT
+    from models.OLDT import OLDT
     from launcher.Predictor import OLDTPredictor
-    load_brach_i = 0
-    load_from = "./weights/20230710202254branch00.pt"
-    # cfg = find_record(load_from, "cfg/config.yaml")
     model = OLDT(yolo_weight_path, cfg_path, list(branches_weight.keys()))  # 替换为你自己的模型    
     for load_brach_i, load_from in branches_weight.items():
         model.load_branch_weights(load_brach_i, load_from)

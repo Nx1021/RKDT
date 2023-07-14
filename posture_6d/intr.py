@@ -1,7 +1,7 @@
 import numpy as np
 
 class CameraIntr():
-    def __init__(self, intr_M, CAM_WID, CAM_HGT, DEPTH_SCALE, EPS = 1.0e-6, MAX_DEPTH = 4.0) -> None:
+    def __init__(self, intr_M, CAM_WID, CAM_HGT, DEPTH_SCALE, EPS = 1.0e-6, MAX_DEPTH = 4000.0) -> None:
         self.CAM_WID,   self.CAM_HGT =  CAM_WID, CAM_HGT # 重投影到的深度图尺寸
         self.CAM_FX, self.CAM_FY, self.CAM_CX, self.CAM_CY = CameraIntr.parse_intr_matrix(intr_M)
         self.intr_M = intr_M

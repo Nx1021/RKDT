@@ -8,8 +8,8 @@ import copy
 import time
 
 from models.results import ImagePosture
-from 。。utils.match_with_threshold import perform_matching
-from 。。utils.yaml import yaml_load
+from utils.match_with_threshold import perform_matching
+from utils.yaml import yaml_load
 from scipy.spatial import distance
 
 

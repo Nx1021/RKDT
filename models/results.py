@@ -195,8 +195,10 @@ class ImagePosture():
 
         首先绘制图像，然后遍历obj_list中的每个ObjPosture对象，调用其plot方法进行绘制。
 
-        示例用法：
+        * 示例用法：
+        
         image_posture.plot()
+
         plt.show()
         """
         # 绘制图像

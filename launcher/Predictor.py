@@ -168,6 +168,12 @@ class OLDTPredictor(BasePredictor, Launcher):
     def __init__(self, model, cfg, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = ""):
         Launcher.__init__(self, model, batch_size, log_remark)
         BasePredictor.__init__(self, model, batch_size)
+
+        # Enable GPU if available
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model:OLDT = self.model.to(device)
+        self.model.set_mode("predict")
+
         self.pnpsolver = PnPSolver(cfg)
         out_bbox_threshold = yaml_load(cfg)["out_bbox_threshold"]
         self.postprocesser = PostProcesser(self.pnpsolver, out_bbox_threshold)
@@ -194,7 +200,7 @@ class OLDTPredictor(BasePredictor, Launcher):
         self.logger = BaseLogger(self.log_dir)
         self.logger.log(cfg)
 
-    def _preprocess(self, inputs):
+    def _preprocess(self, inputs) -> list[cv2.Mat]:
         '''
         对输入进行处理，可以接收的输入：
         1、经过Dataloader加载的CustomDataset对象的输出:list[ImagePosture]
@@ -244,13 +250,17 @@ class OLDTPredictor(BasePredictor, Launcher):
             error_result.append(image_error_result)
         return error_result
 
+    def preprocess(self, image) -> list[cv2.Mat]:
+        return super().preprocess(image)
+
+    def postprocess(self, inputs) ->list[ImagePosture]:
+        return super().postprocess(inputs)
+
+    def calc_error(self, gt: list, postprocessed: list)->list[list[tuple[ErrorResult]]]:
+        return super().calc_error(gt, postprocessed)
+    
     def predict_from_dataset(self, dataset):
         data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn)
-
-        # Enable GPU if available
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model:OLDT = self.model.to(device)
-        self.model.set_mode("predict")
         
         with torch.no_grad():
             num_batches = len(data_loader)
@@ -327,16 +337,11 @@ class OLDTPredictor(BasePredictor, Launcher):
         pass
 
     def predict_single_image(self, image):
-        # Enable GPU if available
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self.model.to(device)
-        self.model.set_mode("predict")
-
         with torch.no_grad():
-            preprocessed_image = self.preprocess(image)
-            inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
+            inputs:list[cv2.Mat] = self.preprocess(image)
+            # inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
             predictions = self.inference(inputs)
-            processed_predictions = self.postprocess(predictions)
+            processed_predictions = self.postprocess((inputs, predictions))
 
         return processed_predictions
 

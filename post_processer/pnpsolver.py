@@ -5,6 +5,7 @@ import os
 TEST_RPnP = False
 
 from utils.yaml import yaml_load
+from . import SCRIPT_DIR
 
 def create_model_manager(cfg) -> MeshManager:
     cfg_paras = yaml_load(cfg)

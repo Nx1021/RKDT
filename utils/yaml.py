@@ -1,4 +1,6 @@
 import yaml
+import os
+from . import SCRIPT_DIR
 
 loaded_cfg = {}
 
@@ -24,6 +26,7 @@ def yaml_load(path='data.yaml', assingle = True)->dict:
             loaded_cfg[path] = yaml_data
     else:
         yaml_data = load()
+    yaml_data["models_dir"] = os.path.join(SCRIPT_DIR, yaml_data["models_dir"])
     return yaml_data
 
 def yaml_dump(file_path, data):
