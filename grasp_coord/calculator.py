@@ -13,9 +13,9 @@ from sko.GA import GA
 import itertools
 from tqdm import tqdm
 
-from grasp_coord.object_pcd import ObjectPcd, create_ObjectPcd_from_file
-from grasp_coord.gripper import Gripper, MyThreeFingerGripper
-from grasp_coord import MODELS_DIR
+from .object_pcd import ObjectPcd, create_ObjectPcd_from_file
+from .gripper import Gripper, MyThreeFingerGripper
+from . import MODELS_DIR, SCRIPT_DIR, LOGS_DIR
 
 
 def compute_angle(v1, v2):
@@ -742,23 +742,23 @@ class CandiCoordCalculator():
                 m.compute_triangle_normals()
                 m.transform(Posture(rvec = [np.pi, 0, 0]).trans_mat)
 
-            os.makedirs("./logs/grasp_illustration", exist_ok=True)
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/voxelized_above.stl", combined[mesh_part_names[0]])
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/voxelized_mid.stl", combined[mesh_part_names[1]])
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/voxelized_below.stl", combined[mesh_part_names[2]])
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/maxdepth_grasp.stl", grasp)
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/orig_grasp.stl", grasp_orig)
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/contact_mesh_normals.stl", normals_arrow)
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/contact_gripper_normals.stl", gripper_arrow)
+            os.makedirs(f"{LOGS_DIR}/grasp_illustration", exist_ok=True)
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/voxelized_above.stl", combined[mesh_part_names[0]])
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/voxelized_mid.stl", combined[mesh_part_names[1]])
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/voxelized_below.stl", combined[mesh_part_names[2]])
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/maxdepth_grasp.stl", grasp)
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/orig_grasp.stl", grasp_orig)
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/contact_mesh_normals.stl", normals_arrow)
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/contact_gripper_normals.stl", gripper_arrow)
             # 切片
             searcher.hough_solver.plot(triangles[0:1, :], voxelized.surf_cube[:,:,orig_z], False)
-            plt.savefig("./logs/grasp_illustration/layer.svg")
+            plt.savefig(f"{LOGS_DIR}/grasp_illustration/layer.svg")
             # 原模型
             self.modelinfo.mesh.compute_triangle_normals()
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/mesh.stl", self.modelinfo.mesh)
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/mesh.stl", self.modelinfo.mesh)
             # 旋转模型
             modelinfo.mesh.compute_triangle_normals()
-            o3d.io.write_triangle_mesh("./logs/grasp_illustration/rot_mesh.stl", rot_mesh)
+            o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/rot_mesh.stl", rot_mesh)
 
         print("start to calculate for {}".format(self.modelinfo.name))
         ia = SphereAngle()

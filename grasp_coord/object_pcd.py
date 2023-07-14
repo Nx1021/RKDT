@@ -7,8 +7,8 @@ import os
 import time
 import matplotlib.pyplot as plt 
 
-from grasp_coord import MODELS_DIR, PCD_MODELS
-from grasp_coord.gripper import Gripper, MyThreeFingerGripper
+from . import MODELS_DIR, PCD_MODELS
+from .gripper import Gripper, MyThreeFingerGripper
 
 def create_ObjectPcd_from_file(class_id):
     mm = MeshManager(MODELS_DIR, PCD_MODELS)

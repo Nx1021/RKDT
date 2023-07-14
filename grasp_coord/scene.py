@@ -1,5 +1,5 @@
-from grasp_coord.gripper import MyThreeFingerGripper
-from grasp_coord.object_pcd import ObjectPcd, create_ObjectPcd_from_file
+from .gripper import MyThreeFingerGripper
+from .object_pcd import ObjectPcd, create_ObjectPcd_from_file
 
 from posture_6d.posture import Posture
 import numpy as np
@@ -8,8 +8,8 @@ import copy
 import time
 
 from models.results import ImagePosture
-from utils.match_with_threshold import perform_matching
-from utils.yaml import yaml_load
+from 。。utils.match_with_threshold import perform_matching
+from 。。utils.yaml import yaml_load
 from scipy.spatial import distance
 
 

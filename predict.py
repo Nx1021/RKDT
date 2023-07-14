@@ -1,9 +1,9 @@
-import OLDT_setup
-
+from __init__ import SCRIPT_DIR, DATASETS_DIR, CFG_DIR, WEIGHTS_DIR, LOGS_DIR, _get_sub_log_dir
 from launcher.Predictor import OLDTPredictor, IntermediateManager
+from launcher.Trainer import Trainer
 
 from models.OLDT import OLDT
-from launcher.OLDT_Dataset import OLDT_Dataset
+from launcher.OLDTDataset import OLDTDataset
 
 import platform
 from torch.utils.data import Dataset, DataLoader
@@ -13,12 +13,13 @@ from PIL import Image
 from typing import Iterable
 import os
 
-def find_record(weight_path, default = "cfg/config.yaml"):
+def find_record(weight_path, default = f"{CFG_DIR}/config.yaml"):
     stamp = os.path.splitext(os.path.split(weight_path)[-1])[0][:14]
-    dirs = os.listdir("./logs/Trainer_logs")
+    log_root = _get_sub_log_dir(Trainer)
+    dirs = os.listdir(log_root)
     for d in dirs:
         if d[:14] == stamp:
-            cfg_path = os.path.join("./logs/Trainer_logs", d, "config.yaml")
+            cfg_path = os.path.join(log_root, d, "config.yaml")
             if os.path.exists(cfg_path):
                 return cfg_path
     return default
@@ -27,15 +28,15 @@ if __name__ == '__main__':
     sys = platform.system()
     print("system:", sys)
 
-    data_folder = './datasets/morrison'
-    yolo_weight_path = "weights/best.pt"
+    data_folder = f"{DATASETS_DIR}/morrison"
+    yolo_weight_path = f"{WEIGHTS_DIR}/best.pt"
     ###
-    train_dataset = OLDT_Dataset(data_folder, "train")
-    val_dataset = OLDT_Dataset(data_folder, "val")
+    train_dataset = OLDTDataset(data_folder, "train")
+    val_dataset = OLDTDataset(data_folder, "val")
     load_brach_i = 0
-    load_from = "./weights/20230710202254branch00.pt"
-    # cfg = find_record(load_from, "cfg/config.yaml")
-    cfg = "cfg/config.yaml"
+    load_from = f"{WEIGHTS_DIR}/20230710202254branch00.pt"
+    # cfg = find_record(load_from, f"{CFG_DIR}/config.yaml")
+    cfg = f"{CFG_DIR}/config.yaml"
     print("config file: ", cfg)
     model = OLDT(yolo_weight_path, cfg, [load_brach_i])  # 替换为你自己的模型    
     model.load_branch_weights(load_brach_i, load_from)
@@ -66,7 +67,7 @@ if __name__ == '__main__':
         predctor.predict_from_dataset(val_dataset)
 
 
-    # intermediate_manager = IntermediateManager("./logs/intermediate_output")
+    # intermediate_manager = IntermediateManager(f"{LOGS_DIR}/intermediate_output")
     # predctor = OLDTPredictor(model, cfg, batch_size, if_postprocess=False, if_calc_error=False, intermediate_manager = intermediate_manager)
     # predctor.postprocess_mode = 'v'
     # predctor.predict_from_dataset(val_dataset)

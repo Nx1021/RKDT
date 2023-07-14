@@ -1,8 +1,8 @@
 from typing import Any
-from models.roi_pipeline import FeatureMapDistribution, gather_results, NestedTensor
-from models.transformer import LandmarkBranch
-from models.utils import WeightLoader, normalize_bbox, _KW
-import models.yolo8_patch 
+from .roi_pipeline import FeatureMapDistribution, gather_results, NestedTensor
+from .transformer import LandmarkBranch
+from .utils import WeightLoader, normalize_bbox, _KW
+from . import yolo8_patch 
 import ultralytics
 from ultralytics import YOLO, yolo
 from ultralytics.yolo.v8.detect import DetectionPredictor

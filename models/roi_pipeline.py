@@ -1,9 +1,10 @@
-from models.results import LandmarkDetectionResult
+from .results import LandmarkDetectionResult
+from .utils import denormalize_bbox, normalize_bbox, _KW
 from utils.yaml import yaml_load
 import torch
 import torch.nn as nn
 import numpy as np
-from models.utils import denormalize_bbox, normalize_bbox, _KW
+
 
 from torchvision.ops import roi_align
 from torchvision.transforms.functional import crop
