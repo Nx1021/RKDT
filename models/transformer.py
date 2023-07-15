@@ -17,6 +17,7 @@ from torch import nn, Tensor
 import numpy as np
 import matplotlib.pyplot as plt
 
+from utils.yaml import yaml_load
 
 class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
@@ -60,7 +61,6 @@ class Transformer(nn.Module):
                           pos=pos_embed, query_pos=query_embed)
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
-
 class TransformerEncoder(nn.Module):
 
     def __init__(self, encoder_layer, num_layers, norm=None):
@@ -83,7 +83,6 @@ class TransformerEncoder(nn.Module):
             output = self.norm(output)
 
         return output
-
 
 class TransformerDecoder(nn.Module):
 
@@ -124,7 +123,6 @@ class TransformerDecoder(nn.Module):
             return torch.stack(intermediate)
 
         return output.unsqueeze(0)
-
 
 class TransformerEncoderLayer(nn.Module):
 
@@ -184,7 +182,6 @@ class TransformerEncoderLayer(nn.Module):
         if self.normalize_before:
             return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
         return self.forward_post(src, src_mask, src_key_padding_mask, pos)
-
 
 class TransformerDecoderLayer(nn.Module):
 
@@ -329,15 +326,11 @@ class PositionEmbeddingSine(nn.Module):
             scale = 2 * np.pi
         self.scale = scale
 
-    def forward(self, tensor: Tensor):
+    def forward(self, tensor: Tensor, mask: Tensor):
         '''
         tensor [bn, C, H, W]
         '''
-        ### 判断输入是否是mask
-        if len(tensor.shape) == 4:
-            mask = torch.zeros((tensor.shape[0], tensor.shape[2], tensor.shape[3]), device=tensor.device, dtype=torch.bool)
-        elif len(tensor.shape) == 3:
-            mask = tensor
+        assert mask is not None
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
         x_embed = not_mask.cumsum(2, dtype=torch.float32)
@@ -359,7 +352,7 @@ class PositionEmbeddingSine(nn.Module):
 
 class LandmarkBranch(nn.Module):
     """ This is the LandmarkBranch module that performs object detection """
-    def __init__(self, num_queries, aux_loss=False):
+    def __init__(self, cfg, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -370,28 +363,31 @@ class LandmarkBranch(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        num_classes = 24
-        self.num_queries = num_queries
-        self.transformer = Transformer(256, activation="gelu", return_intermediate_dec=True) ###TODO###
+        self.cfg = cfg
+        num_classes = self.cfg["landmark_num"]
+        self.num_queries = self.cfg["decoder_num_queries"]
+        return_intermediate_dec = self.cfg["calc_intermediate"]
+        self.transformer = Transformer(256, activation="gelu", 
+                                       return_intermediate_dec=return_intermediate_dec) ###TODO###
         hidden_dim = self.transformer.d_model
         
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1) 
         self.pos_embed = MLP(hidden_dim, hidden_dim, 2, 2)
 
         self.position_embedding = PositionEmbeddingSine(int(self.transformer.d_model/2), 24*24) ###TODO###
-        self.query_embed = nn.Embedding(num_queries, hidden_dim).to("cuda")
+        self.query_embed = nn.Embedding(self.num_queries, hidden_dim).to("cuda")
         self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1, device="cuda") ###TODO###
         self.aux_loss = aux_loss
 
-    def forward(self, roi_feature:Tensor):
+    def forward(self, roi_feature:Tensor, masks:Tensor):
         """ 
         parameters
         ----
         roi_feature: [N, C, H, W] Tensor 
         """
-        roi_feature = torch.stack(roi_feature).to("cuda")
-        pos = self.position_embedding(roi_feature)
-        hs = self.transformer(self.input_proj(roi_feature), None, self.query_embed.weight, pos)[0]
+        # roi_feature = torch.stack(roi_feature).to("cuda")
+        pos = self.position_embedding(roi_feature, masks)
+        hs = self.transformer(self.input_proj(roi_feature), masks, self.query_embed.weight, pos)[0]
 
         outputs_class = self.class_embed(hs).softmax(-1)
         outputs_coord = self.pos_embed(hs)

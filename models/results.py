@@ -1,14 +1,12 @@
 from torch import Tensor
 import torch
-from models.utils import denormalize_bbox, normalize_bbox, tensor_to_numpy
+from .utils import denormalize_bbox, normalize_bbox, tensor_to_numpy
 
-from MyLib.posture import Posture
+from posture_6d.posture import Posture
 
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Union
-
-from models.utils import denormalize_bbox
 
 class LandmarkDetectionResult():
     def __init__(self, bbox_n:Tensor, class_id:int, landmarks_n:Tensor, landmarks_probs:Tensor, img_size:Tensor) -> None:
@@ -122,8 +120,8 @@ class ObjPosture():
             for i, (x, y) in enumerate(self.landmarks):
                 if x == 0 and y == 0:
                     continue
-                plt.scatter(x, y, color=color)
-                plt.text(x + 1, y + 1, str(i), color=color, fontsize=8, va='top')
+                plt.scatter(x, y, color=color, s = 4)
+                plt.text(x + 1, y + 1, str(i), color=color, fontsize=4, va='top')
 
         if self.bbox_n is not None:
             # 绘制边界框
@@ -139,8 +137,8 @@ class ObjPosture():
         if self.class_id is not None:
             # 注释物体类别标识
             x = x1
-            y = y1 - 10  # 文字注释位置在边界框上方
-            plt.text(x, y, str(self.class_id), color=color, fontsize=10, fontweight='bold')
+            y = y1 - 8  # 文字注释位置在边界框上方
+            plt.text(x, y, str(self.class_id), color=color, fontsize=8, fontweight='bold')
 
         plt.axis('scaled')
         plt.xlabel('X')
@@ -197,8 +195,10 @@ class ImagePosture():
 
         首先绘制图像，然后遍历obj_list中的每个ObjPosture对象，调用其plot方法进行绘制。
 
-        示例用法：
+        * 示例用法：
+        
         image_posture.plot()
+
         plt.show()
         """
         # 绘制图像

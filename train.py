@@ -1,30 +1,26 @@
-from ultralytics import YOLO
-from ultralytics.nn.tasks import DetectionModel
+from __init__ import SCRIPT_DIR, DATASETS_DIR, WEIGHTS_DIR, CFG_DIR, _get_sub_log_dir
 import matplotlib.pyplot as plt
 import torch
-import cv2
 import platform
 
 from launcher.Trainer import Trainer
-from launcher.OLDT_Dataset import OLDT_Dataset, transpose_data, collate_fn
+from launcher.OLDTDataset import OLDTDataset, transpose_data, collate_fn
 from models.loss import LandmarkLoss
 from models.OLDT import OLDT
+import time
 
+import os
+import shutil
+
+# print("waiting...")
+# time.sleep(60 * 60 *4)
 
 torch.set_default_dtype(torch.float32)
-# Load the model
-# dm = DetectionModel(cfg='yolov8l.yaml')
-# image = cv2.cvtColor(cv2.imread("test.jpg"), cv2.COLOR_BGR2RGB)
-# image = torch.Tensor(image)
-# image = torch.unsqueeze(image, 0)
-# image = torch.transpose(image, 1, 3)
-# dm(image)
 
-# get_user_config_dir()
 def clear_log():
     import os, shutil
-    log_dir = "./logs"
-    weights_dir = "./weights"
+    log_dir = _get_sub_log_dir(Trainer)
+    weights_dir = WEIGHTS_DIR
 
     weights_list = os.listdir(weights_dir) 
     weights_list = [os.path.splitext(f)[0][:14] for f in weights_list]
@@ -46,41 +42,37 @@ def clear_log():
 
     print("{} invalid logs cleared".format(len(to_remove)))
 
+USE_DATA_IN_SERVER = True
+SERVER_DATASET_DIR = "/home/nerc-ningxiao/datasets/morrison"
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys = platform.system()
     print("system:", sys)
-    clear_log()
+    if sys == "Windows":
+        clear_log()
 
-    # if sys == "Windows":
-    #     print("OS is Windows!!!")
-    #     yolo = YOLO("./weights/yolov8l.pt")
-    #     # result = yolo.predict("test.jpg")
-    #     yolo.train(cfg = "./cfg/train_yolo_win.yaml")
-    #     # plt.imshow(result[0].plot())
-    #     print()
-    # elif sys == "Linux":
-    #     print("OS is Linux!!!")
-    #     yolo = YOLO("./weights/yolov8l.pt")
-    #     # result = yolo.predict("test.jpg")
-    #     yolo.train(cfg = "./cfg/default.yaml")
-    #     # plt.imshow(result[0].plot())
-    #     print()
-    # else:
-    #     pass
-
-    # 示例用法
-    data_folder = './datasets/morrison'
-    yolo_weight_path = "weights/best.pt"
-    cfg = "cfg/train_yolo.yaml"
+    data_folder = f"{DATASETS_DIR}/morrison"
+    if USE_DATA_IN_SERVER and sys == "Linux":
+        if not os.path.exists(SERVER_DATASET_DIR):
+            # copy
+            shutil.copytree(data_folder, SERVER_DATASET_DIR)
+        data_folder = SERVER_DATASET_DIR
+        print("use data on the server: ", data_folder)
+    yolo_weight_path = f"{WEIGHTS_DIR}/best.pt"
+    cfg = f"{CFG_DIR}/config.yaml"
+    flow = f"{CFG_DIR}/train_flow.yaml"
     ###
-    train_dataset = OLDT_Dataset(data_folder, "train")
-    val_dataset = OLDT_Dataset(data_folder, "val")
+    train_dataset = OLDTDataset(data_folder, "train")
+    val_dataset = OLDTDataset(data_folder, "val")
     loss = LandmarkLoss(cfg)
-    model = OLDT(yolo_weight_path, cfg, [0])  # 替换为你自己的模型
-    model.load_branch_weights(0, "./weights/20230616124159branch00.pt")
-    num_epochs = 200
-    learning_rate = 0.5 * 1e-4
+    model = OLDT(yolo_weight_path, cfg, [0])  
+    load_brach_i = 0
+    # load_from = f"{WEIGHTS_DIR}/20230707013957branch00.pt"
+    # load_from = f"{WEIGHTS_DIR}/20230710004623branch00.pt"
+    load_from = ""
+    model.load_branch_weights(load_brach_i, load_from)
+    start_epoch = 1
+
 
     if sys == "Windows":
         batch_size = 2
@@ -88,5 +80,23 @@ if __name__ == '__main__':
     elif sys == "Linux":
         batch_size = 16 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
-    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size, num_epochs, learning_rate, 20.0, distribute=False)
+    else:
+        raise SystemError
+    trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
+                      flowfile= flow,
+                      distribute=False,
+                      start_epoch = start_epoch
+                      )
+    trainer.logger.log({
+        "System": sys,
+        "data_folder": data_folder,
+        "yolo_weight_path": yolo_weight_path,
+        "cfg": cfg,
+        "start_epoch": start_epoch,
+        "batch_size": batch_size, 
+        "load_from": {load_brach_i: load_from},
+        "remark": "class loss has weight, no pn loss P_threshold = 0.4"                      
+                              })
+    trainer.logger.log(cfg)
+    trainer.logger.log(flow)
     trainer.train()

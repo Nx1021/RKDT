@@ -17,8 +17,11 @@ from models.results import LandmarkDetectionResult, ImagePosture, compare_image_
 from post_processer.PostProcesser import PostProcesser
 from post_processer.error_calculate import ErrorCalculator, ErrorResult, match_roi
 from post_processer.pnpsolver import PnPSolver
-from launcher.BasePredictor import BasePredictor
-from launcher.OLDT_Dataset import OLDT_Dataset, collate_fn
+from .BasePredictor import BasePredictor
+from .OLDTDataset import OLDTDataset, collate_fn
+from .BaseLauncher import Launcher, BaseLogger
+
+from utils.yaml import yaml_load
 
 
 
@@ -161,29 +164,43 @@ class IntermediateManager:
 
         return self._load_object(class_name, index, load_pkl_func)
 
-class OLDTPredictor(BasePredictor):
-    def __init__(self, model, cfg, batch_size=32, if_postprocess = True, if_calc_error = False, intermediate_manager:IntermediateManager = None):
-        super().__init__(model, batch_size)
+class OLDTPredictor(BasePredictor, Launcher):
+    def __init__(self, model, cfg, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = ""):
+        Launcher.__init__(self, model, batch_size, log_remark)
+        BasePredictor.__init__(self, model, batch_size)
+
+        # Enable GPU if available
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model:OLDT = self.model.to(device)
+        self.model.set_mode("predict")
+
         self.pnpsolver = PnPSolver(cfg)
-        self.postprocesser = PostProcesser(self.pnpsolver)
+        out_bbox_threshold = yaml_load(cfg)["out_bbox_threshold"]
+        self.postprocesser = PostProcesser(self.pnpsolver, out_bbox_threshold)
         self.error_calculator = ErrorCalculator(self.pnpsolver, model.nc)
 
         self.if_postprocess = if_postprocess or if_calc_error # 如果要计算损失，必须先执行后处理
         self.if_calc_error = if_calc_error
-        self.intermediate_manager = intermediate_manager
+
+        if intermediate_from and os.path.exists(os.path.join(self.log_root, intermediate_from, "intermediate_output")):
+            intermediate_root = os.path.join(self.log_root, intermediate_from)
+        else:
+            intermediate_root = os.path.join(self.log_dir)
+        self.intermediate_manager: IntermediateManager = IntermediateManager(intermediate_root, "intermediate_output")
+        self.save_imtermediate = True
+
         self.gt_dir = "gt"
         self.predictions_dir = "list_" + LandmarkDetectionResult.__name__
         self.processed_dir = ImagePosture.__name__
         
-        self.frametimer.set_batch_size(batch_size)
+        self.frametimer.set_batch_size(self.batch_size)
 
-        self.postprocess_mode = "e" # or 'v'
+        self.postprocess_mode = "v" # or 'v'
 
-    @property
-    def save_imtermediate(self):
-        return bool(self.intermediate_manager)
+        self.logger = BaseLogger(self.log_dir)
+        self.logger.log(cfg)
 
-    def _preprocess(self, inputs):
+    def _preprocess(self, inputs) -> list[cv2.Mat]:
         '''
         对输入进行处理，可以接收的输入：
         1、经过Dataloader加载的CustomDataset对象的输出:list[ImagePosture]
@@ -228,18 +245,22 @@ class OLDTPredictor(BasePredictor):
             matched = match_roi(gt_imgpstr, pred_imgpstr)
             image_error_result = []
             for m in matched:
-                one_error_result = self.error_calculator.calc_one_error(m[0], m[1], m[2])
+                one_error_result = self.error_calculator.calc_one_error(m[0], m[1], m[2], ErrorCalculator.ALL)
                 image_error_result.append(one_error_result)
             error_result.append(image_error_result)
         return error_result
 
+    def preprocess(self, image) -> list[cv2.Mat]:
+        return super().preprocess(image)
+
+    def postprocess(self, inputs) ->list[ImagePosture]:
+        return super().postprocess(inputs)
+
+    def calc_error(self, gt: list, postprocessed: list)->list[list[tuple[ErrorResult]]]:
+        return super().calc_error(gt, postprocessed)
+    
     def predict_from_dataset(self, dataset):
         data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn)
-
-        # Enable GPU if available
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self.model.to(device)
-        self.model.eval()
         
         with torch.no_grad():
             num_batches = len(data_loader)
@@ -266,9 +287,9 @@ class OLDTPredictor(BasePredictor):
                 # error
                 if self.if_calc_error:
                     self.calc_error(batch, processed)
-        self.frametimer.print()
-        self.error_calculator.print_result()
-        print("done")
+        with self.logger.capture_output("process record"):
+            self.frametimer.print()
+            self.error_calculator.print_result()
 
     def plot_outlier(self, error_result:list[list[tuple[ErrorResult]]], 
                      gt_list:list[ImagePosture],
@@ -285,10 +306,15 @@ class OLDTPredictor(BasePredictor):
                 target_metrics = [list(filter(lambda y: y.type == metrics, x))[0] for x in er] #one type error for one image
             except IndexError:
                 continue
-            passed = any([x.passed for x in target_metrics])
+            passed = all([x.passed for x in target_metrics])
             if not passed and len(target_metrics) > 0:
-                compare_image_posture(gt, pred)
-                self.intermediate_manager._save_object("error_outlier", None, save_figure)
+                # compare_image_posture(gt, pred)
+                # text = ""
+                # for x in target_metrics:
+                #     text += str(x.error) + "\n"
+                # plt.text(0, 1, text, ha='left', va='top', transform=plt.gca().transAxes)
+                # self.intermediate_manager._save_object("error_outlier", None, save_figure)
+                self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
 
     def postprocess_from_intermediate(self, plot_outlier = False):
         predictions_generator:Generator[list[LandmarkDetectionResult]] = \
@@ -302,20 +328,23 @@ class OLDTPredictor(BasePredictor):
             error_result:list[list[tuple[ErrorResult]]] = self.calc_error(gt, processed)
             if plot_outlier:
                 self.plot_outlier(error_result, gt, processed)
-        self.frametimer.print()
-        self.error_calculator.print_result()
+        with self.logger.capture_output("process record"):
+            self.frametimer.print()
+            self.error_calculator.print_result()
+        print("done")
 
     def calc_error_from_imtermediate(self):
         pass
 
     def predict_single_image(self, image):
-        # Enable GPU if available
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self.model.to(device)
-        self.model.eval()
-
         with torch.no_grad():
-            preprocessed_image = self.preprocess(image)
-            inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
+            inputs:list[cv2.Mat] = self.preprocess(image)
+            # inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
             predictions = self.inference(inputs)
-            processed_predictions = self.postprocess(predictions)
+            processed_predictions = self.postprocess((inputs, predictions))
+
+        return processed_predictions
+
+    def clear(self):
+        self.frametimer.reset()
+        self.error_calculator.clear()
