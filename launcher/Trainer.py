@@ -37,6 +37,9 @@ else:
     TESTFLOW = False
 
 class TrainFlow():
+    '''
+    训练流程
+    '''
     def __init__(self, trainer:"Trainer", flowfile) -> None:
         self.trainer = trainer
         self.epoch = 0
@@ -178,6 +181,9 @@ class Trainer(Launcher):
         return False
 
     def forward_one_epoch(self, dataloader:DataLoader, backward = False):
+        '''
+        前向传播一个epoch
+        '''
         for module in self.freeze_modules:
             module.train(False)
         desc = "Train" if backward else "Val"

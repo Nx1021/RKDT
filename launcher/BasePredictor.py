@@ -15,6 +15,9 @@ def get_attr_by_class(obj, class_:type):
     return process_timers
 
 class _process_timer():
+    '''
+    单个过程的计时器，绑定一个函数
+    '''
     def __init__(self, batch_size:int) -> None:
         self.reset()
         self.batch_size = batch_size
@@ -98,6 +101,17 @@ class FrameTimer():
         print()
 
 class BasePredictor:
+    '''
+    预测器基类，封装了4个过程的计时功能：
+
+    preprocess
+
+    inference
+
+    postprocess
+
+    calc_error
+    '''
     def __init__(self, model, batch_size=32):
         self.model = model
         self.batch_size = batch_size

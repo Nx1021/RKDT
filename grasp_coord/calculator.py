@@ -48,7 +48,6 @@ def compute_angle(v1, v2):
     return angle
 
 class InitAngle:
-    CONE_ANGLE = 0.6542
     def __init__(self) -> None:
         phi = (np.sqrt(5) - 1)/2
         vertexs = []
@@ -72,13 +71,7 @@ class InitAngle:
         length = np.linalg.norm(vecs, axis=1)[0]
         vecs = vecs/length
         self.vecs = vecs
-
         self.get_rvec()
-        # print(vecs)
-        
-        # ax = plt.axes(projection='3d')  # 设置三维轴
-        # ax.scatter(vecs[:,0], vecs[:,1], vecs[:,2], s=5, marker="o", c='r')
-        # plt.show()
 
     @staticmethod
     def get_rvec_from_destination(dest, base = [0,0,1]):
@@ -94,6 +87,9 @@ class InitAngle:
         self.rvec = self.get_rvec_from_destination(vecs)
 
 class SphereAngle(InitAngle):
+    '''
+    在球面上大致均匀分布的角度序列
+    '''
     def __init__(self) -> None:
         nums_points = 500
         radius = 1
@@ -105,12 +101,47 @@ class SphereAngle(InitAngle):
         loc[:,1] = radius * np.sin(theta_array) * np.sin(phi_array)
         loc[:,2] = radius * np.cos(phi_array)
         self.vecs = loc
-        # ax = plt.axes(projection='3d')  # 设置三维轴
-        # ax.scatter(self.vecs[:,0], self.vecs[:,1], self.vecs[:,2], s=5, marker="o", c='r')
-        # plt.show()
         self.get_rvec()
 
 class Voxelized():
+    '''
+    brief
+    -----
+    体素化对象
+
+    attr
+    -----
+    * cube
+
+    entity_cube:   实体立方, uint8 ndarray, shape = [L, W, H]
+
+    surf_cube:     表面立方, uint8 ndarray, shape = [L, W, H]
+
+    inner_cube:    内核立方, uint8 ndarray, shape = [L, W, H]
+
+    entity_cube = surf_cube + inner_cube
+
+    * indices: 在cube内为真的位置的索引序列
+
+    entity_indices: 实体索引 int64 ndarray, shape = [-1, 3]
+
+    surf_indices:   表面索引 int64 ndarray, shape = [-1, 3]
+    
+    * R³
+
+    surf_points:    表面点的空间坐标 float32 ndarray shape = [-1, 3]
+
+    surf_normals:   表面点的空间法矢 float32 ndarray shape = [-1, 3]
+
+    * query: 用于查询立方索引对应的序列中的位置
+
+    _entity_query
+
+    _surf_query
+
+    * restore_mat: 从surf_indices转化为surf_points的变换矩阵
+    * orig_mesh: 原始的TriangleMesh对象
+    '''
     def __init__(self, 
                  entity_cube:np.ndarray,
                  restore_mat:np.ndarray,
@@ -119,7 +150,7 @@ class Voxelized():
         self.restore_mat = restore_mat          
         self.orig_mesh = orig_mesh
       
-        self.surf_cube, self.erode_entity_cube = self.split_entity_cube(entity_cube)
+        self.surf_cube, self.inner_cube = self.split_entity_cube(entity_cube)
         
         self.entity_indices =\
               np.array(np.where(self.entity_cube)).T #[N, 3]
@@ -130,13 +161,13 @@ class Voxelized():
               self.restore_mat[:3, :3].dot(self.surf_indices.T).T + self.restore_mat[:3, 3]
         self.surf_normals = self.calc_surf_normal()
 
-        self.entity_query = np.full(self.entity_cube.shape, -1, np.int64)
-        self.entity_query[self.entity_indices[:,0], 
+        self._entity_query = np.full(self.entity_cube.shape, -1, np.int64)
+        self._entity_query[self.entity_indices[:,0], 
                         self.entity_indices[:,1], 
                         self.entity_indices[:,2]] = np.array(range(self.entity_indices.shape[0]), np.int64)
         
-        self.surf_query = np.full(self.surf_cube.shape, -1, np.int64)
-        self.surf_query[self.surf_indices[:,0], 
+        self._surf_query = np.full(self.surf_cube.shape, -1, np.int64)
+        self._surf_query[self.surf_indices[:,0], 
                         self.surf_indices[:,1], 
                         self.surf_indices[:,2]] = np.array(range(self.surf_indices.shape[0]), np.int64)
 
@@ -145,6 +176,11 @@ class Voxelized():
         return self.entity_cube.shape
  
     def split_entity_cube(self, cube:np.ndarray):
+        '''
+        brief
+        -----
+        由entity_cube生成surf_cube和inner_cube
+        '''
         N = int(np.sum(cube.shape) / 20)
         surf_cube = np.zeros(cube.shape, np.uint8)
         for d in range(3):
@@ -155,7 +191,6 @@ class Voxelized():
                 # 找外圈轮廓，并排除长度较小的轮廓
                 # 查找轮廓
                 contours, _ = cv2.findContours(layer, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
                 # 绘制轮廓
                 image = surf_cube[i].copy()
                 for contour in contours:
@@ -170,8 +205,11 @@ class Voxelized():
         return surf_cube, eroded_body
 
     def calc_surf_normal(self):
-        # 创建示例点云数据 A 和 B
-        # points:np.ndarray, base_normal:np.ndarray
+        '''
+        brief
+        ----
+        计算表面法矢，找到距离体素化表面的每个点最近的原始mesh的点，并复制其法矢
+        '''
         surf = o3d.geometry.PointCloud()
         surf.points = o3d.utility.Vector3dVector(self.surf_indices)
 
@@ -200,20 +238,48 @@ class Voxelized():
 
         return interpolated_normals
     
-    def query_surf_normal(self, indices):
-        idx = self.surf_query[indices[..., 0], indices[..., 1], indices[..., 2]]
+    def query_surf_normal(self, indices:np.ndarray) -> np.ndarray:
+        '''
+        brief
+        -----
+        查询表面法矢
+
+        parameter
+        -----
+        indices: ndarray, shape:[..., 3]
+        '''
+        idx = self._surf_query[indices[..., 0], indices[..., 1], indices[..., 2]]
         normals = self.surf_normals[idx]
         normals[np.any(idx == -1, -1)] = 0.0
         return normals
     
-    def query_surf_points(self, indices):
-        idx = self.surf_query[indices[..., 0], indices[..., 1], indices[..., 2]]
+    def query_surf_points(self, indices:np.ndarray) -> np.ndarray:
+        '''
+        brief
+        -----
+        查询表面点坐标
+
+        parameter
+        -----
+        indices: ndarray, shape:[..., 3]
+        '''
+        idx = self._surf_query[indices[..., 0], indices[..., 1], indices[..., 2]]
         points = self.surf_points[idx]
         points[np.any(idx == -1, -1)] = 0.0
         return points
 
     @staticmethod
     def from_mesh(mesh, voxel_size):
+        '''
+        brief
+        -----
+        体素化TriangleMesh对象
+
+        parameter
+        -----
+        mesh: open3d.geometry.TriangleMesh 单位为mm
+        voxel_size: int|float 单位为mm
+        '''
         ### 进行体素化
         voxel_grid = o3d.geometry.VoxelGrid.create_from_triangle_mesh(mesh, voxel_size)
         
@@ -259,6 +325,9 @@ class Voxelized():
     @staticmethod
     def fill_3d(voxel_array:np.ndarray):
         '''
+        brief
+        ----
+        填充体素化点云
         沿不同方向累加，累加值为奇数的是内部
         '''
         padded_array = np.pad(voxel_array, ((1, 1), (1, 1), (1, 1)), mode='constant', constant_values=0)
@@ -282,6 +351,11 @@ class Voxelized():
         return entity
 
 class Triangle_Hough():
+    '''
+    brief
+    -----
+    正三角形霍夫变换
+    '''
     def __init__(self, resolution:float, r_max:float, r_min:float, theta_resolution:float) -> None:
         '''
         resolution: 长度单位的分辨率,包括x,y,r
@@ -299,7 +373,7 @@ class Triangle_Hough():
 
         self.resolution = resolution
 
-    def crop_nonzero_region(self, image):
+    def _crop_nonzero_region(self, image):
         # 找到非零像素的索引
         nonzero_indices = np.nonzero(image)
         if len(nonzero_indices[0]) == 0:
@@ -333,7 +407,7 @@ class Triangle_Hough():
         if show:
             plt.show()
 
-    def parse(self, result):
+    def _parse(self, result):
         rsls = np.array([
             self.resolution, 
             self.resolution, 
@@ -344,6 +418,9 @@ class Triangle_Hough():
         return triangles
 
     def triangles_filter(self, triangles, co_marks):
+        '''
+        部分结果不合理，将其过滤
+        '''
         num_groups = co_marks.shape[0]
         distances = np.zeros((num_groups, 3))
 
@@ -363,13 +440,27 @@ class Triangle_Hough():
 
     def run(self, image:cv2.Mat, ifplot = False):
         '''
+        brief
+        ----
+        运行
+
+        parameter
+        -----
+        image: 图像，必须是二值化的 \n
+        ifplot: 是否绘制结果
+
+        note
+        -----
+
         x,y 表示在当前图像坐标系下的x,y
+
         X,Y 表示在物体坐标系下的X,Y
+
         y == X 
         x == Y
         '''
         start = time.time()
-        croped, org = self.crop_nonzero_region(image)
+        croped, org = self._crop_nonzero_region(image)
 
         marks = np.array(np.where(croped)).T #[M, 2]
 
@@ -407,7 +498,7 @@ class Triangle_Hough():
 
         condition = np.where(summary == 3)
         result = np.array(condition).T
-        triangles = self.parse(result)
+        triangles = self._parse(result)
 
         ### 获取每个三角形对应的marker
         mark_idx = np.zeros((marks.shape[0], result.shape[0]))
@@ -520,7 +611,7 @@ class _CoordSearcher():
             contacted.append(co_marks)
             triangles.append(triangle)
 
-            max_proj = max_proj + self.voxelized.erode_entity_cube[:,:,i].astype(np.uint8) #最大投影轮廓，被包含在内的点将被排除
+            max_proj = max_proj + self.voxelized.inner_cube[:,:,i].astype(np.uint8) #最大投影轮廓，被包含在内的点将被排除
         contacted = np.concatenate(contacted)
         triangles = np.concatenate(triangles)
         return triangles, contacted
@@ -552,6 +643,9 @@ class _CoordSearcher():
         return triangles[mask], contact_point_indices[mask], us[mask]
 
     def calculate_max_depth(self, triangles, contact_point_indices, us):
+        '''
+        计算夹持器最大可达深度
+        '''
         voxel_size = self.voxel_size
 
         vaild_graps_indices = []
@@ -578,7 +672,7 @@ class _CoordSearcher():
                 finger_index = np.where(finger_mask)
                 # Slice along the z-axis where the gripper's fingers are located
                 # the gripper's fingers should not be interference with the object
-                z_slices = self.voxelized.erode_entity_cube[finger_index[0], finger_index[1], :] #[n, N]
+                z_slices = self.voxelized.inner_cube[finger_index[0], finger_index[1], :] #[n, N]
                 z_slices_non_zero_index = np.where(z_slices)[-1]
                 if z_slices_non_zero_index.size > 0:
                     potential_max_grasp_depth = z_slices_non_zero_index.min() * voxel_size - voxel_size/2
@@ -593,7 +687,7 @@ class _CoordSearcher():
                     # if len(tri) > 0:
                     #     zi = int(np.round(feasible_max_grasp_depth / voxel_size))
                     #     self.hough_solver.plot(np.expand_dims(tri, 0), 
-                    #                            np.sum(self.voxelized.erode_entity_cube[..., :zi], -1))
+                    #                            np.sum(self.voxelized.inner_cube[..., :zi], -1))
                     graps_indices = np.array([*tri[0:2], #[::-1], 
                                               np.round(feasible_max_grasp_depth / voxel_size), 
                                               tri[3],
@@ -611,7 +705,15 @@ class _CoordSearcher():
 
     def restore(self, rvec, graps_indices, us):
         '''
-        graps_indices: [N, 5]
+        brief
+        -----
+        恢复夹持坐标到物体坐标系(OCS)
+
+        parameter
+        ----
+        rvec: 旋转向量: shape = [3]
+        graps_indices: shape = [N, 5]
+        us: 夹持参数
         '''
         local_grasp_poses = np.zeros((graps_indices.shape[0], 8))
         for i, gi in enumerate(graps_indices):
@@ -638,6 +740,13 @@ class _CoordSearcher():
 class CandiCoordCalculator():
     def __init__(self, modelpcd:ObjectPcd, gripper:Gripper, 
                  v_friction_angle = 10, h_friction_angle = 45, voxel_size = -1) -> None:
+        '''
+        v_friction_angle  垂直方向死锁角
+
+        h_friction_angle  水平方向死锁角
+
+        voxel_size: 体素化尺寸
+        '''        
         self.modelinfo = modelpcd
         self.gripper = gripper
         self.v_friction_angle = v_friction_angle
@@ -648,11 +757,20 @@ class CandiCoordCalculator():
 
     def calc_candidate_coord(self, show = False, create_process_mesh = False):
         '''
-        v_friction_angle  垂直方向死锁角
-        h_friction_angle  水平方向死锁角
-        voxel_size: 体素化尺寸
+        brief
+        -----
+        开始计算
+
+        parameters
+        ----
+        show: 计算完毕以后显示结果
+
+        create_process_mesh: 创建过程mesh以供观阅
         '''
         def _create_process_mesh():
+            '''
+            绘制中间过程以供观阅
+            '''
             def get_gripper_mesh(lgp):
                 g_rvec = lgp[:3]
                 g_tvec = lgp[3:6]
@@ -766,8 +884,10 @@ class CandiCoordCalculator():
         found_num = 0
         global_grasp_poses = []
 
-        searcher = _CoordSearcher(self.gripper, None, self.v_friction_angle, self.h_friction_angle, self.voxel_size)
+        searcher = _CoordSearcher(self.gripper, None, self.v_friction_angle, self.h_friction_angle, self.voxel_size) # 搜索器
         progress = tqdm(enumerate(ia.rvec), total=len(ia.rvec), leave=True)
+        
+        ### 逐角度循环搜索
         for baserot_i, rvec in progress:
             ### 旋转
             transform = Posture(rvec=-rvec)
@@ -775,6 +895,7 @@ class CandiCoordCalculator():
             ### 体素化
             voxelized:Voxelized = Voxelized.from_mesh(modelinfo.mesh, voxel_size)
             
+            ### 逐层查找
             searcher.set_voxelized(voxelized)
             get_v_stable = searcher.get_v_stable()
             triangles, contacted = searcher.search_by_layer(get_v_stable)
@@ -782,24 +903,24 @@ class CandiCoordCalculator():
             vaild_graps_indices = searcher.calculate_max_depth(triangles, contacted, us)
             local_grasp_poses = searcher.restore(rvec, vaild_graps_indices, us)
 
-            ###
+            ### 绘制中间过程（可选的）
             if create_process_mesh and len(local_grasp_poses) > 0:
                 _create_process_mesh()
-            ###
 
-            # for lp in local_grasp_poses:
-            #     self.plot(rvec, lp, voxelized)
+            ### 收集结果
             global_grasp_poses.append(local_grasp_poses)
             found_num += len(local_grasp_poses)
             progress.set_postfix({"grasping coordinates found": found_num})
 
-        global_grasp_poses = np.concatenate(global_grasp_poses, 0)
+        ### 保存结果
+        global_grasp_poses = np.concatenate(global_grasp_poses, 0) # 合并
         save_path = os.path.join(MODELS_DIR, self.modelinfo.name + "_candi_grasp_posture" + ".npy")
         np.save(save_path, global_grasp_poses, allow_pickle= True)
         print("saved at {}".format(save_path))
         
         self.modelinfo.candi_coord_parameter = global_grasp_poses
 
+        ### 显示结果（可选的）
         if show:
             self.modelinfo.draw_all(self.gripper)
 

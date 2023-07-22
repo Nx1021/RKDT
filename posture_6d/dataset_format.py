@@ -26,7 +26,7 @@ class DatasetFormat(ABC):
 
     built-in data types
     -----
-    * _BaseJsonDict: Basic json dictionary, this data type allows data to be stored in json format. This type of data must use DatasetFormat.load_basejson
+    * _BaseJsonDict: Basic json dictionary, this data type allows data to be stored in json format. This type of data must be loaded by DatasetFormat.load_basejson
     * _Elements: element storage, this data type will save each set of data in a separate file in the directory
     * _Writer: write context manager, must call start_to_write method before writing
 

@@ -15,6 +15,9 @@ def create_ObjectPcd_from_file(class_id):
     return ObjectPcd(mm.export_meta(class_id))
 
 class ObjectPcd(MeshMeta):
+    '''
+    物体点云
+    '''
     def __init__(self, 
                  modelinfo:MeshMeta,
                  posture:Posture = None) -> None:
@@ -29,14 +32,29 @@ class ObjectPcd(MeshMeta):
         self.read_candidate_coord()
 
     def render(self, gripper:MyThreeFingerGripper = None, gripper_posture_O:Posture = None, u = None):
-        assert (gripper and gripper_posture_O and u) or not gripper
+        '''
+        brief
+        -----
+        渲染，生成TriangleMesh对象用于显示
+
+        parameter
+        -----
+        gripper: 夹持器对象
+
+        gripper_posture_O: 夹持器姿态
+        
+        u: 夹持参数
+
+        如果传入了gripper，则必须指定gripper_posture_O和u
+        '''
+        assert (gripper and gripper_posture_O and u) or not gripper # 检查输入
 
         showing_geometrys = []
         obj_geo = self.transform(self.posture_WCS)
         if len(obj_geo.mesh.triangle_normals) == 0:
             obj_geo.mesh.compute_triangle_normals()
-        sence_center_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=self.mesh.get_center())
-        sence_robot_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=[0,0,0])
+        sence_center_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=self.mesh.get_center())  #场景中心标架
+        sence_robot_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=[0,0,0])                  #原点标架
         showing_geometrys +=  [obj_geo.mesh, sence_center_frame, sence_robot_frame]
 
         if gripper:
@@ -46,18 +64,24 @@ class ObjectPcd(MeshMeta):
         return showing_geometrys
 
     def draw_all(self, gripper):
+        '''
+        绘制所有夹持姿态
+        '''
         for ggp in self.candi_coord_parameter:
             self.draw(gripper, Posture(rvec=ggp[:3], tvec=ggp[3:6]), ggp[6])
 
     def draw(self, gripper:MyThreeFingerGripper = None, gripper_posture_O:Posture = None, u = None):
+        '''
+        绘制一个夹持姿态
+        '''
         showing_geometrys = self.render(gripper, gripper_posture_O, u)
         o3d.visualization.draw_geometries(showing_geometrys, width=1280, height=720)
 
-    def read_local_grasp_coord(self):
-        pass
-
     @property
     def pcd_WCS(self):
+        '''
+        世界坐标系(WCS)下的点云
+        '''
         pcd = self.pcd
         return self.posture_WCS * pcd
 
@@ -67,6 +91,9 @@ class ObjectPcd(MeshMeta):
         return np.max(pcd[:,:3], 0) - np.min(pcd[:,:3], 0)
     
     def read_candidate_coord(self):
+        '''
+        从硬盘读取候选夹持坐标
+        '''
         try:
             path = os.path.join(MODELS_DIR, self.name + "_candi_grasp_posture.npy")
             self.candi_coord_parameter = np.load(path)
@@ -75,6 +102,9 @@ class ObjectPcd(MeshMeta):
             print("Can not find {}".format(path))
 
     def parse_candidate_coord(self):
+        '''
+        解析夹持坐标
+        '''
         candi_coord_parameter = self.candi_coord_parameter
         rvec = candi_coord_parameter[:, 0:3]
         tvec = candi_coord_parameter[:, 3:6]
