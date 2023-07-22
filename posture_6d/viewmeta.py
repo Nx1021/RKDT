@@ -5,7 +5,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy import ndarray
 import cv2
+from PIL import Image
+import io
 import copy
+import pickle
 from typing import Union, Any, Callable
 from .posture import Posture
 from .intr import CameraIntr
@@ -13,6 +16,18 @@ from .mesh_manager import MeshMeta
 from .derive import calc_bbox_3d_proj, calc_landmarks_proj, calc_masks
 from .utils import get_bbox_connections, modify_class_id, get_meta_dict
 import inspect
+import warnings
+
+def query_key_by_value(orig_dict:dict):
+    __orig_value_ids    = [id(x) for x in orig_dict.values()]
+    __orig_keys         = list(orig_dict.keys())
+    def query(value):
+        matched_idx = __orig_value_ids.index(id(value))
+        key = __orig_keys[matched_idx]
+        __orig_value_ids.pop(matched_idx)
+        __orig_keys.pop(matched_idx)
+        return matched_idx, key
+    return query
 
 def copy_by_rect(crop_rect, org:np.ndarray):
     if len(crop_rect.shape) == 1:
@@ -39,6 +54,14 @@ def rot_xy_list_2dpoints(M, points_2d:np.ndarray) -> list[float]:
     points_2d = np.pad(points_2d, ((0,0),(0,1)), constant_values=1)
     new_points_2d:np.ndarray = M.dot(points_2d.T).T[:, :2]
     return new_points_2d
+
+def ignore_viewmeta_warning(func):
+    def wrapper(*arg, **kw):
+        ViewMeta.IGNORE_WARNING = True
+        result = func(*arg, *kw)
+        ViewMeta.IGNORE_WARNING = False
+        return result
+    return wrapper
 
 class ViewMeta():
     '''
@@ -276,6 +299,8 @@ class ViewMeta():
             new_masks = self.new_masks_callback()
             return self.calc_new_visib_fract(old_masks, new_masks)
 
+    IGNORE_WARNING = False
+
     def __init__(self, 
                 rgb: np.ndarray, 
                 depth: np.ndarray, 
@@ -299,40 +324,67 @@ class ViewMeta():
         keypoints: dict[int, ndarray:[N, (x,y)]],
         trans_vector:dict[int, list] 外参
         '''
+        ViewMeta.IGNORE_WARNING = True
         self.__init_parameters_keys = [x for x in locals().keys() if x in inspect.signature(self.__init__).parameters.keys()]
         self.__init_parameters_values = [id(x) for x in list(locals().values())]
         self.agmts:dict[str, ViewMeta.AugmentPipeline] = {}
+        self.elements = {}
         self.rgb:np.ndarray                 = self.__set_element(ViewMeta.RgbAP,         rgb)
         self.depth:np.ndarray               = self.__set_element(ViewMeta.DepthAP,       depth)            
         self.masks:dict[int, ndarray]       = self.__set_element(ViewMeta.MasksAP,       masks) #[N, H, W]
         self.extr_vecs:dict[int, ndarray]   = self.__set_element(ViewMeta.ExtrVecAP,     extr_vecs,  lambda x:self.__reshape_array_in_dict(x, (2, 3)))
-        self.intr:ndarray                   = self.__set_element(ViewMeta.IntrAP,        intr)
+        self.intr:ndarray                   = self.__set_element(ViewMeta.IntrAP,        intr,  lambda x: np.reshape(x, (3, 3)))
         self.depth_scale: float             = self.__set_element(ViewMeta.DepthScaleAP,  depth_scale)
         self.bbox_3d:dict[int, ndarray]     = self.__set_element(ViewMeta.Bbox3dAP,      bbox_3d,    lambda x:self.__reshape_array_in_dict(x, (-1,2)))
         self.landmarks:dict[int, ndarray]   = self.__set_element(ViewMeta.LandmarksAP,   landmarks,  lambda x:self.__reshape_array_in_dict(x, (-1,2)))
         self.visib_fract: dict[int, float]  = self.__set_element(ViewMeta.VisibFractAP,  visib_fract)
         # self.keypoints_visib                = copy.deepcopy(keypoints_visib)
+        # self.filter_unvisible()
+        ViewMeta.IGNORE_WARNING = False
+
+    def __setattr__(self, __name, __value):
+        if not ViewMeta.IGNORE_WARNING:
+            warnings.warn("WARNING: Setting properties directly is dangerous and may throw exceptions! make sure you know what you are doing", Warning)
+        super().__setattr__(__name, __value)
 
     @property
     def bbox_2d(self) -> dict[int, np.ndarray]:
         '''
         (x1, y1, x2, y2)
         '''
-        bbox_2d = {}
-        for id_, mask in self.masks.items():
-            where = np.where(mask)
-            if where[0].size == 0:
-                bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
-            else:
-                lt = np.min(where, -1)
-                rb = np.max(where, -1)
-                bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
-        return bbox_2d
+        if self.masks is not None:
+            bbox_2d = {}
+            for id_, mask in self.masks.items():
+                where = np.where(mask)
+                if where[0].size == 0:
+                    bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
+                else:
+                    lt = np.min(where, -1)
+                    rb = np.max(where, -1)
+                    bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
+            return bbox_2d
+        return None
+
+    def filter_unvisible(self):
+        ids = list(set(self.masks.keys()).union(set(self.visib_fract.keys())))
+        for id_ in ids:
+            try: mask_cond = np.sum(self.masks[id_]) == 0
+            except: mask_cond = False
+            try: vf_cond = self.visib_fract[id_] == 0
+            except: vf_cond = False
+            if mask_cond or vf_cond:
+                for value in self.elements.values():
+                    if isinstance(value, dict):
+                        try:
+                            value.pop(id_)
+                        except KeyError:
+                            pass
 
     def modify_class_id(self, modify_class_id_pairs:list[tuple[int]]):
         orig_dict_list = get_meta_dict(self)
         modify_class_id(orig_dict_list, modify_class_id_pairs)
 
+    @ignore_viewmeta_warning
     def calc_by_base(self, mesh_dict:dict[int, MeshMeta], cover = False):
         assert self.rgb is not None
         assert self.extr_vecs is not None
@@ -344,15 +396,24 @@ class ViewMeta():
         keys = []
         bbox_3d = {}
         landmarks = {}
+        calc_bbox3d     = cover or self.bbox_3d is None
+        calc_landmarks  = cover or self.landmarks is None
         for key in self.extr_vecs:
             posture = Posture(rvec=self.extr_vecs[key][0], tvec=self.extr_vecs[key][1])
             meshmeta = mesh_dict[key]
             postures.append(posture)
             mesh_list.append(meshmeta)
             keys.append(key)
-            bbox_3d[key] = calc_bbox_3d_proj(meshmeta, posture, camera_intr)
-            landmarks[key] = calc_landmarks_proj(meshmeta, posture, camera_intr)
+            if calc_bbox3d:
+                bbox_3d[key] = calc_bbox_3d_proj(meshmeta, posture, camera_intr)
+            if calc_landmarks:
+                landmarks[key] = calc_landmarks_proj(meshmeta, posture, camera_intr)
         
+        if calc_bbox3d:
+            self.bbox_3d = bbox_3d
+        if calc_landmarks:
+            self.landmarks = landmarks
+
         if cover or self.masks is None or self.visib_fract is None:
             masks, visib_fracts = calc_masks(mesh_list, postures, camera_intr, ignore_depth=True)
 
@@ -366,11 +427,8 @@ class ViewMeta():
                 self.masks = masks_dict
             if cover or self.visib_fract is None:
                 self.visib_fract = visib_fract_dict
-
-        if cover or self.bbox_3d is None:
-            self.bbox_3d = bbox_3d
-        if cover or self.landmarks is None:
-            self.landmarks = landmarks
+        
+        self.filter_unvisible()
 
     @staticmethod
     def from_base_data( rgb: np.ndarray, 
@@ -388,9 +446,11 @@ class ViewMeta():
         key = self.__init_parameters_keys[matched_idx]
         self.__init_parameters_keys.pop(matched_idx)
         self.__init_parameters_values.pop(matched_idx)
-        value = func(copy.deepcopy(value))
+        # value = func(copy.deepcopy(value))
+        value = func(value)
         if isinstance(value, dict):
             value = dict(sorted(value.items(), key=lambda x: x[0]))
+        self.elements[key] = value
         ### 初始化增强
         ap = ap_type(self)
         self.agmts.update({key: ap})
@@ -432,7 +492,7 @@ class ViewMeta():
         cam_K = self.intr
         center:tuple[float] = (cam_K[0,2], cam_K[1,2])
         # 获取旋转矩阵
-        M = cv2.getRotationMatrix2D(center, angle * 180/ np.pi, 1.0) # 角度制，旋转方向向外，与相机坐标系Z轴想法
+        M = cv2.getRotationMatrix2D(center, angle * 180/ np.pi, 1.0) # 角度制，旋转方向向外，与相机坐标系Z轴相反
 
         return self.__augment("rotate", M)
 
@@ -469,28 +529,141 @@ class ViewMeta():
         pass
 
     def show(self):
-        masks = np.stack(list(self.masks.values()))
-        mask = np.sum(masks.astype(np.float32) * 0.2, axis=0).astype(np.uint8)
-        mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
-
-        rgb = np.clip((self.rgb.astype(np.float32) + mask), 0, 255).astype(np.uint8)
-
         plt.subplot(1,2,1)
-        plt.imshow(rgb)
+        if self.masks is not None:
+            masks = np.stack(list(self.masks.values()))
+            mask = np.sum(masks.astype(np.float32) * 0.2, axis=0).astype(np.uint8)
+            mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+            # bbox_2d
+            for bbox_2d in self.bbox_2d.values():
+                plt.gca().add_patch(plt.Rectangle((bbox_2d[0], bbox_2d[1]), 
+                                                bbox_2d[2] - bbox_2d[0], bbox_2d[3] - bbox_2d[1],
+                                                    color="blue", fill=False, linewidth=1))
+        else:
+            mask = 0
+        rgb = np.clip((self.rgb.astype(np.float32) + mask), 0, 255).astype(np.uint8)
+        plt.imshow(rgb) 
         # landmarks
-        for ldmks in self.landmarks.values():
-            plt.scatter(ldmks[:,0], ldmks[:,1], c = 'g')
+        if self.landmarks is not None:
+            for ldmks in self.landmarks.values():
+                plt.scatter(ldmks[:,0], ldmks[:,1], c = 'g')
         # bbox_3d
-        for bbox_3d in self.bbox_3d.values():
-            plt.scatter(bbox_3d[:,0], bbox_3d[:,1], c = 'r')
-            lines = get_bbox_connections(bbox_3d)
-            for line in lines:
-                plt.plot(line[0], line[1], c = 'r')
+        if self.bbox_3d is not None:
+            for bbox_3d in self.bbox_3d.values():
+                plt.scatter(bbox_3d[:,0], bbox_3d[:,1], c = 'r')
+                lines = get_bbox_connections(bbox_3d)
+                for line in lines:
+                    plt.plot(line[0], line[1], c = 'r')
         # 标注类别与可见性
-        for class_id, vb in self.visib_fract.items():
-            label = "{} {:>.3}".format(class_id, vb)
-            lt = np.min(self.bbox_3d[class_id], axis = 0)
-            plt.text(lt[0], lt[1], label, verticalalignment='top')
+        if self.bbox_3d is not None:
+            for class_id in self.bbox_3d.keys():
+                vb = self.visib_fract[class_id]
+                label = "{} {:>.3}".format(class_id, float(vb))
+                lt = np.min(self.bbox_3d[class_id], axis = 0)
+                plt.text(lt[0], lt[1], label, verticalalignment='top')
+
         plt.subplot(1,2,2)
-        plt.imshow(self.depth)
+        if self.depth is not None:
+            plt.imshow(self.depth)
+            plt.title("depth scale:{}".format(self.depth_scale))
+
+    def serialize(self):
+        def record_serialize(obj, func = lambda x:x):
+            serialize_obj   = func(obj)
+            serialize_elements[query(obj)[1]] = serialize_obj
+   
+        query = query_key_by_value(self.elements)
+        serialize_elements = {}
+
+        record_serialize(self.rgb, serialize_image_container)
+        record_serialize(self.depth, serialize_image_container)
+        record_serialize(self.masks, serialize_image_container)
+        record_serialize(self.extr_vecs)
+        record_serialize(self.intr)
+        record_serialize(self.depth_scale)
+        record_serialize(self.bbox_3d)
+        record_serialize(self.landmarks)
+        record_serialize(self.visib_fract)
+
+        return serialize_elements
         
+    @staticmethod
+    def from_serialize_object(serialize_elements):
+        elements = {}
+        elements["rgb"] = deserialize_image_container(serialize_elements["rgb"], cv2.IMREAD_COLOR)
+        elements["depth"] = deserialize_image_container(serialize_elements["depth"], cv2.IMREAD_ANYDEPTH)
+        elements["masks"] = deserialize_image_container(serialize_elements["masks"], cv2.IMREAD_GRAYSCALE)
+        for key in ["extr_vecs", "intr", "depth_scale", "bbox_3d", "landmarks", "visib_fract"]:
+            elements[key] = serialize_elements[key]
+        
+        return ViewMeta(**elements)
+
+def is_image(array):
+    if not isinstance(array, np.ndarray):
+        return False
+    if array.ndim not in [2, 3]:
+        return False
+    if array.dtype not in [np.uint8, np.uint16, np.float32, np.float64]:
+        return False
+    if array.min() < 0 or array.max() > 255:
+        return False
+    return True
+
+def serialize_image_container(image_container):
+    def serialize_image(image:np.ndarray):  
+        # 将NumPy数组编码为png格式的图像
+        retval, buffer = cv2.imencode('.png', image)
+        # 将图像数据转换为字节字符串
+        image_bytes = buffer.tobytes()
+        image.tobytes()
+        return image_bytes
+    if is_image(image_container):
+        return serialize_image(image_container)
+    elif isinstance(image_container, (list, tuple)):
+        new_value = [serialize_image_container(item) for item in image_container]
+    elif isinstance(image_container, dict):
+        new_value = dict(zip(image_container.keys(), [serialize_image(x) for x in image_container.values()]))
+    else:
+        return image_container
+    return new_value
+
+def deserialize_image_container(bytes_container, imread_flags):
+    def deserialize_image(image_bytes):  
+        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(image_array, flags=imread_flags)# 将numpy数组解码为图像
+        return image
+    if isinstance(bytes_container, bytes):
+        return deserialize_image(bytes_container)
+    elif isinstance(bytes_container, (list, tuple)):
+        new_value = [deserialize_image(item) for item in bytes_container]
+    elif isinstance(bytes_container, dict):
+        new_value = dict(zip(bytes_container.keys(), [deserialize_image(x) for x in bytes_container.values()]))
+    else:
+        return bytes_container
+    return new_value
+
+
+def serialize_image(image:np.ndarray):  
+    # 将NumPy数组编码为png格式的图像
+    retval, buffer = cv2.imencode('.png', image)
+    # 将图像数据转换为字节字符串
+    image_bytes = buffer.tobytes()
+    image.tobytes()
+    return image_bytes
+
+def serialize_masks_dict(masks:dict[int, cv2.Mat]):
+    serialize_masks = {}
+    for id_, mask in masks.items():
+        serialize_masks[id_] = serialize_image(mask)
+    return serialize_masks   
+
+def deserialize_image(image_bytes, imread_flags):  
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(image_array, flags=imread_flags)# 将numpy数组解码为图像
+    return image
+
+def deserialize_masks_dict(serialize_masks):
+    masks = {}
+    for id_, s_mask in serialize_masks.items():
+        masks[id_] = deserialize_image(s_mask, cv2.IMREAD_GRAYSCALE)
+    return masks    

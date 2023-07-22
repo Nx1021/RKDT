@@ -4,3 +4,6 @@ runs/
 train_log/
 logs/
 weights/
+*.pyc
+*.pyo
+__pycache__/

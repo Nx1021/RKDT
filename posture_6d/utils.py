@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from _ctypes import PyObj_FromPtr
 import json
@@ -92,6 +93,44 @@ class JsonIO():
 
             return json_repr
 
+    class Stream():
+        def __init__(self, path) -> None:
+            self.path = path
+            self.buffer = ""
+            if os.path.exists(path):
+                with open(self.path, 'rb+') as f:
+                    f.seek(-3, 2)
+                    f.truncate()
+                with open(self.path, 'a') as f:
+                    f.write(",")
+            else:
+                with open(self.path, 'w') as f:
+                    f.write("{")
+
+        def save_buffer(self):
+            with open(self.path, 'a') as f:
+                f.write(self.buffer)
+            self.buffer = ""            
+
+        def write(self, to_dump_dict):
+            string = JsonIO._dumps(to_dump_dict)
+            self.buffer += string
+            if len(self.buffer) > 100000:
+                self.save_buffer()
+
+        def __del__(self):
+            self.save_buffer()
+            with open(self.path, 'rb+') as f:
+                f.seek(-1, 2)
+                f.truncate()
+            with open(self.path, 'a') as f:
+                f.write('\n}')            
+
+    @staticmethod
+    def create_stream(path):
+        stream = JsonIO.Stream(path)
+        return stream
+
     @staticmethod
     def __convert_dict_from_json(dictionary):
         new_dict = {}
@@ -148,18 +187,17 @@ class JsonIO():
         return dict_
 
     @staticmethod
-    def dump_json(path, to_dump_dict, seperately = False):
+    def _dumps(to_dump_dict):
         to_dump_dict = JsonIO.__convert_dict_to_json(to_dump_dict)
-        if seperately:
-            string = ""            
-            for k, v in to_dump_dict.items():
-                json_data = json.dumps({k: v}, cls=JsonIO._MyEncoder, ensure_ascii=False, sort_keys=True, indent=2)
-                string += json_data[1:-2] + ','
-            string = '{' + string[:-1] + '\n}'
-            with open(path, 'w') as fw:
-                fw.write(string)
-        else:
-            with open(path, 'w') as fw:
-                # 整理格式，list部分不换行
-                json_data = json.dumps(to_dump_dict, cls=JsonIO._MyEncoder, ensure_ascii=False, sort_keys=True, indent=2)
-                fw.write(json_data)
+        string = ""            
+        for k, v in to_dump_dict.items():
+            json_data = json.dumps({k: v}, cls=JsonIO._MyEncoder, ensure_ascii=False, sort_keys=True, indent=2)
+            string += json_data[1:-2] + ','
+        return string
+
+    @staticmethod
+    def dump_json(path, to_dump_dict):
+        string = JsonIO._dumps(to_dump_dict)
+        string = '{' + string[:-1] + '\n}'
+        with open(path, 'w') as fw:
+            fw.write(string)

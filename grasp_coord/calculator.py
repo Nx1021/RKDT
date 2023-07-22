@@ -94,8 +94,8 @@ class InitAngle:
         self.rvec = self.get_rvec_from_destination(vecs)
 
 class SphereAngle(InitAngle):
-    def __init__(self) -> None:
-        nums_points = 500
+    def __init__(self, nums_points = 500) -> None:
+        nums_points = nums_points
         radius = 1
         loc = np.zeros((nums_points, 3))
         ii = np.arange(1, nums_points+1, 1)
