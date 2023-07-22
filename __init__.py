@@ -1,11 +1,13 @@
 import sys
+import platform
 import os
 import shutil
-# # 获取当前脚本所在的目录路径
-# script_dir = os.path.dirname(os.path.abspath(__file__))
-# # 切换工作目录到当前脚本所在的目录
-# os.chdir(script_dir)
+
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if platform.system() == "Linux":
+    # 切换工作目录到当前脚本所在的目录
+    os.chdir(SCRIPT_DIR)
 sys.path.append(SCRIPT_DIR)
 
 CFG_DIR         = f"{SCRIPT_DIR}/cfg"
