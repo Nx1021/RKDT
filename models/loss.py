@@ -403,12 +403,12 @@ class LandmarkLoss(nn.Module):
         valid_mask = torch.max(target, dim=-1)[0] == 1# [o, m, N] 必须属于一个类，否则不计算
 
         ###
-        if SYS == "Windows":
-            plt.subplot(1,2,1)
-            plt.imshow(tensor_to_numpy(pred[0,0]))
-            plt.subplot(1,2,2)
-            plt.imshow(tensor_to_numpy(target[0,0]))
-            plt.show()
+        # if SYS == "Windows":
+        #     plt.subplot(1,2,1)
+        #     plt.imshow(tensor_to_numpy(pred[0,0]))
+        #     plt.subplot(1,2,2)
+        #     plt.imshow(tensor_to_numpy(target[0,0]))
+        #     plt.show()
         ###
 
         if with_weight:

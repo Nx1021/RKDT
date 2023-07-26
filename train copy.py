@@ -8,6 +8,7 @@ from launcher.OLDTDataset import OLDTDataset, transpose_data, collate_fn
 from models.loss import LandmarkLoss
 from models.OLDT import OLDT
 import time
+import numpy as np
 
 import os
 import shutil
@@ -62,7 +63,7 @@ if __name__ == "__main__":
         data_folder = SERVER_DATASET_DIR
         print("use data on the server: ", data_folder)
     yolo_weight_path = f"{WEIGHTS_DIR}/linemod_000000_best.pt"
-    cfg = f"{CFG_DIR}/config.yaml"
+    cfg = f"{CFG_DIR}/config_linemod_000001.yaml"
     flow = f"{CFG_DIR}/train_flow.yaml"
     ###
     train_dataset = OLDTDataset(data_folder, "train")
@@ -85,6 +86,8 @@ if __name__ == "__main__":
         # model = torch.nn.DataParallel(model)
     else:
         raise SystemError
+
+    train_dataset.set_augment_para(5, np.pi / 6)
     trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
                       flowfile= flow,
                       distribute=False,
