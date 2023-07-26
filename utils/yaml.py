@@ -26,7 +26,8 @@ def yaml_load(path='data.yaml', assingle = True)->dict:
             loaded_cfg[path] = yaml_data
     else:
         yaml_data = load()
-    yaml_data["models_dir"] = os.path.join(SCRIPT_DIR, yaml_data["models_dir"])
+    if "models_dir" in yaml_data:
+        yaml_data["models_dir"] = os.path.join(SCRIPT_DIR, yaml_data["models_dir"])
     return yaml_data
 
 def yaml_dump(file_path, data):

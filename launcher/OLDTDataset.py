@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 from models.results import ObjPosture, ImagePosture
 from models.utils import normalize_bbox
 from posture_6d.dataset_format import VocFormat
+from posture_6d.viewmeta import  ViewMeta
 
 import numpy as np
 import os
@@ -48,8 +49,28 @@ class OLDTDataset(Dataset):
         # self.data_files = len(self.idx_array)
         self.data_files = os.listdir(self.image_folder)
 
+        self.set_augment_para(1,0)
+
+    def set_augment_para(self, data_inflation: int, max_rotate_angle:float):
+        self.data_inflation = int(data_inflation)
+        self.max_rotate_angle = max_rotate_angle
+
+    def augment(self, viewmeta:ViewMeta)->ViewMeta:
+        '''
+        brief
+        -----
+        augment
+        
+        return
+        -----
+        ViewMeta
+        '''
+        angle = 2*np.random.rand()*self.max_rotate_angle - self.max_rotate_angle
+        viewmeta = viewmeta.rotate(angle)
+        return viewmeta
+
     def __len__(self):
-        return len(self.idx_array)
+        return len(self.idx_array) * self.data_inflation
     
     @staticmethod
     def _box_cxcywh2xyxy(bbox):
@@ -91,8 +112,12 @@ class OLDTDataset(Dataset):
         return image_posture
 
     def __getitem__(self, idx) -> ImagePosture:
-        data_i = self.idx_array[idx]
-        viewmeta = self.vocformat.read_one(data_i)        
+        if_aug = idx % self.data_inflation > 0
+        orig_idx = int(idx / self.data_inflation)
+        data_i = self.idx_array[orig_idx]
+        viewmeta = self.vocformat.read_one(data_i)   
+        if if_aug:
+            viewmeta = self.augment(viewmeta)
         # viewmeta = viewmeta.rotate(0.2)
 
         image = viewmeta.rgb

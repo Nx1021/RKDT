@@ -42,7 +42,7 @@ class _DataCluster():
     def cluster_closed_decorator(func):
         def wrapper(self:"_DataCluster", *args, **kwargs):
             if self.closed:
-                warnings.warn(f"{self.__class__.__name__} is closed, any io operation will be be executed.", Warning)
+                warnings.warn(f"{self.__class__.__name__} is closed, any io operation will not be executed.", Warning)
                 return None
             else:
                 return func(self, *args, **kwargs)
