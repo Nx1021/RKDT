@@ -605,8 +605,6 @@ def is_image(array):
         return False
     if array.dtype not in [np.uint8, np.uint16, np.float32, np.float64]:
         return False
-    if array.min() < 0 or array.max() > 255:
-        return False
     return True
 
 def serialize_image_container(image_container):

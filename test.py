@@ -12,6 +12,7 @@ import time
 import cv2
 import pickle
 
+
 mm = MeshManager("E:\shared\code\OLDT\datasets\linemod\models", {
     0 : "obj_000001.ply",
     1 : "obj_000002.ply",
@@ -34,10 +35,28 @@ meshmetas = mm.get_meta_dict()
 data_num = 0
 
 
-lm_vf = VocFormat(f"{DATASETS_DIR}/linemod/{str(0).rjust(6, '0')}")
+lm_vf = VocFormat(f"{DATASETS_DIR}/morrison")
+lm_vf.close_all()
+lm_vf.serialized_element.open()
+lm_vf.serialized_element.suffix = ".npz"
+for viewmeta in tqdm(lm_vf.serialized_element):
+    pass
+
+lm_vf.close_all(False)
+lm_vf.serialized_element.close()
 for viewmeta in tqdm(lm_vf.read_from_disk()):
-    viewmeta.show()
-    plt.show()
+    pass
+
+lm_vf.set_all_read_only()
+lm_vf.serialized_element.open()
+lm_vf.serialized_element.set_read_only(False)
+with lm_vf.start_to_write():
+    for data_i, viewmeta in enumerate(tqdm(lm_vf.read_from_disk())):
+        lm_vf.serialized_element.write(data_i, viewmeta)
+    # new_labels.write(i, viewmeta)
+    # if i % 100 == 0:
+    #     viewmeta.show()
+    #     plt.show()
 
 for class_id in range(0, 15):
     lm_lf = LinemodFormat(f"{DATASETS_DIR}/linemod_orig/{str(class_id+1).rjust(6, '0')}")    

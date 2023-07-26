@@ -14,8 +14,6 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import Union, Callable
 
-from posture_6d.viewmeta import ViewMeta
-
 from .viewmeta import ViewMeta, serialize_image_container, deserialize_image_container
 from .posture import Posture
 from .mesh_manager import MeshMeta
@@ -26,6 +24,7 @@ from .utils import JsonIO
 class _DataCluster():
     def __init__(self, format_obj:"DatasetFormat") -> None:
         self.closed = False
+        self.read_only = False
         self.format_obj:DatasetFormat = format_obj
 
     @property
@@ -38,15 +37,23 @@ class _DataCluster():
     def close(self):
         self.closed = True  
 
+    def set_read_only(self, read_only = True):
+        self.read_only = read_only
+
     @staticmethod
-    def cluster_closed_decorator(func):
-        def wrapper(self:"_DataCluster", *args, **kwargs):
-            if self.closed:
-                warnings.warn(f"{self.__class__.__name__} is closed, any io operation will be be executed.", Warning)
-                return None
-            else:
-                return func(self, *args, **kwargs)
-        return wrapper
+    def cluster_closed_decorator(write_func):
+        def write_func_wrapper(func):
+            def wrapper(self:"_DataCluster", *args, **kwargs):
+                if self.closed:
+                    warnings.warn(f"{self.__class__.__name__} is closed, any io operation will not be executed.", Warning)
+                    return None
+                elif self.read_only and write_func:
+                    warnings.warn(f"{self.__class__.__name__} is read only, any write operation will not be executed.", Warning)
+                    return None
+                else:
+                    return func(self, *args, **kwargs)
+            return wrapper
+        return write_func_wrapper
 
 class BaseJsonDict(dict, _DataCluster):
     '''
@@ -64,19 +71,19 @@ class BaseJsonDict(dict, _DataCluster):
         dict.__init__(self, *args, **kwargs)
         _DataCluster.__init__(self, format_obj)
 
-    @_DataCluster.cluster_closed_decorator
+    @_DataCluster.cluster_closed_decorator(False)
     def __getitem__(self, key):
         try:
             return super().__getitem__(key)
         except KeyError:
             return None
         
-    @_DataCluster.cluster_closed_decorator
+    @_DataCluster.cluster_closed_decorator(True)
     def __setitem__(self, key, value):
         if (self.cover_write or key not in self):
             super().__setitem__(key, value)
 
-    @_DataCluster.cluster_closed_decorator
+    @_DataCluster.cluster_closed_decorator(True)
     def update(self, *arg, **kw):
         super().update(*arg, **kw)
 
@@ -142,7 +149,7 @@ class Elements(_DataCluster):
                 self._data_i_dir_map[int(name)] = os.path.relpath(root, self.directory)
                 self._max_idx = max(self._max_idx, int(name))        
 
-    @_DataCluster.cluster_closed_decorator
+    @_DataCluster.cluster_closed_decorator(False)
     def __iter__(self):
         if len(self._data_i_dir_map) != len(self):
             self._init_data_i_dir_map()
@@ -160,7 +167,7 @@ class Elements(_DataCluster):
         else:
             raise StopIteration
 
-    @_DataCluster.cluster_closed_decorator
+    @_DataCluster.cluster_closed_decorator(False)
     def read(self, data_i, appdir = "", appname = ""):
         path = self.path_format(data_i, appdir=appdir, appname=appname)
         if not os.path.exists(path):
@@ -172,7 +179,7 @@ class Elements(_DataCluster):
         else:
             return None
 
-    @_DataCluster.cluster_closed_decorator
+    @_DataCluster.cluster_closed_decorator(True)
     def write(self, data_i, element, appdir = "", appname = ""):
         path = self.path_format(data_i, appdir=appdir, appname=appname)
         dir_ = os.path.split(path)[0]
@@ -479,9 +486,13 @@ class DatasetFormat(ABC):
             [x.clear() for x in self.base_json.values()]
         self._updata_data_num()
 
-    def close_all(self):
+    def close_all(self, value = True):
         for obj in list(self.elements.values()) + list(self.base_json.values()):
-            obj.closed = True
+            obj.closed = value
+
+    def set_all_read_only(self, value = True):
+        for obj in list(self.elements.values()) + list(self.base_json.values()):
+            obj.read_only = value        
 
 
 class LinemodFormat(DatasetFormat):
@@ -627,6 +638,32 @@ class VocFormat(DatasetFormat):
             raise ValueError("can't find datas of index: {}".format(data_i))
         return sub_set
 
+    @staticmethod
+    def _x1x2y1y2_2_normedcxcywh(bbox_2d, img_size):
+        lt = bbox_2d[:2]
+        rb = bbox_2d[2:]
+
+        cx, cy = (lt + rb) / 2
+        w, h = rb - lt
+        # 归一化
+        cy, h = np.array([cy, h]) / img_size[0]
+        cx, w = np.array([cx, w]) / img_size[1]
+        return np.array([cx, cy, w, h])
+
+    @staticmethod
+    def _normedcxcywh_2_x1x2y1y2(bbox_2d, img_size):
+        cx, cy, w, h = bbox_2d
+        cy, h = np.array([cy, h]) / img_size[0]
+        cx, w = np.array([cx, w]) / img_size[1]
+
+        x1 = cx - w/2
+        x2 = cx + w/2
+        y1 = cy - h/2
+        y2 = cy + h/2
+
+        new_bbox_2d = np.array([x1, y1, x2, y2]).astype(np.int32)
+        return new_bbox_2d
+
     def write_element(self, viewmeta: ViewMeta, data_i: int):
         super().write_element(viewmeta, data_i)
         sub_set = self.decide_set(data_i)
@@ -647,15 +684,8 @@ class VocFormat(DatasetFormat):
             point = np.array(np.where(mask))
             if point.size == 0:
                 continue
-            bbox2d = viewmeta_bbox2d[id_]
-            lt = bbox2d[:2]
-            rb = bbox2d[2:]
-
-            cy, cx = (lt + rb) / 2
-            h, w = rb - lt 
-            # 归一化
-            cy, h = np.array([cy, h]) / img_size[0]
-            cx, w = np.array([cx, w]) / img_size[1]
+            bbox_2d = viewmeta_bbox2d[id_]
+            cx, cy, w, h = self._x1x2y1y2_2_normedcxcywh(bbox_2d, img_size)
             labels.append([id_, cx, cy, w, h])
 
             # 转换关键点
@@ -691,6 +721,7 @@ class VocFormat(DatasetFormat):
         depth = self.depth_elements.read(data_i, appdir=sub_set)
         #
         ids = self.labels_elements.read(data_i, appdir=sub_set)[:,0].astype(np.int32).tolist()
+        bbox_2d = self.labels_elements.read(data_i, appdir=sub_set)[:,1:].astype(np.int32)
         masks_dict = self.masks_elements.read(data_i, appdir=sub_set)
         #
         extr_vecs = self.extr_vecs_elements.read(data_i, appdir=sub_set)
@@ -735,12 +766,27 @@ class _LinemodFormat_sub1(LinemodFormat):
         self.rgb_elements   = Elements(self, self.rgb_dir,      cv2.imread,                                    cv2.imwrite, '.jpg')
 
 
-def serialize_object(file_path, obj):
-    with open(file_path, 'wb') as file:
-        pickle.dump(obj, file)
+def serialize_object(file_path, obj:dict):
+    if os.path.splitext(file_path)[1] == '.pkl':
+        file_path = os.path.splitext(file_path)[0] + ".npz"
+    np.savez(file_path, **obj)
+    # with open(file_path, 'wb') as file:
+    #     pickle.dump(obj, file)
 
 # 从文件反序列化对象
 def deserialize_object(serialized_file_path):
-    with open(serialized_file_path, 'rb') as file:
-        elements = pickle.load(file)
+    if os.path.splitext(serialized_file_path)[1] == '.pkl':
+        with open(serialized_file_path, 'rb') as file:
+            elements = pickle.load(file)
+            return elements
+    else:
+        elements = dict(np.load(serialized_file_path, allow_pickle=True))
+        
+        # restored_elements = {}
+        for key in elements:
+            if not np.issubdtype(elements[key].dtype, np.number):
+                elements[key] = elements[key].item()
         return elements
+    # with open(serialized_file_path, 'rb') as file:
+    #     elements = pickle.load(file)
+    #     return elements
