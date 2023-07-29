@@ -30,7 +30,7 @@ score_beta : 0.4
 score_eps : 0.0001
 
 ### post progress
-models_dir: datasets/morrison/models
+models_dir: datasets/morrison_models
 pcd_models: 
   0: bar_clamp.ply
   1: gearbox.ply
@@ -42,8 +42,5 @@ pcd_models:
   7: vase.ply
   8: ape.ply
 models_info: models_info.json
-# bboxes: datasets/models/bboxes.json
-# grasp_model_dict: datasets/models/grasp_model_dict.json
-# landmarks: datasets/morrison/landmarks.json
 default_K: default_K.txt
 out_bbox_threshold: 1.0

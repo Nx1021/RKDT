@@ -2,6 +2,7 @@ import os
 import numpy as np
 from _ctypes import PyObj_FromPtr
 import json
+from json import JSONDecodeError
 import re
 from typing import Any
 import time
@@ -98,14 +99,17 @@ class JsonIO():
             self.path = path
             self.buffer = ""
             if os.path.exists(path):
-                with open(self.path, 'rb+') as f:
-                    f.seek(-3, 2)
-                    f.truncate()
-                with open(self.path, 'a') as f:
-                    f.write(",")
-            else:
-                with open(self.path, 'w') as f:
-                    f.write("{")
+                try:
+                    with open(self.path, 'rb+') as f:
+                        f.seek(-3, 2)
+                        f.truncate()
+                    with open(self.path, 'a') as f:
+                        f.write(",")
+                    return
+                except OSError:
+                    pass
+            with open(self.path, 'w') as f:
+                f.write("{")
 
         def save_buffer(self):
             with open(self.path, 'a') as f:

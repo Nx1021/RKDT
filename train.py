@@ -54,14 +54,14 @@ if __name__ == "__main__":
     if sys == "Windows":
         clear_log()
 
-    data_folder = f"{DATASETS_DIR}/linemod/000000"
+    data_folder = f"{DATASETS_DIR}/morrison"
     if USE_DATA_IN_SERVER and sys == "Linux":
         if not os.path.exists(SERVER_DATASET_DIR):
             # copy
             shutil.copytree(data_folder, SERVER_DATASET_DIR)
         data_folder = SERVER_DATASET_DIR
         print("use data on the server: ", data_folder)
-    yolo_weight_path = f"{WEIGHTS_DIR}/linemod_000000_best.pt"
+    yolo_weight_path = f"{WEIGHTS_DIR}/best.pt"
     cfg = f"{CFG_DIR}/config.yaml"
     flow = f"{CFG_DIR}/train_flow.yaml"
     ###

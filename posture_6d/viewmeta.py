@@ -327,6 +327,7 @@ class ViewMeta():
         ViewMeta.IGNORE_WARNING = True
         self.__init_parameters_keys = [x for x in locals().keys() if x in inspect.signature(self.__init__).parameters.keys()]
         self.__init_parameters_values = [id(x) for x in list(locals().values())]
+        self.agmts_type:dict[str, type] = {}
         self.agmts:dict[str, ViewMeta.AugmentPipeline] = {}
         self.elements = {}
         self.rgb:np.ndarray                 = self.__set_element(ViewMeta.RgbAP,         rgb)
@@ -441,19 +442,23 @@ class ViewMeta():
         viewmeta.calc_by_base(mesh_dict)
         return viewmeta
 
-    def __set_element(self, ap_type, value, func = lambda x:x):
+    def __set_element(self, ap_type:type, value, func = lambda x:x):
+        '''
+        ap_type: type of AugmentPipeline
+        value: Any
+        func: Callable
+        '''
         matched_idx = self.__init_parameters_values.index(id(value))
         key = self.__init_parameters_keys[matched_idx]
         self.__init_parameters_keys.pop(matched_idx)
         self.__init_parameters_values.pop(matched_idx)
         # value = func(copy.deepcopy(value))
-        value = func(value)
+        value = func(value) if value is not None else None
         if isinstance(value, dict):
             value = dict(sorted(value.items(), key=lambda x: x[0]))
         self.elements[key] = value
-        ### 初始化增强
-        ap = ap_type(self)
-        self.agmts.update({key: ap})
+        ### match ap_type with name
+        self.agmts_type.update({key: ap_type})
         return value
 
     @staticmethod
@@ -464,6 +469,13 @@ class ViewMeta():
         return dictionary
 
     def __augment(self, funcname:str, *arg):
+        if funcname not in ["crop", "rotate", "change_brightness", "change_saturation"]:
+            raise NotImplementedError
+        if len(self.agmts) == 0:
+            # initialize augment pipeline by agmts_type
+            for key, ap_type in self.agmts_type.items():
+                ap = ap_type(self)
+                self.agmts.update({key: ap})
         aug_results = dict(zip(self.agmts.keys(), [agmt.__getattribute__(funcname)(*arg) for agmt in self.agmts.values()]))
         return ViewMeta(**aug_results) 
 
@@ -528,7 +540,11 @@ class ViewMeta():
         '''
         pass
 
-    def show(self):
+    def plot(self):
+        '''
+        显示
+        use plt.show() after this method to show
+        '''
         plt.subplot(1,2,1)
         if self.masks is not None:
             masks = np.stack(list(self.masks.values()))
@@ -567,45 +583,12 @@ class ViewMeta():
             plt.imshow(self.depth)
             plt.title("depth scale:{}".format(self.depth_scale))
 
-    def serialize(self):
-        def record_serialize(obj, func = lambda x:x):
-            serialize_obj   = func(obj)
-            serialize_elements[query(obj)[1]] = serialize_obj
-   
-        query = query_key_by_value(self.elements)
-        serialize_elements = {}
-
-        record_serialize(self.rgb, serialize_image_container)
-        record_serialize(self.depth, serialize_image_container)
-        record_serialize(self.masks, serialize_image_container)
-        record_serialize(self.extr_vecs)
-        record_serialize(self.intr)
-        record_serialize(self.depth_scale)
-        record_serialize(self.bbox_3d)
-        record_serialize(self.landmarks)
-        record_serialize(self.visib_fract)
-
-        return serialize_elements
-        
-    @staticmethod
-    def from_serialize_object(serialize_elements):
-        elements = {}
-        elements["rgb"] = deserialize_image_container(serialize_elements["rgb"], cv2.IMREAD_COLOR)
-        elements["depth"] = deserialize_image_container(serialize_elements["depth"], cv2.IMREAD_ANYDEPTH)
-        elements["masks"] = deserialize_image_container(serialize_elements["masks"], cv2.IMREAD_GRAYSCALE)
-        for key in ["extr_vecs", "intr", "depth_scale", "bbox_3d", "landmarks", "visib_fract"]:
-            elements[key] = serialize_elements[key]
-        
-        return ViewMeta(**elements)
-
 def is_image(array):
     if not isinstance(array, np.ndarray):
         return False
     if array.ndim not in [2, 3]:
         return False
     if array.dtype not in [np.uint8, np.uint16, np.float32, np.float64]:
-        return False
-    if array.min() < 0 or array.max() > 255:
         return False
     return True
 
@@ -641,29 +624,3 @@ def deserialize_image_container(bytes_container, imread_flags):
     else:
         return bytes_container
     return new_value
-
-
-def serialize_image(image:np.ndarray):  
-    # 将NumPy数组编码为png格式的图像
-    retval, buffer = cv2.imencode('.png', image)
-    # 将图像数据转换为字节字符串
-    image_bytes = buffer.tobytes()
-    image.tobytes()
-    return image_bytes
-
-def serialize_masks_dict(masks:dict[int, cv2.Mat]):
-    serialize_masks = {}
-    for id_, mask in masks.items():
-        serialize_masks[id_] = serialize_image(mask)
-    return serialize_masks   
-
-def deserialize_image(image_bytes, imread_flags):  
-    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(image_array, flags=imread_flags)# 将numpy数组解码为图像
-    return image
-
-def deserialize_masks_dict(serialize_masks):
-    masks = {}
-    for id_, s_mask in serialize_masks.items():
-        masks[id_] = deserialize_image(s_mask, cv2.IMREAD_GRAYSCALE)
-    return masks    

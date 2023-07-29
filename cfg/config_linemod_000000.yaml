@@ -48,8 +48,5 @@ pcd_models:
   13: obj_000014.ply
   14: obj_000015.ply
 models_info: models_info.json
-# bboxes: datasets/models/bboxes.json
-# grasp_model_dict: datasets/models/grasp_model_dict.json
-# landmarks: datasets/morrison/landmarks.json
 default_K: default_K.txt
 out_bbox_threshold: 1.0
