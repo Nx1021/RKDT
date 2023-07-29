@@ -72,9 +72,9 @@ if __name__ == "__main__":
     model = OLDT(yolo_weight_path, cfg, [0])  
     load_brach_i = 0
     load_from = ""
-    load_from = f"{WEIGHTS_DIR}/20230728213813branch00.pt"
+    load_from = f"{WEIGHTS_DIR}/20230729085834branch00.pt"
     model.load_branch_weights(load_brach_i, load_from)
-    start_epoch = 1
+    start_epoch = 8
 
 
     if sys == "Windows":

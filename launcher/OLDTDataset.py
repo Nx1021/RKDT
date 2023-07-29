@@ -32,8 +32,12 @@ class OLDTDataset(Dataset):
         '''
         self.data_folder = data_folder
         self.vocformat = VocFormat(data_folder)
-        self.vocformat.depth_elements.closed = True
-        self.vocformat.bbox_3ds_elements.closed = True
+        self.vocformat.depth_elements.close()
+        self.vocformat.bbox_3ds_elements.close()
+        self.vocformat.masks_elements.close()
+        self.vocformat.extr_vecs_elements.close()
+        for bj in self.vocformat.base_json.values():
+            bj.close()
         self.set = set_
         self.image_folder       = os.path.join(data_folder, 'images', set_)
         self.landmarks_folder   = os.path.join(data_folder, 'landmarks', set_)
