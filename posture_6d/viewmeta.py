@@ -453,7 +453,7 @@ class ViewMeta():
         self.__init_parameters_keys.pop(matched_idx)
         self.__init_parameters_values.pop(matched_idx)
         # value = func(copy.deepcopy(value))
-        value = func(value)
+        value = func(value) if value is not None else None
         if isinstance(value, dict):
             value = dict(sorted(value.items(), key=lambda x: x[0]))
         self.elements[key] = value
@@ -583,37 +583,6 @@ class ViewMeta():
             plt.imshow(self.depth)
             plt.title("depth scale:{}".format(self.depth_scale))
 
-    def serialize(self):
-        def record_serialize(obj, func = lambda x:x):
-            serialize_obj   = func(obj)
-            serialize_elements[query(obj)[1]] = serialize_obj
-   
-        query = query_key_by_value(self.elements)
-        serialize_elements = {}
-
-        record_serialize(self.rgb, serialize_image_container)
-        record_serialize(self.depth, serialize_image_container)
-        record_serialize(self.masks, serialize_image_container)
-        record_serialize(self.extr_vecs)
-        record_serialize(self.intr)
-        record_serialize(self.depth_scale)
-        record_serialize(self.bbox_3d)
-        record_serialize(self.landmarks)
-        record_serialize(self.visib_fract)
-
-        return serialize_elements
-        
-    @staticmethod
-    def from_serialize_object(serialize_elements):
-        elements = {}
-        elements["rgb"] = deserialize_image_container(serialize_elements["rgb"], cv2.IMREAD_COLOR)
-        elements["depth"] = deserialize_image_container(serialize_elements["depth"], cv2.IMREAD_ANYDEPTH)
-        elements["masks"] = deserialize_image_container(serialize_elements["masks"], cv2.IMREAD_GRAYSCALE)
-        for key in ["extr_vecs", "intr", "depth_scale", "bbox_3d", "landmarks", "visib_fract"]:
-            elements[key] = serialize_elements[key]
-        
-        return ViewMeta(**elements)
-
 def is_image(array):
     if not isinstance(array, np.ndarray):
         return False
@@ -655,29 +624,3 @@ def deserialize_image_container(bytes_container, imread_flags):
     else:
         return bytes_container
     return new_value
-
-
-def serialize_image(image:np.ndarray):  
-    # 将NumPy数组编码为png格式的图像
-    retval, buffer = cv2.imencode('.png', image)
-    # 将图像数据转换为字节字符串
-    image_bytes = buffer.tobytes()
-    image.tobytes()
-    return image_bytes
-
-def serialize_masks_dict(masks:dict[int, cv2.Mat]):
-    serialize_masks = {}
-    for id_, mask in masks.items():
-        serialize_masks[id_] = serialize_image(mask)
-    return serialize_masks   
-
-def deserialize_image(image_bytes, imread_flags):  
-    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(image_array, flags=imread_flags)# 将numpy数组解码为图像
-    return image
-
-def deserialize_masks_dict(serialize_masks):
-    masks = {}
-    for id_, s_mask in serialize_masks.items():
-        masks[id_] = deserialize_image(s_mask, cv2.IMREAD_GRAYSCALE)
-    return masks    

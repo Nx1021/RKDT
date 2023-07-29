@@ -36,13 +36,6 @@ import scipy.sparse as sp
 
 # data_num = 0
 
-    to_remove = []
-    for logname in logs_list:
-        valid = False
-        for wt in weights_timestamp_list:
-            valid = valid or logname[:14] == wt
-        if not valid:
-            to_remove.append(logname)
 
 lm_vf = VocFormat(f"{DATASETS_DIR}/morrison")
 # mask = cv2.imread(r".png", cv2.IMREAD_GRAYSCALE).astype(np.uint8)
