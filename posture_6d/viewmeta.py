@@ -327,6 +327,7 @@ class ViewMeta():
         ViewMeta.IGNORE_WARNING = True
         self.__init_parameters_keys = [x for x in locals().keys() if x in inspect.signature(self.__init__).parameters.keys()]
         self.__init_parameters_values = [id(x) for x in list(locals().values())]
+        self.agmts_type:dict[str, type] = {}
         self.agmts:dict[str, ViewMeta.AugmentPipeline] = {}
         self.elements = {}
         self.rgb:np.ndarray                 = self.__set_element(ViewMeta.RgbAP,         rgb)
@@ -441,7 +442,12 @@ class ViewMeta():
         viewmeta.calc_by_base(mesh_dict)
         return viewmeta
 
-    def __set_element(self, ap_type, value, func = lambda x:x):
+    def __set_element(self, ap_type:type, value, func = lambda x:x):
+        '''
+        ap_type: type of AugmentPipeline
+        value: Any
+        func: Callable
+        '''
         matched_idx = self.__init_parameters_values.index(id(value))
         key = self.__init_parameters_keys[matched_idx]
         self.__init_parameters_keys.pop(matched_idx)
@@ -451,9 +457,8 @@ class ViewMeta():
         if isinstance(value, dict):
             value = dict(sorted(value.items(), key=lambda x: x[0]))
         self.elements[key] = value
-        ### 初始化增强
-        ap = ap_type(self)
-        self.agmts.update({key: ap})
+        ### match ap_type with name
+        self.agmts_type.update({key: ap_type})
         return value
 
     @staticmethod
@@ -464,6 +469,13 @@ class ViewMeta():
         return dictionary
 
     def __augment(self, funcname:str, *arg):
+        if funcname not in ["crop", "rotate", "change_brightness", "change_saturation"]:
+            raise NotImplementedError
+        if len(self.agmts) == 0:
+            # initialize augment pipeline by agmts_type
+            for key, ap_type in self.agmts_type.items():
+                ap = ap_type(self)
+                self.agmts.update({key: ap})
         aug_results = dict(zip(self.agmts.keys(), [agmt.__getattribute__(funcname)(*arg) for agmt in self.agmts.values()]))
         return ViewMeta(**aug_results) 
 
@@ -528,7 +540,11 @@ class ViewMeta():
         '''
         pass
 
-    def show(self):
+    def plot(self):
+        '''
+        显示
+        use plt.show() after this method to show
+        '''
         plt.subplot(1,2,1)
         if self.masks is not None:
             masks = np.stack(list(self.masks.values()))

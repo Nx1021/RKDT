@@ -17,43 +17,67 @@ from typing import Union, Callable
 from .viewmeta import ViewMeta, serialize_image_container, deserialize_image_container
 from .posture import Posture
 from .mesh_manager import MeshMeta
-from .utils import JsonIO
-
+from .utils import JsonIO, JSONDecodeError
 
 
 class _DataCluster():
-    def __init__(self, format_obj:"DatasetFormat") -> None:
-        self.closed = False
-        self.read_only = False
-        self.format_obj:DatasetFormat = format_obj
+    def __init__(self, format_obj:"DatasetFormat", sub_dir:str, register = True, *args, **kwargs) -> None:
+        self.format_obj = format_obj
+        self.sub_dir = sub_dir
+        self.register = register  
+        self.incomplete = self.format_obj.incomplete     
+        self._closed = True
+        self._read_only = True
+        self._updated = False
+        self.directory = os.path.join(format_obj.directory, self.sub_dir)         
+        self._init_attr(*args, **kwargs)
+        self.open()
 
     @property
     def cover_write(self):
         return self.format_obj.cover_write
 
+    def _init_attr(self, *args, **kwargs):
+        pass
+
     def open(self):
-        self.closed = False
+        if self.incomplete:
+            self.clear()
+            self.incomplete = False
+        self._closed = False
 
     def close(self):
-        self.closed = True  
+        self._updated = False
+        self._closed = True  
+
+    def is_close(self):
+        return self._closed
 
     def set_read_only(self, read_only = True):
-        self.read_only = read_only
+        self._read_only = read_only
+
+    def is_read_only(self):
+        return self._read_only
 
     @staticmethod
-    def cluster_closed_decorator(write_func):
+    def cluster_closed_decorator(is_write_func):
         def write_func_wrapper(func):
             def wrapper(self:"_DataCluster", *args, **kwargs):
-                if self.closed:
+                if self._closed:
                     warnings.warn(f"{self.__class__.__name__} is closed, any io operation will not be executed.", Warning)
                     return None
-                elif self.read_only and write_func:
+                elif self._read_only and is_write_func:
                     warnings.warn(f"{self.__class__.__name__} is read only, any write operation will not be executed.", Warning)
                     return None
                 else:
-                    return func(self, *args, **kwargs)
+                    rlt = func(self, *args, **kwargs)
+                    self._updated = is_write_func
+                    return rlt
             return wrapper
         return write_func_wrapper
+    
+    def clear(self):
+        pass
 
 class BaseJsonDict(dict, _DataCluster):
     '''
@@ -67,9 +91,24 @@ class BaseJsonDict(dict, _DataCluster):
     * self.closed: bool, Control the shielding of reading and writing, 
         if it is true, the instance will not write, and the read will get None
     '''
-    def __init__(self, format_obj:"DatasetFormat", *args, **kwargs):
-        dict.__init__(self, *args, **kwargs)
-        _DataCluster.__init__(self, format_obj)
+    def __init__(self, format_obj: "DatasetFormat", sub_dir: str, register = True) -> None:
+        _DataCluster.__init__(self, format_obj, sub_dir, register)
+
+    def _init_attr(self, *args, **kwargs):
+        _DataCluster._init_attr(self, *args, **kwargs)
+        if os.path.exists(self.directory):
+            try:
+                value = JsonIO.load_json(self.directory)
+            except JSONDecodeError:
+                value = {}
+        else:
+            value = {}
+        dict.__init__(self, value)
+        if self.register:
+            if self.directory not in self.format_obj.base_json:
+                self.format_obj.base_json.update({self.directory: self})
+            else:
+                self.format_obj.base_json[self.directory].update(self) 
 
     @_DataCluster.cluster_closed_decorator(False)
     def __getitem__(self, key):
@@ -86,6 +125,11 @@ class BaseJsonDict(dict, _DataCluster):
     @_DataCluster.cluster_closed_decorator(True)
     def update(self, *arg, **kw):
         super().update(*arg, **kw)
+
+    def clear(self) -> None:
+        with open(self.directory, 'w'):
+            pass
+        return super().clear()
 
 class Elements(_DataCluster):
     '''
@@ -107,15 +151,17 @@ class Elements(_DataCluster):
     '''
     def __init__(self, 
                 format_obj:"DatasetFormat",
-                directory,
-                read_func:Callable, 
-                write_func:Callable, 
-                suffix:str, 
+                sub_dir,
+                register = True,
+                read_func:Callable = lambda x: None, 
+                write_func:Callable = lambda x,y: None, 
+                suffix:str = '.txt', 
                 filllen = 6, 
                 fillchar = '0') -> None:
-        super().__init__(format_obj)
-        self.directory = os.path.join(format_obj.directory, directory)
-        
+        super().__init__(format_obj, sub_dir, register, read_func, write_func, suffix, filllen, fillchar)
+
+    def _init_attr(self, read_func, write_func, suffix, filllen, fillchar, *args, **kwargs):
+        super()._init_attr(*args, **kwargs)
         self.filllen    = filllen
         self.fillchar   = fillchar
         self.suffix     = suffix
@@ -123,14 +169,13 @@ class Elements(_DataCluster):
             self.suffix = '.' + self.suffix
         self.read_func  = read_func
         self.write_func = write_func
-
         os.makedirs(self.directory, exist_ok=True)
-
-        self.format_obj.elements[self.directory] = self # register to format_obj
-
         self._data_i_dir_map = {}
         self._index = 0
         self._max_idx = 0
+
+        if self.register:
+            self.format_obj.elements[self.directory] = self # register to format_obj
 
     def __len__(self):
         '''
@@ -145,7 +190,7 @@ class Elements(_DataCluster):
         self._data_i_dir_map = {}
         for root, dirs, files in os.walk(self.directory):
             for f in files:
-                name = os.path.splitext(f)[0]
+                name = os.path.splitext(f)[0][:self.filllen]
                 self._data_i_dir_map[int(name)] = os.path.relpath(root, self.directory)
                 self._max_idx = max(self._max_idx, int(name))        
 
@@ -171,7 +216,7 @@ class Elements(_DataCluster):
     def read(self, data_i, appdir = "", appname = ""):
         path = self.path_format(data_i, appdir=appdir, appname=appname)
         if not os.path.exists(path):
-            if len(self._data_i_dir_map) != len(self):
+            if self._updated or len(self._data_i_dir_map) == 0:
                 self._init_data_i_dir_map()
             path = self.path_format(data_i, appdir=self._data_i_dir_map[data_i], appname=appname)
         if os.path.exists(path):
@@ -190,6 +235,7 @@ class Elements(_DataCluster):
     def path_format(self, data_i, appdir = "", appname = ""):
         return os.path.join(self.directory, appdir, "{}{}{}".format(str(data_i).rjust(6, "0"), appname, self.suffix))
 
+    @_DataCluster.cluster_closed_decorator(True)
     def clear(self, ignore_warning = False):
         '''
         brief
@@ -203,6 +249,114 @@ class Elements(_DataCluster):
         if y == 'y':
             shutil.rmtree(self.directory)
             os.makedirs(self.directory)
+
+class CacheElements(Elements):
+    def __init__(self, format_obj: "DatasetFormat", sub_dir, filllen=6, fillchar='0') -> None:
+        super().__init__(format_obj, sub_dir, False, None, None, ".npy", filllen, fillchar)
+        self.read_func = self._read_func
+        self.write_func = self._write_func
+    
+    def _init_attr(self, *args, **kwargs):
+        super()._init_attr(*args, **kwargs)
+        self.read_func = self._read_func
+        self.write_func = self._write_func
+
+    def get_from_meta(self, meta:dict, name):
+        value = meta[name]
+        return value
+        # if not np.issubdtype(value.dtype, np.number):
+        #     return value.item()
+        # else:
+        #     return value
+
+    def _read_func(self, path):
+        meta = np.load(path,  allow_pickle= True).item()
+        ids         = self.get_from_meta(meta, 'ids')
+        rgb         = self.get_from_meta(meta, 'rgb')
+        depth       = self.get_from_meta(meta, 'depth')
+        mask_dict   = self.decompress_mask(ids, self.get_from_meta(meta, 'cprsd_mask'))
+        extr_vecs   = self.zip_dict(ids, self.get_from_meta(meta, 'extr_vecs'))
+        intr        = self.get_from_meta(meta, 'intr')
+        depth_scale = self.get_from_meta(meta, 'depth_scale')
+        bbox_3d     = self.zip_dict(ids, self.get_from_meta(meta, 'bbox_3d'))
+        landmarks   = self.zip_dict(ids, self.get_from_meta(meta, 'landmarks'))
+        visib_fract = self.zip_dict(ids, self.get_from_meta(meta, 'visib_fract'))
+
+        viewmeta = ViewMeta(rgb, depth, mask_dict, extr_vecs, intr, depth_scale, bbox_3d, landmarks, visib_fract)
+        return viewmeta
+
+    def _write_func(self, path, viewmeta:ViewMeta):
+        rgb = viewmeta.rgb
+        depth = viewmeta.depth
+        masks = viewmeta.masks
+        ids, cprsd_mask = self.compress_mask(masks)
+        ids, extr_vecs = self.split_dict(viewmeta.extr_vecs)
+        intr = viewmeta.intr
+        depth_scale = viewmeta.depth_scale
+        ids, bbox_3d = self.split_dict(viewmeta.bbox_3d)
+        ids, landmarks = self.split_dict(viewmeta.landmarks)
+        ids, visib_fract = self.split_dict(viewmeta.visib_fract)
+        np.save(path, 
+                 {"ids":ids, 
+                 "rgb":rgb, 
+                 "depth":depth, 
+                 "cprsd_mask":cprsd_mask, 
+                 "extr_vecs":extr_vecs, "intr":intr, 
+                 "depth_scale":depth_scale, "bbox_3d":bbox_3d, 
+                 "landmarks":landmarks, "visib_fract":visib_fract})
+        
+    @staticmethod
+    def zip_dict(ids:np.ndarray, array:np.ndarray) -> dict[int, np.ndarray]:
+        if array is None:
+            return None
+        dict_ = dict(zip(ids, array))
+        return dict_
+
+    @staticmethod
+    def split_dict(dict_:dict[int, np.ndarray]):
+        if dict_ is None:
+            return None, None
+        return np.array(list(dict_.keys())), np.array(list(dict_.values()))
+
+    @staticmethod
+    def compress_mask(mask_dict: dict[int, np.ndarray]):
+        if mask_dict is None:
+            return None
+        length = len(mask_dict)
+        if length <= 8:
+            dtype = np.uint8
+        elif length <= 16:
+            dtype = np.uint16
+        elif length <= 32:
+            dtype = np.uint32
+        elif length <= 64:
+            dtype = np.uint64
+        elif length <= 128:
+            dtype = np.uint128
+        else:
+            dtype = np.uint256
+        mask_list = np.array(list(mask_dict.values()))
+        mask_list = mask_list & 1
+        maks_ids = np.array(list(mask_dict.keys()))
+        cprsd_mask = np.zeros((mask_list[0].shape[0], mask_list[0].shape[1]), dtype=dtype)
+        for shift, m in enumerate(mask_list):
+            m = m << shift        
+            cprsd_mask = np.bitwise_or(cprsd_mask, m)    
+        return maks_ids, cprsd_mask
+
+    @staticmethod
+    def decompress_mask(ids:np.ndarray, masks:np.ndarray):
+        if masks is None:
+            return None
+        mask_dict = {}
+        for i, id in enumerate(ids):
+            mask_dict[id] = (masks & (1 << i)).astype(np.bool8)
+        return mask_dict
+
+
+class DatasetFormatMode(enumerate):
+    NORMAL = 0
+    ONLY_CACHE = 1
 
 class DatasetFormat(ABC):
     '''
@@ -256,7 +410,10 @@ class DatasetFormat(ABC):
             self.format_obj.cover_write = cover
 
         def __enter__(self):
-            print("Entering the context")
+            print(f"start to write to {self.format_obj.directory}")
+            with open(self.mark_file(self.format_obj.directory), 'w'): # create a file to mark that the DatasetFormat is writing
+                pass
+            self.format_obj.set_all_read_only(False)
             return self
         
         def __exit__(self, exc_type, exc_value:Exception, traceback):
@@ -265,58 +422,77 @@ class DatasetFormat(ABC):
                 raise exc_type(exc_value).with_traceback(traceback)
                 return False
             else:
+                os.remove(self.mark_file(self.format_obj.directory))
+                self.format_obj.set_all_read_only(True)
                 return True
+            
+        @staticmethod
+        def mark_file(directory):
+            return os.path.join(directory, ".dfsw")
     
-    def __init__(self, directory) -> None:
+    def __init__(self, directory, clear_incomplete = False, init_mode = DatasetFormatMode.NORMAL) -> None:
         self.directory:str = directory
-        self.writer:DatasetFormat._Writer = None       
-        self.cover_write = True  
-        self.stream_dumping_json = True
+        if not init_mode == DatasetFormatMode.ONLY_CACHE:
+            self.incomplete = os.path.exists(self._Writer.mark_file(self.directory))
+            if self.incomplete:
+                if clear_incomplete:
+                    pass
+                else:
+                    tip = "the dataset is incomplete, if you want to clear all data, input 'y', else the program will exit: "
+                    print("="*len(tip), '\n', tip, '\n', "="*len(tip))
+                    y = input()
+                    if y != 'y':
+                        raise ValueError("the dataset is incomplete")
+            self.writer:DatasetFormat._Writer = None       
+            self.cover_write = True  
+            self.stream_dumping_json = True
 
-        self.base_json:dict[str, BaseJsonDict] = {}
-        self.elements:dict[str, Elements] = {}
-        self._streams:dict[str, JsonIO.Stream] = {}
-        self.scene_camera_file          = os.path.join(self.directory, "scene_camera.json")
-        self.scene_visib_fract_file     = os.path.join(self.directory, "scene_visib_fract.json")
-        self.scene_bbox_3d_file         = os.path.join(self.directory, 'scene_bbox_3d.json')   
-        self.scene_landmarks_file       = os.path.join(self.directory, 'scene_landmarks.json')   
-        self.scene_trans_vector_file    = os.path.join(self.directory, 'scene_trans_vector.json')
+            self.base_json:dict[str, BaseJsonDict] = {}
+            self.elements:dict[str, Elements] = {}
+            self._streams:dict[str, JsonIO.Stream] = {}
 
-        self.scene_camera_info          = self._load_basejson(self.scene_camera_file )
-        self.scene_visib_fract_info     = self._load_basejson(self.scene_visib_fract_file )         
-        self.scene_bbox_3d_info         = self._load_basejson(self.scene_bbox_3d_file   )  
-        self.scene_landmarks_info       = self._load_basejson(self.scene_landmarks_file   ) 
-        self.scene_trans_vector_info    = self._load_basejson(self.scene_trans_vector_file)
+            self._init_clusters()
 
-        self.data_num = len(self.scene_trans_vector_info)
+            self._updata_data_num()
 
-        def deserialize_viewmeta(path)->ViewMeta:
-            return ViewMeta.from_serialize_object(deserialize_object(path))
+            if self.incomplete:
+                os.remove(self._Writer.mark_file(self.directory))
+                self.incomplete = False
+        self.cache_elements = CacheElements(self, "cache")
+        # def deserialize_viewmeta(path)->ViewMeta:
+        #     return ViewMeta.from_serialize_object(deserialize_object(path))
         
-        def serialize_viewmeta(path, viewmeta:ViewMeta):
-            se = viewmeta.serialize()
-            serialize_object(path, se)
+        # def serialize_viewmeta(path, viewmeta:ViewMeta):
+        #     se = viewmeta.serialize()
+        #     serialize_object(path, se)
 
-        self.serialized_element = Elements(self, 
-                                            "serialized", 
-                                            deserialize_viewmeta, 
-                                            serialize_viewmeta,
-                                            '.pkl')
-        self.serialized_element.closed = True
+        # self.serialized_element = Elements(self, 
+        #                                     "serialized", 
+        #                                     deserialize_viewmeta, 
+        #                                     serialize_viewmeta,
+        #                                     '.pkl')
+        # self.serialized_element.close()
 
-    def _load_basejson(self, file):
-        '''
-        load and bind
-        '''
-        if os.path.exists(file):
-            value = BaseJsonDict(self, JsonIO.load_json(file))
-        else:
-            value = BaseJsonDict(self, {})
-        if file not in self.base_json:
-            self.base_json.update({file: value})
-        else:
-            self.base_json[file].update(value)
-        return value
+    def _init_clusters(self):
+        self.scene_camera_info          = BaseJsonDict(self, "scene_camera.json")
+        self.scene_visib_fract_info     = BaseJsonDict(self, "scene_visib_fract.json")
+        self.scene_bbox_3d_info         = BaseJsonDict(self, 'scene_bbox_3d.json')   
+        self.scene_landmarks_info       = BaseJsonDict(self, 'scene_landmarks.json')   
+        self.scene_trans_vector_info    = BaseJsonDict(self, 'scene_trans_vector.json')
+
+    # def _load_basejson(self, file):
+    #     '''
+    #     load and bind
+    #     '''
+    #     if os.path.exists(file):
+    #         value = BaseJsonDict(self, JsonIO.load_json(file))
+    #     else:
+    #         value = BaseJsonDict(self, {})
+    #     if file not in self.base_json:
+    #         self.base_json.update({file: value})
+    #     else:
+    #         self.base_json[file].update(value)
+    #     return value
 
     def read_from_disk(self):
         '''
@@ -370,7 +546,7 @@ class DatasetFormat(ABC):
         if self.stream_dumping_json:
             self._streams.clear()
             for path in self.base_json.keys():
-                self._load_basejson(path)
+                BaseJsonDict(self, path)
         else:
             for file, value in self.base_json.items():
                 JsonIO.dump_json(file, value)
@@ -415,22 +591,22 @@ class DatasetFormat(ABC):
 
     def _parse_viewmeta_for_basejson(self, viewmeta:ViewMeta, data_i):
         parse = {
-            self.scene_camera_file: {data_i: {LinemodFormat.KW_CAM_K: viewmeta.intr.reshape(-1).tolist(),
+            self.scene_camera_info.directory: {data_i: {LinemodFormat.KW_CAM_K: viewmeta.intr.reshape(-1).tolist(),
                                                               LinemodFormat.KW_CAM_DS: float(viewmeta.depth_scale),
                                                               LinemodFormat.KW_CAM_VL: 1}},
-            self.scene_visib_fract_file: {data_i: viewmeta.visib_fract},
+            self.scene_visib_fract_info.directory: {data_i: viewmeta.visib_fract},
             #
-            self.scene_bbox_3d_file: {data_i: viewmeta.bbox_3d},
+            self.scene_bbox_3d_info.directory: {data_i: viewmeta.bbox_3d},
             #
-            self.scene_landmarks_file: {data_i: viewmeta.landmarks},
+            self.scene_landmarks_info.directory: {data_i: viewmeta.landmarks},
             #
-            self.scene_trans_vector_file: {data_i: viewmeta.extr_vecs},
+            self.scene_trans_vector_info.directory: {data_i: viewmeta.extr_vecs},
         }
         return parse
 
     def _cache_source_info(self, parsed:dict):
         for path in self.base_json.keys():
-            if self.stream_dumping_json and not self.base_json[path].closed:
+            if self.stream_dumping_json and not self.base_json[path].is_close() and not self.base_json[path].is_read_only():
                 if path not in self._streams:
                     self._streams[path] = JsonIO.create_stream(path)                
                 self._streams[path].write(parsed[path])
@@ -439,25 +615,13 @@ class DatasetFormat(ABC):
                 self.base_json[path].update(dict(zip(keys, [None for _ in keys])))
             else:
                 self.base_json[path].update(parsed[path])
-        # #
-        # self.scene_camera_info.update({data_i: {LinemodFormat.KW_CAM_K: viewmeta.intr.reshape(-1).tolist(),
-        #                                                       LinemodFormat.KW_CAM_DS: float(viewmeta.depth_scale),
-        #                                                       LinemodFormat.KW_CAM_VL: 1}})
-        # #
-        # self.scene_visib_fract_info.update({data_i: viewmeta.visib_fract})
-        # #
-        # self.scene_bbox_3d_info.update({data_i: viewmeta.bbox_3d})
-        # #
-        # self.scene_landmarks_info.update({data_i: viewmeta.landmarks})
-        # #
-        # self.scene_trans_vector_info.update({data_i: viewmeta.extr_vecs})
 
     def _updata_data_num(self):
         '''
         The total number of data of all types must be equal, otherwise an exception is thrown
         '''
         datas = list(self.base_json.values()) + list(self.elements.values())
-        datas = [x for x in datas if not x.closed]
+        datas = [x for x in datas if not x.is_close()]
         nums = [len(x) for x in datas]
         num = np.unique(nums)
         if len(num) > 1:
@@ -488,11 +652,11 @@ class DatasetFormat(ABC):
 
     def close_all(self, value = True):
         for obj in list(self.elements.values()) + list(self.base_json.values()):
-            obj.closed = value
+            obj.close() if value else obj.open()
 
     def set_all_read_only(self, value = True):
         for obj in list(self.elements.values()) + list(self.base_json.values()):
-            obj.read_only = value        
+            obj.set_read_only(value)
 
 
 class LinemodFormat(DatasetFormat):
@@ -519,17 +683,22 @@ class LinemodFormat(DatasetFormat):
             for n, mask in enumerate(masks.values()):
                 super().write(data_i, mask, appname=self.id_format(n))
 
-    def __init__(self, directory) -> None:
-        super().__init__(directory)
+    def _init_clusters(self):
+        super()._init_clusters()
+        self.rgb_elements   = Elements(self,      "rgb",
+                                       read_func=cv2.imread,                                    
+                                       write_func=cv2.imwrite, 
+                                       suffix='.png')
+        self.depth_elements = Elements(self,      "depth",    
+                                       read_func=lambda x:cv2.imread(x, cv2.IMREAD_ANYDEPTH),   
+                                       write_func=cv2.imwrite, 
+                                       suffix='.png')
+        self.masks_elements = self._MasksElements(self, "mask",     
+                                                  read_func=lambda x:cv2.imread(x, cv2.IMREAD_GRAYSCALE),  
+                                                  write_func=cv2.imwrite, 
+                                                  suffix='.png')
 
-        self.rgb_elements   = Elements(self,      "rgb",      cv2.imread,                                    cv2.imwrite, '.png')
-        self.depth_elements = Elements(self,      "depth",    lambda x:cv2.imread(x, cv2.IMREAD_ANYDEPTH),   cv2.imwrite, '.png')
-        self.masks_elements = self._MasksElements(self, "mask",     lambda x:cv2.imread(x, cv2.IMREAD_GRAYSCALE),  cv2.imwrite, '.png')
-
-        self.scene_gt_file              = os.path.join(self.directory, "scene_gt.json")
-        self.scene_gt_info              = self._load_basejson(self.scene_gt_file)
-
-        self.data_num = len(os.listdir(self.rgb_elements.directory))
+        self.scene_gt_info              = BaseJsonDict(self, "scene_gt.json")
 
     def write_element(self, viewmeta:ViewMeta, data_i:int):
         super().write_element(viewmeta, data_i)
@@ -546,7 +715,7 @@ class LinemodFormat(DatasetFormat):
                 {   LinemodFormat.KW_GT_R: posture.rmat.reshape(-1).tolist(),
                     LinemodFormat.KW_GT_t: posture.tvec.reshape(-1).tolist(),
                     LinemodFormat.KW_GT_ID: int(obj_id)})
-        parsed.update({self.scene_gt_file: {self.data_num: one_info}})
+        parsed.update({self.scene_gt_info.directory: {self.data_num: one_info}})
 
         return parsed    
 
@@ -584,22 +753,44 @@ class VocFormat(DatasetFormat):
     KW_TRAIN = "train"
     KW_VAL = "val"
 
-    def __init__(self, directory, data_num = 0, split_rate = 0.75) -> None:
-        super().__init__(directory)
-
-        self.images_elements     = Elements(self, "images",       cv2.imread, cv2.imwrite,                ".jpg")
-        self.depth_elements      = Elements(self, "depths",       lambda x:cv2.imread(x, cv2.IMREAD_ANYDEPTH), cv2.imwrite, '.png')
-        self.masks_elements      = Elements(self, "masks",        lambda x: deserialize_image_container(deserialize_object(x), cv2.IMREAD_GRAYSCALE),
-                                                                        lambda path, x: serialize_object(path, serialize_image_container(x)),  
-                                                                        ".pkl")
-        self.labels_elements     = Elements(self, "labels",       self.loadtxt_func((-1, 5)), self.savetxt_func("%8.4f"), ".txt")
-        self.bbox_3ds_elements   = Elements(self, "bbox_3ds",     self.loadtxt_func((-1, 8, 2)), self.savetxt_func("%12.6f"), ".txt")   
-        self.landmarks_elements  = Elements(self, "landmarks",    self.loadtxt_func((-1, 24, 2)), self.savetxt_func("%12.6f"), ".txt")
-        self.extr_vecs_elements  = Elements(self, "trans_vecs",   self.loadtxt_func((-1, 2, 3)), self.savetxt_func("%12.6f"), ".txt")
+    def __init__(self, directory, data_num = 0, split_rate = 0.75, clear = False) -> None:
+        super().__init__(directory, clear)
 
         self.train_txt = os.path.join(self.directory,   VocFormat.KW_TRAIN + ".txt")
         self.val_txt = os.path.join(self.directory,     VocFormat.KW_VAL + ".txt")
         self.get_split_file(data_num, split_rate)
+
+    def _init_clusters(self):
+        super()._init_clusters()
+        self.images_elements     = Elements(self, "images",       
+                                            read_func=cv2.imread, 
+                                            write_func=cv2.imwrite,
+                                            suffix = ".jpg")
+        self.depth_elements      = Elements(self, "depths",       
+                                            read_func=lambda x:cv2.imread(x, cv2.IMREAD_ANYDEPTH), 
+                                            write_func=cv2.imwrite, 
+                                            suffix = '.png')
+        self.masks_elements      = Elements(self, "masks",        
+                                            read_func=lambda x: deserialize_image_container(deserialize_object(x), cv2.IMREAD_GRAYSCALE),
+                                            write_func=lambda path, x: serialize_object(path, serialize_image_container(x)),  
+                                            suffix = ".pkl")
+        self.labels_elements     = Elements(self, "labels",       
+                                            read_func=self.loadtxt_func((-1, 5)), 
+                                            write_func=self.savetxt_func("%8.4f"), 
+                                            suffix=".txt")
+        self.bbox_3ds_elements   = Elements(self, "bbox_3ds",     
+                                            read_func=self.loadtxt_func((-1, 8, 2)), 
+                                            write_func=self.savetxt_func("%12.6f"), 
+                                            suffix=".txt")   
+        self.landmarks_elements  = Elements(self, "landmarks",    
+                                            read_func=self.loadtxt_func((-1, 24, 2)), 
+                                            write_func=self.savetxt_func("%12.6f"), 
+                                            suffix=".txt")
+        self.extr_vecs_elements  = Elements(self, "trans_vecs",   
+                                            read_func=self.loadtxt_func((-1, 2, 3)), 
+                                            write_func=self.savetxt_func("%12.6f"), 
+                                            suffix=".txt")
+
 
     @staticmethod
     def savetxt_func(fmt=...):
@@ -761,32 +952,49 @@ class _LinemodFormat_sub1(LinemodFormat):
             for id_, mask in masks.items():
                 super().write(data_i, mask, appname=self.id_format(id_))
 
-    def __init__(self, directory) -> None:
-        super().__init__(directory)
-        self.rgb_elements   = Elements(self, self.rgb_dir,      cv2.imread,                                    cv2.imwrite, '.jpg')
+    def __init__(self, directory, clear = False) -> None:
+        super().__init__(directory, clear)
+        self.rgb_elements   = Elements(self, "rgb", 
+                                       read_func=cv2.imread,  
+                                       write_func=cv2.imwrite, 
+                                       suffix='.jpg')
+
+    def read_one(self, data_i):
+        viewmeta = super().read_one(data_i)
+
+        for k in viewmeta.bbox_3d:
+            viewmeta.bbox_3d[k] = viewmeta.bbox_3d[k][:, ::-1]
+        for k in viewmeta.landmarks:
+            viewmeta.landmarks[k] = viewmeta.landmarks[k][:, ::-1]
+        viewmeta.depth_scale *= 1000
+
+        return viewmeta
 
 
 def serialize_object(file_path, obj:dict):
-    if os.path.splitext(file_path)[1] == '.pkl':
-        file_path = os.path.splitext(file_path)[0] + ".npz"
-    np.savez(file_path, **obj)
-    # with open(file_path, 'wb') as file:
-    #     pickle.dump(obj, file)
+    # if os.path.splitext(file_path)[1] == '.pkl':
+    #     file_path = os.path.splitext(file_path)[0] + ".npz"
+    # np.savez(file_path, **obj)
+    with open(file_path, 'wb') as file:
+        pickle.dump(obj, file)
 
 # 从文件反序列化对象
 def deserialize_object(serialized_file_path):
-    if os.path.splitext(serialized_file_path)[1] == '.pkl':
-        with open(serialized_file_path, 'rb') as file:
-            elements = pickle.load(file)
-            return elements
-    else:
-        elements = dict(np.load(serialized_file_path, allow_pickle=True))
-        
-        # restored_elements = {}
-        for key in elements:
-            if not np.issubdtype(elements[key].dtype, np.number):
-                elements[key] = elements[key].item()
+    with open(serialized_file_path, 'rb') as file:
+        elements = pickle.load(file)
         return elements
+    # if os.path.splitext(serialized_file_path)[1] == '.pkl':
+    #     with open(serialized_file_path, 'rb') as file:
+    #         elements = pickle.load(file)
+    #         return elements
+    # else:
+    #     elements = dict(np.load(serialized_file_path, allow_pickle=True))
+        
+    #     # restored_elements = {}
+    #     for key in elements:
+    #         if not np.issubdtype(elements[key].dtype, np.number):
+    #             elements[key] = elements[key].item()
+    #     return elements
     # with open(serialized_file_path, 'rb') as file:
     #     elements = pickle.load(file)
     #     return elements
