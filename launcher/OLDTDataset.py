@@ -67,6 +67,10 @@ class OLDTDataset(Dataset):
         '''
         angle = 2*np.random.rand()*self.max_rotate_angle - self.max_rotate_angle
         viewmeta = viewmeta.rotate(angle)
+        bv = 200 * np.random.rand() - 100
+        sv = 200 * np.random.rand() - 100
+        viewmeta = viewmeta.change_brightness(bv)
+        viewmeta = viewmeta.change_saturation(sv)
         return viewmeta
 
     def __len__(self):

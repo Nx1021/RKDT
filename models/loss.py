@@ -524,7 +524,7 @@ class LandmarkLoss(nn.Module):
                 gt_landmarks_list:list[Tensor],
                 gt_bboxes_n_list:list[Tensor],
                 pred_distribution:dict[int, dict[str, Tensor]],
-                loss_recoder:LandmarkLossRecorder):
+                loss_recoder:LandmarkLossRecorder = None):
         device = gt_labels_list[0].device
         # distribute ground truth
         gt_distribution = self.distribute_gt(gt_labels_list, gt_landmarks_list, gt_bboxes_n_list)
@@ -544,8 +544,9 @@ class LandmarkLoss(nn.Module):
         
         total_loss_result: LossResult = LossResult.concat(loss_result_list)
         loss = total_loss_result.loss().to(device)
-        loss_recoder.record(total_loss_result)
-        loss_recoder.merge()
+        if loss_recoder:
+            loss_recoder.record(total_loss_result)
+            loss_recoder.merge()
         return loss
 
 if __name__ == "__main__":

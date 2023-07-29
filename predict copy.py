@@ -34,13 +34,13 @@ if __name__ == '__main__':
     train_dataset = OLDTDataset(data_folder, "train")
     val_dataset = OLDTDataset(data_folder, "val")
     load_brach_i = 0
-    load_from = f"{WEIGHTS_DIR}/20230725204657branch00.pt"
+    load_from = f"{WEIGHTS_DIR}/20230728213813branch00.pt"
     # cfg = find_record(load_from, f"{CFG_DIR}/config.yaml")
-    cfg = f"{CFG_DIR}/config_linemod_000001.yaml"
+    cfg = f"{CFG_DIR}/config_linemod_000000.yaml"
     print("config file: ", cfg)
     model = OLDT(yolo_weight_path, cfg, [load_brach_i])  # 替换为你自己的模型    
     model.load_branch_weights(load_brach_i, load_from)
-    model.set_mode("predict")
+    model.set_mode("train")
 
     if sys == "Windows":
         batch_size = 16
@@ -49,9 +49,23 @@ if __name__ == '__main__':
         batch_size = 32 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
 
+    ###
+    # flow = f"{CFG_DIR}/train_flow.yaml"
+    # loss = LandmarkLoss(cfg)
+    # trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
+    #                 flowfile= flow,
+    #                 distribute=False,
+    #                 start_epoch = 1
+    #                 )
+    # trainer.train()
+    ###
+
+
     remark = "new_variable_length"
     intermediate_from = ""
-    predctor = OLDTPredictor(model, cfg, remark, batch_size, if_postprocess=True, if_calc_error=True, intermediate_from = intermediate_from)
+    predctor = OLDTPredictor(model, cfg, remark, batch_size, 
+                             if_postprocess=True, if_calc_error=True, 
+                             intermediate_from = intermediate_from)
     predctor.save_imtermediate = False
     predctor.logger.log({
         "System": sys,

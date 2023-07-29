@@ -259,3 +259,29 @@ class Trainer(Launcher):
         if self.distribute:
             dist.destroy_process_group()
 
+    def _compare(self):
+        print("start to compare... time:{}".format(self.start_timestamp))
+        self.cur_epoch = 0
+        train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+        val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+
+        for module in self.freeze_modules:
+            module.train(False)
+        for image_posture in train_dataloader:
+            break
+        # image_posture = next(train_dataloader)
+        images, gt_landmarks, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
+        self.inner_model.train()
+        if self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
+            
+            self.inner_model.set_mode("train")    
+            # 前向传播
+            detection_results = self.model(images)
+            train_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
+            
+            self.inner_model.set_mode("val")
+            detection_results = self.model(images)
+            val_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
+
+            print("train_loss", train_loss, "val_loss", val_loss)
+            
