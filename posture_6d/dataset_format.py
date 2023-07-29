@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from open3d import geometry, utility, io
 import os
+import glob
 import shutil
 import pickle
 import cv2
@@ -271,7 +272,7 @@ class Elements(_DataCluster):
         '''
         count = 0
         for root, dirs, files in os.walk(self.directory):
-            count += len(files)
+            count += len(glob.glob(os.path.join(root, f'*{self.suffix}')))
         return count
 
     def _init_data_i_dir_map(self):

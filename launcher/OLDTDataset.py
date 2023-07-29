@@ -34,10 +34,11 @@ class OLDTDataset(Dataset):
         self.vocformat = VocFormat(data_folder)
         self.vocformat.depth_elements.close()
         self.vocformat.bbox_3ds_elements.close()
-        self.vocformat.masks_elements.close()
-        self.vocformat.extr_vecs_elements.close()
-        for bj in self.vocformat.base_json.values():
-            bj.close()
+        self.vocformat.scene_bbox_3d_info.close()
+        self.vocformat.scene_landmarks_info.close()
+        self.vocformat.scene_trans_vector_info.close()
+        self.vocformat.scene_visib_fract_info.close()
+
         self.set = set_
         self.image_folder       = os.path.join(data_folder, 'images', set_)
         self.landmarks_folder   = os.path.join(data_folder, 'landmarks', set_)
@@ -56,7 +57,7 @@ class OLDTDataset(Dataset):
         self.set_augment_para(1,0)
 
     def set_augment_para(self, data_inflation: int, max_rotate_angle:float):
-        self.data_inflation = int(data_inflation)
+        self.data_inflation = int(max(data_inflation, 1))
         self.max_rotate_angle = max_rotate_angle
 
     def augment(self, viewmeta:ViewMeta)->ViewMeta:
