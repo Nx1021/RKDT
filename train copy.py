@@ -63,17 +63,16 @@ if __name__ == "__main__":
         data_folder = SERVER_DATASET_DIR
         print("use data on the server: ", data_folder)
     yolo_weight_path = f"{WEIGHTS_DIR}/linemod_000000_best.pt"
-    cfg = f"{CFG_DIR}/config_linemod_000001.yaml"
+    cfg = f"{CFG_DIR}/config_linemod_000000.yaml"
     flow = f"{CFG_DIR}/train_flow.yaml"
-    ###
+    ###a
     train_dataset = OLDTDataset(data_folder, "train")
     val_dataset = OLDTDataset(data_folder, "val")
     loss = LandmarkLoss(cfg)
     model = OLDT(yolo_weight_path, cfg, [0])  
     load_brach_i = 0
-    # load_from = f"{WEIGHTS_DIR}/20230707013957branch00.pt"
-    # load_from = f"{WEIGHTS_DIR}/20230710004623branch00.pt"
     load_from = ""
+    load_from = f"{WEIGHTS_DIR}/20230728213813branch00.pt"
     model.load_branch_weights(load_brach_i, load_from)
     start_epoch = 1
 
@@ -87,7 +86,7 @@ if __name__ == "__main__":
     else:
         raise SystemError
 
-    train_dataset.set_augment_para(5, np.pi / 6)
+    train_dataset.set_augment_para(3, np.pi / 6)
     trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
                       flowfile= flow,
                       distribute=False,

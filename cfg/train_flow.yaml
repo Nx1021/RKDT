@@ -9,6 +9,7 @@
   cfg:
     use_variable_tokennum: False
 400:
+
 #   lr_func: warmup
 #   lr:      0.00015
 #   cfg:

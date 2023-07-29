@@ -259,8 +259,8 @@ class OLDTPredictor(BasePredictor, Launcher):
     def calc_error(self, gt: list, postprocessed: list)->list[list[tuple[ErrorResult]]]:
         return super().calc_error(gt, postprocessed)
     
-    def predict_from_dataset(self, dataset):
-        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn)
+    def predict_from_dataset(self, dataset, plot_outlier = False):
+        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
         
         with torch.no_grad():
             num_batches = len(data_loader)
@@ -272,6 +272,7 @@ class OLDTPredictor(BasePredictor, Launcher):
                         self.intermediate_manager.save_pkl(self.gt_dir, obj)
 
                 # Model inference
+                self.model.if_gather = True
                 predictions:list[list[LandmarkDetectionResult]] = self.inference(inputs)
                 if self.save_imtermediate:
                     for obj in predictions:
@@ -286,7 +287,9 @@ class OLDTPredictor(BasePredictor, Launcher):
 
                 # error
                 if self.if_calc_error:
-                    self.calc_error(batch, processed)
+                    error_result = self.calc_error(batch, processed)
+                    if plot_outlier:
+                        self.plot_outlier(error_result, batch, processed)
         with self.logger.capture_output("process record"):
             self.frametimer.print()
             self.error_calculator.print_result()
@@ -306,15 +309,15 @@ class OLDTPredictor(BasePredictor, Launcher):
                 target_metrics = [list(filter(lambda y: y.type == metrics, x))[0] for x in er] #one type error for one image
             except IndexError:
                 continue
-            passed = all([x.passed for x in target_metrics])
+            passed = any([x.passed for x in target_metrics])
             if not passed and len(target_metrics) > 0:
-                # compare_image_posture(gt, pred)
-                # text = ""
-                # for x in target_metrics:
-                #     text += str(x.error) + "\n"
-                # plt.text(0, 1, text, ha='left', va='top', transform=plt.gca().transAxes)
-                # self.intermediate_manager._save_object("error_outlier", None, save_figure)
-                self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
+                compare_image_posture(gt, pred)
+                text = ""
+                for x in target_metrics:
+                    text += str(x.error) + "\n"
+                plt.text(0, 1, text, ha='left', va='top', transform=plt.gca().transAxes)
+                self.intermediate_manager._save_object("error_outlier", None, save_figure)
+                # self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
 
     def postprocess_from_intermediate(self, plot_outlier = False):
         predictions_generator:Generator[list[LandmarkDetectionResult]] = \

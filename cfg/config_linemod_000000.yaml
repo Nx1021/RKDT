@@ -14,6 +14,7 @@ yolo_override:
 max_token_num: 784
 pool_size:    [24, 24]
 use_variable_tokennum: False
+normalize_before: True
 landmark_num: 24
 decoder_num_queries: 96
 calc_intermediate: False

@@ -367,8 +367,10 @@ class LandmarkBranch(nn.Module):
         num_classes = self.cfg["landmark_num"]
         self.num_queries = self.cfg["decoder_num_queries"]
         return_intermediate_dec = self.cfg["calc_intermediate"]
+        normalize_before = self.cfg["normalize_before"] 
         self.transformer = Transformer(256, activation="gelu", 
-                                       return_intermediate_dec=return_intermediate_dec) ###TODO###
+                                       return_intermediate_dec=return_intermediate_dec, 
+                                       dropout=0.1, normalize_before=normalize_before) ###TODO###
         hidden_dim = self.transformer.d_model
         
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1) 
