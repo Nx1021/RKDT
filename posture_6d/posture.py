@@ -20,7 +20,7 @@ class Posture:
             rvec = np.array(rvec, np.float32).squeeze()
             self.set_rvec(rvec)
         if rmat is not None:
-            self.set_rmat(rmat)
+            self.set_rmat(np.reshape(rmat, (3,3)))
         if tvec is not None:
             tvec = np.array(tvec, np.float32).squeeze()
             self.set_tvec(tvec)
