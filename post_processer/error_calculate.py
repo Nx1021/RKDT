@@ -78,7 +78,7 @@ class ErrorCalculator():
         '''
         super().__init__()
         self.pnpsolver = pnpsolver
-        self.model_manager = self.pnpsolver.model_manager
+        self.model_manager = self.pnpsolver.mesh_manager
         # 读取内参(所有内参都一样)
         self.pass_record = np.zeros((4, class_num)) # 4行分别是总数、重投影、ADD、5cm5°
         self.error_record = np.zeros((4, class_num)) # 4行分别是总数、重投影error和、ADDerror和、5cm5°error和

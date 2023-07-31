@@ -63,6 +63,18 @@ def ignore_viewmeta_warning(func):
         return result
     return wrapper
 
+def calc_bbox2d_from_mask_dict(mask_dict:dict[int, np.ndarray]):
+    bbox_2d = {}
+    for id_, mask in mask_dict.items():
+        where = np.where(mask)
+        if where[0].size == 0:
+            bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
+        else:
+            lt = np.min(where, -1)
+            rb = np.max(where, -1)
+            bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
+    return bbox_2d
+
 class ViewMeta():
     '''
     一个视角下的所有数据的元
@@ -116,16 +128,16 @@ class ViewMeta():
         def change_saturation(self, delta_value:float):
             return self.__inner_func(self._change_saturation, delta_value)
 
-    class RgbAP(AugmentPipeline):
+    class ColorAP(AugmentPipeline):
         '''
-        Rgb image augment pipline
+        Color image augment pipline
         '''
         def __init__(self, meta:"ViewMeta") -> None:
             super().__init__(meta)
 
         @property
         def obj(self):
-            return self.meta.rgb
+            return self.meta.color
 
         def _crop(self, crop_rect: np.ndarray):
             return copy_by_rect(crop_rect, self.obj)
@@ -151,8 +163,8 @@ class ViewMeta():
             v[tuple(coords.T)] += value
             v = np.clip(v, 0, 255)
             hsv[:,:,2] = v.astype(np.uint8)
-            new_rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-            return new_rgb
+            new_color = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+            return new_color
         
         def _change_saturation(self, delta_value):
             hsv = cv2.cvtColor(self.obj, cv2.COLOR_BGR2HSV)
@@ -160,8 +172,8 @@ class ViewMeta():
             s += delta_value
             s = np.clip(s, 0, 255)
             hsv[:,:,1] = s.astype(np.uint8)
-            new_rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-            return new_rgb
+            new_color = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+            return new_color
 
     class DepthAP(AugmentPipeline):
         def __init__(self, meta: "ViewMeta") -> None:
@@ -198,6 +210,8 @@ class ViewMeta():
             new_masks = {}
             # 裁剪所有mask
             for _id, mask in self.obj.items():
+                if np.issubdtype(mask.dtype, np.bool_):
+                    mask = mask.astype(np.uint8) * 255
                 new_mask = rotate_image(M, mask)
                 new_mask = cv2.threshold(new_mask, 127, 255, cv2.THRESH_BINARY)[-1]
                 new_masks.update({_id: new_mask})
@@ -299,10 +313,49 @@ class ViewMeta():
             new_masks = self.new_masks_callback()
             return self.calc_new_visib_fract(old_masks, new_masks)
 
+    class LabelsAP(AugmentPipeline):
+        def __init__(self, meta: "ViewMeta") -> None:
+            super().__init__(meta)
+            self.new_masks_callback = lambda :self.get_ap_of_meta(self.meta.MasksAP).new_obj
+
+        @property
+        def obj(self):
+            return self.meta.labels
+
+        def _crop(self, crop_rect: ndarray):
+            new_masks = self.new_masks_callback()
+            return calc_bbox2d_from_mask_dict(new_masks)
+
+        def _rotate(self, M:cv2.Mat):
+            new_masks = self.new_masks_callback()
+            return calc_bbox2d_from_mask_dict(new_masks)
+
     IGNORE_WARNING = False
 
+    PARA_NAMES = ["color", 
+                  "depth", 
+                  "masks", 
+                  "extr_vecs", 
+                  "intr", 
+                  "depth_scale", 
+                  "bbox_3d", 
+                  "landmarks", 
+                  "visib_fract", 
+                  "labels"]
+    
+    COLOR = PARA_NAMES[0]
+    DEPTH = PARA_NAMES[1]
+    MASKS = PARA_NAMES[2]
+    EXTR_VECS = PARA_NAMES[3]
+    INTR = PARA_NAMES[4]
+    DEPTH_SCALE = PARA_NAMES[5]
+    BBOX_3D = PARA_NAMES[6]
+    LANDMARKS = PARA_NAMES[7]
+    VISIB_FRACT = PARA_NAMES[8]
+    LABELS = PARA_NAMES[9]
+
     def __init__(self, 
-                rgb: np.ndarray, 
+                color: np.ndarray, 
                 depth: np.ndarray, 
                 masks: dict[int, np.ndarray], 
                 extr_vecs:dict[int, ndarray],
@@ -311,10 +364,11 @@ class ViewMeta():
                 bbox_3d: dict[int, ndarray],        
                 landmarks: dict[int, ndarray],
                 visib_fract: dict[int, float],
+                labels: dict[int, np.ndarray] = None
                 # keypoints_visib: dict[int, list],
                 ) -> None:
         '''
-        rgb: np.ndarray, 
+        color: np.ndarray, 
         depth: np.ndarray, 
         masks: dict[int, np.ndarray], 
         extr_gt: list[dict[int, list]], 外参
@@ -326,19 +380,54 @@ class ViewMeta():
         '''
         ViewMeta.IGNORE_WARNING = True
         self.__init_parameters_keys = [x for x in locals().keys() if x in inspect.signature(self.__init__).parameters.keys()]
-        self.__init_parameters_values = [id(x) for x in list(locals().values())]
-        self.agmts_type:dict[str, type] = {}
+        assert ViewMeta.PARA_NAMES == self.__init_parameters_keys, f"ViewMeta.__init__'s parameters must be {ViewMeta.PARA_NAMES}, please check it!"
+        self._format_func:dict[str, Callable] = {
+            ViewMeta.PARA_NAMES[0]: None,                                                     # color
+            ViewMeta.PARA_NAMES[1]: None,                                                     # depth
+            ViewMeta.PARA_NAMES[2]: None,                                                     # masks
+            ViewMeta.PARA_NAMES[3]: lambda x: self.__reshape_array_in_dict(x, (2, 3)),        # extr_vecs
+            ViewMeta.PARA_NAMES[4]: lambda x: np.reshape(x, (3, 3)),                          # intr
+            ViewMeta.PARA_NAMES[5]: lambda x: float(x),                                       # depth_scale
+            ViewMeta.PARA_NAMES[6]: lambda x: self.__reshape_array_in_dict(x, (-1, 2)),       # bbox_3d
+            ViewMeta.PARA_NAMES[7]: lambda x: self.__reshape_array_in_dict(x, (-1, 2)),       # landmarks
+            ViewMeta.PARA_NAMES[8]: None,                                                     # visib_fract
+            ViewMeta.PARA_NAMES[9]: None,                                                     # labels
+        }
+        self._agmts_type:dict[str, type] = {
+            ViewMeta.PARA_NAMES[0]: ViewMeta.ColorAP,       
+            ViewMeta.PARA_NAMES[1]: ViewMeta.DepthAP,     
+            ViewMeta.PARA_NAMES[2]: ViewMeta.MasksAP,     
+            ViewMeta.PARA_NAMES[3]: ViewMeta.ExtrVecAP,   
+            ViewMeta.PARA_NAMES[4]: ViewMeta.IntrAP,      
+            ViewMeta.PARA_NAMES[5]: ViewMeta.DepthScaleAP,
+            ViewMeta.PARA_NAMES[6]: ViewMeta.Bbox3dAP,    
+            ViewMeta.PARA_NAMES[7]: ViewMeta.LandmarksAP, 
+            ViewMeta.PARA_NAMES[8]: ViewMeta.VisibFractAP,
+            ViewMeta.PARA_NAMES[9]: ViewMeta.LabelsAP    
+        }
         self.agmts:dict[str, ViewMeta.AugmentPipeline] = {}
         self.elements = {}
-        self.rgb:np.ndarray                 = self.__set_element(ViewMeta.RgbAP,         rgb)
-        self.depth:np.ndarray               = self.__set_element(ViewMeta.DepthAP,       depth)            
-        self.masks:dict[int, ndarray]       = self.__set_element(ViewMeta.MasksAP,       masks) #[N, H, W]
-        self.extr_vecs:dict[int, ndarray]   = self.__set_element(ViewMeta.ExtrVecAP,     extr_vecs,  lambda x:self.__reshape_array_in_dict(x, (2, 3)))
-        self.intr:ndarray                   = self.__set_element(ViewMeta.IntrAP,        intr,  lambda x: np.reshape(x, (3, 3)))
-        self.depth_scale: float             = self.__set_element(ViewMeta.DepthScaleAP,  depth_scale)
-        self.bbox_3d:dict[int, ndarray]     = self.__set_element(ViewMeta.Bbox3dAP,      bbox_3d,    lambda x:self.__reshape_array_in_dict(x, (-1,2)))
-        self.landmarks:dict[int, ndarray]   = self.__set_element(ViewMeta.LandmarksAP,   landmarks,  lambda x:self.__reshape_array_in_dict(x, (-1,2)))
-        self.visib_fract: dict[int, float]  = self.__set_element(ViewMeta.VisibFractAP,  visib_fract)
+        self.ids = []
+        self.color:np.ndarray               = self.set_element(ViewMeta.PARA_NAMES[0], color)
+        self.depth:np.ndarray               = self.set_element(ViewMeta.PARA_NAMES[1], depth)
+        self.masks:dict[int, ndarray]       = self.set_element(ViewMeta.PARA_NAMES[2], masks)
+        self.extr_vecs:dict[int, ndarray]   = self.set_element(ViewMeta.PARA_NAMES[3], extr_vecs)
+        self.intr:ndarray                   = self.set_element(ViewMeta.PARA_NAMES[4], intr)
+        self.depth_scale: float             = self.set_element(ViewMeta.PARA_NAMES[5], depth_scale)
+        self.bbox_3d:dict[int, ndarray]     = self.set_element(ViewMeta.PARA_NAMES[6], bbox_3d)
+        self.landmarks:dict[int, ndarray]   = self.set_element(ViewMeta.PARA_NAMES[7], landmarks)
+        self.visib_fract: dict[int, float]  = self.set_element(ViewMeta.PARA_NAMES[8], visib_fract)
+        self.labels:dict[int, ndarray]      = self.set_element(ViewMeta.PARA_NAMES[9], labels)
+        # self.color:np.ndarray               = self.__set_element(ViewMeta.RgbAP,         color)
+        # self.depth:np.ndarray               = self.__set_element(ViewMeta.DepthAP,       depth)            
+        # self.masks:dict[int, ndarray]       = self.__set_element(ViewMeta.MasksAP,       masks) #[N, H, W]
+        # self.extr_vecs:dict[int, ndarray]   = self.__set_element(ViewMeta.ExtrVecAP,     extr_vecs,  lambda x:self.__reshape_array_in_dict(x, (2, 3)))
+        # self.intr:ndarray                   = self.__set_element(ViewMeta.IntrAP,        intr,  lambda x: np.reshape(x, (3, 3)))
+        # self.depth_scale: float             = self.__set_element(ViewMeta.DepthScaleAP,  depth_scale)
+        # self.bbox_3d:dict[int, ndarray]     = self.__set_element(ViewMeta.Bbox3dAP,      bbox_3d,    lambda x:self.__reshape_array_in_dict(x, (-1,2)))
+        # self.landmarks:dict[int, ndarray]   = self.__set_element(ViewMeta.LandmarksAP,   landmarks,  lambda x:self.__reshape_array_in_dict(x, (-1,2)))
+        # self.visib_fract: dict[int, float]  = self.__set_element(ViewMeta.VisibFractAP,  visib_fract)
+        # self.labels:dict[int, ndarray]      = self.__set_element(ViewMeta.LabelsAP,      labels) #[N, H, W]        
         # self.keypoints_visib                = copy.deepcopy(keypoints_visib)
         # self.filter_unvisible()
         ViewMeta.IGNORE_WARNING = False
@@ -353,17 +442,13 @@ class ViewMeta():
         '''
         (x1, y1, x2, y2)
         '''
-        if self.masks is not None:
-            bbox_2d = {}
-            for id_, mask in self.masks.items():
-                where = np.where(mask)
-                if where[0].size == 0:
-                    bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
-                else:
-                    lt = np.min(where, -1)
-                    rb = np.max(where, -1)
-                    bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
-            return bbox_2d
+        if self.labels is not None:
+            return self.labels
+        elif self.masks is not None:
+            ViewMeta.IGNORE_WARNING = True
+            self.labels = calc_bbox2d_from_mask_dict(self.masks)
+            ViewMeta.IGNORE_WARNING = False
+            return self.labels
         return None
 
     def filter_unvisible(self):
@@ -387,11 +472,11 @@ class ViewMeta():
 
     @ignore_viewmeta_warning
     def calc_by_base(self, mesh_dict:dict[int, MeshMeta], cover = False):
-        assert self.rgb is not None
+        assert self.color is not None
         assert self.extr_vecs is not None
         assert self.intr is not None
 
-        camera_intr = CameraIntr(self.intr, self.rgb.shape[1], self.rgb.shape[0], self.depth_scale)
+        camera_intr = CameraIntr(self.intr, self.color.shape[1], self.color.shape[0], self.depth_scale)
         postures = []
         mesh_list = []
         keys = []
@@ -432,15 +517,38 @@ class ViewMeta():
         self.filter_unvisible()
 
     @staticmethod
-    def from_base_data( rgb: np.ndarray, 
+    def from_base_data( color: np.ndarray, 
                         depth: np.ndarray, 
                         extr_vecs:dict[int, ndarray],
                         intr: np.ndarray,
                         depth_scale: float,
                         mesh_dict:dict[int, MeshMeta]):
-        viewmeta = ViewMeta(rgb, depth, None, extr_vecs, intr, depth_scale, None, None, None)
+        viewmeta = ViewMeta(color, depth, None, extr_vecs, intr, depth_scale, None, None, None)
         viewmeta.calc_by_base(mesh_dict)
         return viewmeta
+
+    def set_element(self, name:str, value):
+        # pre-process function
+        func = self._format_func[name]
+        # pre-process to make the data has the correct format
+        if func:
+            value = func(value) if value is not None else None
+        # sort the dict by key, and check if the ids is same
+        if isinstance(value, dict):
+            value = dict(sorted(value.items(), key=lambda x: x[0]))
+            new_ids = list(value.keys())
+            if len(self.ids) == 0:
+                self.ids = new_ids
+            elif self.ids != new_ids:
+                raise ValueError("ids must be same")
+        self.elements[name] = value
+
+        # set the value to the class
+        ViewMeta.IGNORE_WARNING = True
+        self.__setattr__(name, value)
+        ViewMeta.IGNORE_WARNING = False
+        
+        return value
 
     def __set_element(self, ap_type:type, value, func = lambda x:x):
         '''
@@ -456,9 +564,14 @@ class ViewMeta():
         value = func(value) if value is not None else None
         if isinstance(value, dict):
             value = dict(sorted(value.items(), key=lambda x: x[0]))
+            new_ids = list(value.keys())
+            if len(self.ids):
+                self.ids = new_ids
+            elif self.ids != new_ids:
+                raise ValueError("ids must be same")
         self.elements[key] = value
         ### match ap_type with name
-        self.agmts_type.update({key: ap_type})
+        self._agmts_type.update({key: ap_type})
         return value
 
     @staticmethod
@@ -468,14 +581,18 @@ class ViewMeta():
                 dictionary[key] = dictionary[key].reshape(shape)
         return dictionary
 
+    def _init_agmts(self):
+        # initialize augment pipeline by agmts_type
+        for key, ap_type in self._agmts_type.items():
+            ap = ap_type(self)
+            self.agmts.update({key: ap})        
+
     def __augment(self, funcname:str, *arg):
         if funcname not in ["crop", "rotate", "change_brightness", "change_saturation"]:
             raise NotImplementedError
         if len(self.agmts) == 0:
             # initialize augment pipeline by agmts_type
-            for key, ap_type in self.agmts_type.items():
-                ap = ap_type(self)
-                self.agmts.update({key: ap})
+            self._init_agmts()
         aug_results = dict(zip(self.agmts.keys(), [agmt.__getattribute__(funcname)(*arg) for agmt in self.agmts.values()]))
         return ViewMeta(**aug_results) 
 
@@ -557,8 +674,8 @@ class ViewMeta():
                                                     color="blue", fill=False, linewidth=1))
         else:
             mask = 0
-        rgb = np.clip((self.rgb.astype(np.float32) + mask), 0, 255).astype(np.uint8)
-        plt.imshow(rgb) 
+        color = np.clip((self.color.astype(np.float32) + mask), 0, 255).astype(np.uint8)
+        plt.imshow(color) 
         # landmarks
         if self.landmarks is not None:
             for ldmks in self.landmarks.values():

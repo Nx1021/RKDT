@@ -36,7 +36,7 @@ class PnPSolver():
         keypoint_info_path: 关键点位置信息路径
         '''
         cfg = yaml_load(cfg_file)
-        self.model_manager = create_model_manager(cfg_file)
+        self.mesh_manager = create_model_manager(cfg_file)
         if matrix_camera is None:
             # 读取内参(所有内参都一样)
             self.matrix_camera = np.loadtxt(os.path.join(cfg["models_dir"], cfg["default_K"]))
@@ -90,7 +90,7 @@ class PnPSolver():
                         points      :np.ndarray, 
                         class_id:   int):
         K,D = self.matrix_camera, self.distortion_coeffs
-        points_3d = self.model_manager.get_ldmk_3d(class_id)
+        points_3d = self.mesh_manager.get_ldmk_3d(class_id)
         success, vector_R, vector_T  = cv2.solvePnP(points_3d, points, K, D, flags=cv2.SOLVEPNP_EPNP)
         return vector_R, vector_T
 

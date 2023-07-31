@@ -280,6 +280,7 @@ class OLDTPredictor(BasePredictor, Launcher):
 
                 # Postprocessing
                 if self.if_postprocess:
+                    print([x.obj_list[0].tvec for x in batch if isinstance(x, ImagePosture)])
                     processed:list[ImagePosture] = self.postprocess((inputs, predictions))
                     if self.save_imtermediate:
                         for obj in processed:

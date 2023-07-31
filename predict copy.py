@@ -43,7 +43,7 @@ if __name__ == '__main__':
     model.set_mode("train")
 
     if sys == "Windows":
-        batch_size = 16
+        batch_size = 4
         # model = torch.nn.DataParallel(model)
     elif sys == "Linux":
         batch_size = 32 # * torch.cuda.device_count()
@@ -78,7 +78,7 @@ if __name__ == '__main__':
     if intermediate_from:
         predctor.postprocess_from_intermediate(plot_outlier=True)
     else:
-        predctor.predict_from_dataset(train_dataset)
+        predctor.predict_from_dataset(val_dataset)
 
 
     # intermediate_manager = IntermediateManager(f"{LOGS_DIR}/intermediate_output")

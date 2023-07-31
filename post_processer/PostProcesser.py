@@ -32,7 +32,7 @@ class PostProcesser():
         Description of the return
         '''
         self.pnpsolver = pnpsolver
-        self.model_manager = self.pnpsolver.model_manager
+        self.mesh_manager = self.pnpsolver.mesh_manager
         self.ldmk_out_upper = out_bbox_threshold
 
         self.desktop_plane:np.ndarray = None
@@ -86,6 +86,14 @@ class PostProcesser():
                     (ldmks[..., 1] <= bbox[3]))
         return np.sum(in_bbox) < int((1 - self.ldmk_out_upper) * ldmks.shape[0])
 
+    # 沿着物体中心与相机坐标系原点的连线移动物体
+    @staticmethod
+    def move_obj_by_optical_link(trans_vecs, move_dist):
+        optical_link = trans_vecs[1]
+        optical_link = optical_link / np.linalg.norm(optical_link)# normalize
+        new_t = trans_vecs[1] + optical_link * move_dist
+        return (trans_vecs[0], new_t)
+
     def desktop_assumption(self, trans_vecs, points_3d):
         '''
         桌面假设，假设物体的最低点处于桌面上，重新计算物体的trans_vecs
@@ -121,6 +129,17 @@ class PostProcesser():
 
         return (trans_vecs[0], updated_tvec)
 
+    def bbox_area_assumption(self, trans_vecs, class_id, bbox):
+        # 假设预测的物体的投影面积和真实的投影面积相同，重新计算物体的trans_vecs
+        points = self.mesh_manager.get_model_pcd(class_id)
+        reproj = self.pnpsolver.calc_reproj(trans_vecs[0], trans_vecs[1], points) #[N, 2]
+        reproj_bbox_area = (np.max(reproj[:, 0]) - np.min(reproj[:, 0])) * (np.max(reproj[:, 1]) - np.min(reproj[:, 1]))
+        bbox_area = tensor_to_numpy((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
+        scale = np.sqrt(bbox_area / reproj_bbox_area)
+        move_dist = -(1 - 1/scale) * trans_vecs[1][2]
+        new_trans = self.move_obj_by_optical_link(trans_vecs, move_dist)
+        return new_trans
+
     def process(self, image_list:list[np.ndarray], ldmk_detection:list[list[LandmarkDetectionResult]], mode = "e"):
         image_posture_list = []
         for bi, batch in enumerate(ldmk_detection):
@@ -138,10 +157,11 @@ class PostProcesser():
                     trans_vecs = None
                 else:
                     # 计算姿态
-                    points_3d = self.model_manager.get_ldmk_3d(rlt.class_id)
+                    points_3d = self.mesh_manager.get_ldmk_3d(rlt.class_id)
                     rvec, tvec = self.pnpsolver.solvepnp(ldmks, points_3d, mask)
                     trans_vecs = (rvec, tvec)
-                    trans_vecs = self.desktop_assumption(trans_vecs, points_3d)
+                    trans_vecs = self.bbox_area_assumption(trans_vecs, rlt.class_id, rlt.bbox)
+                    # trans_vecs = self.desktop_assumption(trans_vecs, points_3d)
                 image_posture.obj_list.append(ObjPosture(ldmks, 
                                                 rlt.bbox_n, 
                                                 rlt.class_id, 

@@ -12,8 +12,10 @@ from ultralytics.yolo.utils.checks import check_version
 TORCH_2_0 = check_version(torch.__version__, minimum='2.0')
 
 import ultralytics.yolo.engine.predictor as _predictor
+import ultralytics.yolo.engine.trainer as _trainer
 
 def _select_device(device='', batch=0, newline=False, verbose=True):
+    
     """Selects PyTorch Device. Options are device = None or 'cpu' or 0 or '0' or '0,1,2,3'."""
     s = f'Ultralytics YOLOv{__version__} 🚀 Python-{platform.python_version()} torch-{torch.__version__} '
     device = str(device).lower()
@@ -41,7 +43,7 @@ def _select_device(device='', batch=0, newline=False, verbose=True):
                             f'{install}')
 
     if not cpu and not mps and torch.cuda.is_available():  # prefer GPU if available
-        devices = device.split(',') if device else '0'  # range(torch.cuda.device_count())  # i.e. 0,1,6,7
+        devices = device.split(',') if device else str(torch.cuda.current_device())  # range(torch.cuda.device_count())  # i.e. 0,1,6,7
         n = len(devices)  # device count
         if n > 1 and batch > 0 and batch % n != 0:  # check batch_size is divisible by device_count
             raise ValueError(f"'batch={batch}' must be a multiple of GPU count {n}. Try 'batch={batch // n * n}' or "
@@ -62,5 +64,6 @@ def _select_device(device='', batch=0, newline=False, verbose=True):
     if verbose and RANK == -1:
         LOGGER.info(s if newline else s.rstrip())
     return torch.device(arg)
-
+print("_select_device", _select_device)
 _predictor.select_device = _select_device
+_trainer.select_device = _select_device

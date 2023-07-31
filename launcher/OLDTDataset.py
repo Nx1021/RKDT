@@ -99,7 +99,7 @@ class OLDTDataset(Dataset):
     def read_by_viewmeta(self, idx):
         data_i = self.idx_array[idx]
         viewmeta = self.vocformat.read_one(data_i)        
-        image = viewmeta.rgb
+        image = viewmeta.color
         
         class_id = list(viewmeta.masks.keys()) 
         landmarks = [viewmeta.landmarks[x] for x in class_id]
@@ -129,7 +129,7 @@ class OLDTDataset(Dataset):
             viewmeta = self.augment(viewmeta)
         # viewmeta = viewmeta.rotate(0.2)
 
-        image = viewmeta.rgb
+        image = viewmeta.color
         
         class_id = list(viewmeta.masks.keys()) 
         landmarks = [viewmeta.landmarks[x] for x in class_id]
