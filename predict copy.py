@@ -34,7 +34,7 @@ if __name__ == '__main__':
     train_dataset = OLDTDataset(data_folder, "train")
     val_dataset = OLDTDataset(data_folder, "val")
     load_brach_i = 0
-    load_from = f"{WEIGHTS_DIR}/20230728213813branch00.pt"
+    load_from = f"{WEIGHTS_DIR}/20230730131531branch00.pt"
     # cfg = find_record(load_from, f"{CFG_DIR}/config.yaml")
     cfg = f"{CFG_DIR}/config_linemod_000000.yaml"
     print("config file: ", cfg)
@@ -78,6 +78,8 @@ if __name__ == '__main__':
     if intermediate_from:
         predctor.postprocess_from_intermediate(plot_outlier=True)
     else:
+        predctor.predict_from_dataset(val_dataset)
+        predctor.clear()
         predctor.predict_from_dataset(train_dataset)
 
 

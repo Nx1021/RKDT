@@ -278,6 +278,12 @@ class OLDTPredictor(BasePredictor, Launcher):
                     for obj in predictions:
                         self.intermediate_manager.save_pkl(self.predictions_dir, obj)
 
+                ###
+                for i in range(len(batch)):
+                    ip:ImagePosture = batch[i]
+                    predictions[i][0].bbox_n = torch.Tensor(ip.obj_list[0].bbox_n).to("cuda")
+                ###
+
                 # Postprocessing
                 if self.if_postprocess:
                     processed:list[ImagePosture] = self.postprocess((inputs, predictions))
