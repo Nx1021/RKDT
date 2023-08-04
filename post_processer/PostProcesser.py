@@ -160,7 +160,7 @@ class PostProcesser():
                     points_3d = self.mesh_manager.get_ldmk_3d(rlt.class_id)
                     rvec, tvec = self.pnpsolver.solvepnp(ldmks, points_3d, mask)
                     trans_vecs = (rvec, tvec)
-                    trans_vecs = self.bbox_area_assumption(trans_vecs, rlt.class_id, rlt.bbox)
+                    # trans_vecs = self.bbox_area_assumption(trans_vecs, rlt.class_id, rlt.bbox)
                     # trans_vecs = self.desktop_assumption(trans_vecs, points_3d)
                 image_posture.obj_list.append(ObjPosture(ldmks, 
                                                 rlt.bbox_n, 
