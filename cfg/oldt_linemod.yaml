@@ -6,8 +6,8 @@ yolo_override:
   mode: predict  # YOLO mode, i.e. train, val, predict, export, track, benchmark
 
   # Train settings -------------------------------------------------------------------------------------------------------
-  model: weights/linemod_dectect.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
-  data: ./datasets/morrison.yaml # path to data file, i.e. coco128.yaml
+  model: weights/linemod/000000_best.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
+  data: ./datasets/linemod.yaml # path to data file, i.e. coco128.yaml
   verbose: False  # whether to print verbose output
 
 ### landmark detect settings

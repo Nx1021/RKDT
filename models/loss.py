@@ -1,4 +1,4 @@
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 import numpy as np
 import torch
 import torch.nn as nn
@@ -221,7 +221,7 @@ class LandmarkLossRecorder():
 class LandmarkLoss(nn.Module):
     def __init__(self, cfg) -> None:
         super().__init__()
-        self.cfg = yaml_load(cfg)
+        self.cfg = load_yaml(cfg)
         self.landmark_num:int = self.cfg["landmark_num"]
     
     @property

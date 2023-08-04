@@ -8,7 +8,7 @@ from ultralytics import YOLO, yolo
 from ultralytics.yolo.v8.detect import DetectionPredictor
 from ultralytics.yolo.engine.results import Results
 from ultralytics.nn.tasks import feature_visualization, DetectionModel, BaseModel
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 
 import torch
 import torch.nn as nn
@@ -84,7 +84,7 @@ class OLDT(nn.Module):
         super().__init__(*args, **kwargs)
         self._backbone = YOLO(yolo_weight_path, "detect")
         self._backbone.to(f"cuda:{torch.cuda.current_device()}")
-        self.cfg = yaml_load(cfg_file)
+        self.cfg = load_yaml(cfg_file)
         self._backbone.overrides.update(self.cfg["yolo_override"])
         self._backbone.overrides.update({"device": self._backbone.device})
         self.yolo_detection:DetectionModel = self._backbone.model
@@ -113,27 +113,6 @@ class OLDT(nn.Module):
 
         self.freeze_detection()
 
-    @staticmethod
-    def decorator(obj, func):
-        def wrapper(*arg, **kw):
-            return func(obj, *arg, **kw)
-        return wrapper
-
-    @staticmethod
-    def _predict_once(obj, x, profile=False, visualize=False):
-        y, dt = [], []  # outputs
-        for m in obj.model:
-            if m.f != -1:  # if not from previous layer
-                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
-            if profile:
-                obj._profile_one_layer(m, x, dt)
-            x = m(x)  # run
-            y.append(x if m.i in obj.save else None)  # save output
-            if visualize:
-                feature_visualization(x, m.type, m.i, save_dir=visualize)
-        obj.feature_map = (y[15], y[18], y[21]) 
-        return x
-
     def parse_results(self, rlts:list[Results]):
         class_ids = [x.boxes.data[:, -1] for x in rlts]
 
@@ -144,15 +123,6 @@ class OLDT(nn.Module):
             nb = normalize_bbox(rlts[i].boxes.data[:, :4], epd_size)
             normed_bboxes.append(nb)
         return class_ids, normed_bboxes
-
-    # def parse_results(self, rlts:list[Results]):
-    #     class_ids = [x.boxes.data[:, -1] for x in rlts]
-
-    #     img_size = [x.orig_shape for x in rlts]
-    #     bboxes = []
-    #     for i, size in enumerate(img_size):
-    #         bboxes.append(rlts[i].boxes.data[:, :4])
-    #     return class_ids, bboxes
 
     def reshape_feature_maps(self, feature_maps):
         feature_maps_by_batch = []

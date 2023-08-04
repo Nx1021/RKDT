@@ -8,7 +8,7 @@ import platform
 import os
 import shutil
 import datetime
-from utils.yaml import yaml_dump, yaml_load
+from utils.yaml import dump_yaml, load_yaml
 import pandas as pd
 
 class BaseLogger():
@@ -40,7 +40,7 @@ class BaseLogger():
             if not save_name.endswith(".yaml"):
                 save_name = save_name + ".yaml"
             save_path = os.path.join(self.log_dir, save_name)
-            yaml_dump(save_path, setup_info)
+            dump_yaml(save_path, setup_info)
         else:
             # 抛出异常，表示输入的参数类型不支持
             raise ValueError

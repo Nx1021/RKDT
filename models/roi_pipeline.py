@@ -1,6 +1,6 @@
 from .results import LandmarkDetectionResult
 from .utils import denormalize_bbox, normalize_bbox, _KW
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 import torch
 import torch.nn as nn
 import numpy as np

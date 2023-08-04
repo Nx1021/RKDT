@@ -15,6 +15,8 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import Union, Callable
 
+from posture_6d.viewmeta import ViewMeta
+
 from .viewmeta import ViewMeta, serialize_image_container, deserialize_image_container
 from .posture import Posture
 from .mesh_manager import MeshMeta
@@ -279,6 +281,7 @@ class Elements(_DataCluster):
         self.write_func = write_func
         
         self._data_i_dir_map = {}
+        self._data_i_appendnames = {}
         self._index = 0
         self._max_idx = 0
 
@@ -294,20 +297,38 @@ class Elements(_DataCluster):
             count += len(glob.glob(os.path.join(root, f'*{self.suffix}')))
         return count
 
+    @property
+    def data_i_dir_map(self):
+        if self._updated or len(self._data_i_dir_map) == 0:
+            self._init_data_i_dir_map()
+        return self._data_i_dir_map
+    
+    @property
+    def data_i_appendnames(self):
+        if self._updated or len(self._data_i_appendnames) == 0:
+            self._init_data_i_dir_map()
+        return self._data_i_appendnames
+
     def _init_data_i_dir_map(self):
         print(f'init {self.directory} data_i_dir_map, this may take a while...')
         for root, dirs, files in os.walk(self.directory):
             paths = glob.glob(root + "/*" + self.suffix)
             for path in paths:
                 appdir, file = os.path.split(os.path.relpath(path, self.directory))
-                data_i = int(os.path.splitext(file)[0])
+                filename = os.path.splitext(file)[0]
+                try:
+                    mainname, appname = filename.split('_')
+                except ValueError:
+                    mainname = filename
+                    appname  = ""
+                data_i = int(mainname)
                 self._data_i_dir_map[data_i] = appdir
+                self._data_i_appendnames.setdefault(data_i, []).append(appname)
                 self._max_idx = max(self._max_idx, data_i)        
 
     @_DataCluster.cluster_closed_decorator(False)
     def __iter__(self):
-        if len(self._data_i_dir_map) != len(self):
-            self._init_data_i_dir_map()
+        self.data_i_dir_map
         self._index = 0
         return self
 
@@ -316,11 +337,25 @@ class Elements(_DataCluster):
             value = None
             while value is None:
                 idx = self._index
-                value = self.read(self._index, self._data_i_dir_map[self._index])
+                value = self.read(self._index, self.data_i_dir_map[self._index])
                 self._index += 1
             return idx, value
         else:
             raise StopIteration
+
+    @_DataCluster.cluster_closed_decorator(False)
+    def __getitem__(self, idx):
+        return self.read(data_i=idx)
+        
+    @_DataCluster.cluster_closed_decorator(True)
+    def __setitem__(self, idx, value):
+        if idx in self.data_i_dir_map:
+            appdir, appname = self.auto_path(idx, return_app=True)
+            self.write(idx, value, appdir=appdir, appname = appname)
+        else:
+            raise KeyError(f'idx {idx} not in {self.directory}, if you want to add new data, \
+                           please use method:write to specify the appdir and appname')
+
 
     @_DataCluster.cluster_closed_decorator(False)
     def read(self, data_i, appdir = "", appname = "", **kw):
@@ -374,24 +409,27 @@ class Elements(_DataCluster):
                                 appname, 
                                 self.suffix))
 
-    def auto_path(self, data_i):
+    def auto_path(self, data_i, return_app = False):
         '''
-        TODO: default to match the first file that matches the data_i
+        auto find the path of data_i. \n
+        * if data_i has multiple appendnames, raise IndexError
         '''
-        if self._updated or len(self._data_i_dir_map) == 0:
-            self._init_data_i_dir_map()
-        appdir = self._data_i_dir_map[data_i]
-        path = os.path.join(self.directory, appdir, self.format_base_name(data_i) + self.suffix)
-        if os.path.exists(path):
-            return path
+        appdir = self.data_i_dir_map[data_i]
+        appendnames = self.data_i_appendnames[data_i]
+        if len(appendnames) == 1:
+            appname = appendnames[0]
         else:
-            pattern = os.path.join(self.directory, appdir, self.format_base_name(data_i)) + '*' + self.suffix
-            paths = glob.glob(pattern) #TODO: default to match the first file that matches the data_i
-            if len(paths) == 0:
-                return None
+            raise IndexError(f'idx {data_i} has more than one appendname: {appendnames}, its path is ambiguous. \
+                             You must specify the appname by using method:read(data_i, appname=...)')
+        path = self.format_path(data_i, appdir=appdir, appname=appname)
+        if not return_app:
+            if os.path.exists(path):
+                return path
             else:
-                return paths[0]
-
+                return None
+        else:
+            return appdir, appname
+        
     @_DataCluster.cluster_closed_decorator(True)
     def clear(self, ignore_warning = False):
         '''
@@ -693,16 +731,12 @@ class DatasetFormat(ABC):
                 self.incomplete = False
         self.cache_elements = CacheElements(self, "cache")
 
+    @property
+    def updated(self):
+        return any([x._updated for x in self.jsons.values()]) or any([x._updated for x in self.elements.values()])
+
     def _init_clusters(self):
-        self.labels_elements     = IntArrayDictElement(self, "labels", (4,), array_fmt="%8.8f")
-        self.bbox_3ds_elements   = IntArrayDictElement(self, "bbox_3ds", (-1, 2), array_fmt="%8.8f") 
-        self.landmarks_elements  = IntArrayDictElement(self, "landmarks", (-1, 2), array_fmt="%8.8f")
-        self.extr_vecs_elements  = IntArrayDictElement(self, "trans_vecs", (2, 3), array_fmt="%8.8f")
-        # self.scene_camera_info          = BaseJsonDict(self, "scene_camera.json")
-        # self.scene_visib_fract_info     = BaseJsonDict(self, "scene_visib_fract.json")
-        # self.scene_bbox_3d_info         = BaseJsonDict(self, 'scene_bbox_3d.json')   
-        # self.scene_landmarks_info       = BaseJsonDict(self, 'scene_landmarks.json')   
-        # self.scene_trans_vector_info    = BaseJsonDict(self, 'scene_trans_vector.json')
+        pass
 
     def read_from_disk(self):
         '''
@@ -714,7 +748,6 @@ class DatasetFormat(ABC):
         for i in range(self.data_num):
             yield self.read_one(i)
 
-    @abstractmethod
     def read_one(self, data_i, appdir = "", appname = "")->ViewMeta:
         '''
         brief
@@ -731,20 +764,7 @@ class DatasetFormat(ABC):
         ViewMeta instance
         '''
         #
-        labels_dict:dict[int, np.ndarray] = self.labels_elements.read(data_i, appdir=appdir)
-        extr_vecs_dict:dict[int, np.ndarray] = self.extr_vecs_elements.read(data_i, appdir=appdir)
-        bbox_3d_dict:dict[int, np.ndarray] = self.bbox_3ds_elements.read(data_i, appdir=appdir)
-        landmarks_dict:dict[int, np.ndarray] = self.landmarks_elements.read(data_i, appdir=appdir)
-        return ViewMeta(color=None,
-                        depth=None,
-                        masks=None,
-                        extr_vecs = extr_vecs_dict,
-                        intr=None,
-                        depth_scale=None,
-                        bbox_3d = bbox_3d_dict, 
-                        landmarks = landmarks_dict,
-                        visib_fract=None,
-                        labels=labels_dict)
+        pass
 
     def start_to_write(self, cover = False):
         '''
@@ -803,24 +823,9 @@ class DatasetFormat(ABC):
         self._updata_data_num()        
 
     def write_element(self, viewmeta:ViewMeta, data_i:int, appdir = "", appname = ""):
-        self.labels_elements.write(data_i, viewmeta.labels, appdir=appdir, appname=appname)
-        self.bbox_3ds_elements.write(data_i, viewmeta.bbox_3d, appdir=appdir, appname=appname)
-        self.landmarks_elements.write(data_i, viewmeta.landmarks, appdir=appdir, appname=appname)
-        self.extr_vecs_elements.write(data_i, viewmeta.extr_vecs, appdir=appdir, appname=appname)
+        pass
 
     def _parse_viewmeta_for_jsons(self, viewmeta:ViewMeta, data_i):
-        # parse = {
-        #     self.scene_camera_info.directory: {data_i: {LinemodFormat.KW_CAM_K: viewmeta.intr.reshape(-1).tolist(),
-        #                                                       LinemodFormat.KW_CAM_DS: float(viewmeta.depth_scale),
-        #                                                       LinemodFormat.KW_CAM_VL: 1}},
-        #     self.scene_visib_fract_info.directory: {data_i: viewmeta.visib_fract},
-        #     #
-        #     self.scene_bbox_3d_info.directory: {data_i: viewmeta.bbox_3d},
-        #     #
-        #     self.scene_landmarks_info.directory: {data_i: viewmeta.landmarks},
-        #     #
-        #     self.scene_trans_vector_info.directory: {data_i: viewmeta.extr_vecs},
-        # }
         parse = {}
         return parse
 
@@ -891,7 +896,37 @@ class DatasetFormat(ABC):
             paths[elem.sub_dir] = elem.auto_path(data_i)
         return paths
 
-class LinemodFormat(DatasetFormat):
+class PostureDatasetFormat(DatasetFormat):
+
+    def _init_clusters(self):
+        self.labels_elements     = IntArrayDictElement(self, "labels", (4,), array_fmt="%8.8f")
+        self.bbox_3ds_elements   = IntArrayDictElement(self, "bbox_3ds", (-1, 2), array_fmt="%8.8f") 
+        self.landmarks_elements  = IntArrayDictElement(self, "landmarks", (-1, 2), array_fmt="%8.8f")
+        self.extr_vecs_elements  = IntArrayDictElement(self, "trans_vecs", (2, 3), array_fmt="%8.8f")
+
+    def read_one(self, data_i, appdir="", appname="") -> ViewMeta:
+        labels_dict:dict[int, np.ndarray] = self.labels_elements.read(data_i, appdir=appdir)
+        extr_vecs_dict:dict[int, np.ndarray] = self.extr_vecs_elements.read(data_i, appdir=appdir)
+        bbox_3d_dict:dict[int, np.ndarray] = self.bbox_3ds_elements.read(data_i, appdir=appdir)
+        landmarks_dict:dict[int, np.ndarray] = self.landmarks_elements.read(data_i, appdir=appdir)
+        return ViewMeta(color=None,
+                        depth=None,
+                        masks=None,
+                        extr_vecs = extr_vecs_dict,
+                        intr=None,
+                        depth_scale=None,
+                        bbox_3d = bbox_3d_dict, 
+                        landmarks = landmarks_dict,
+                        visib_fract=None,
+                        labels=labels_dict)
+
+    def write_element(self, viewmeta: ViewMeta, data_i: int, appdir="", appname=""):
+        self.labels_elements.write(data_i, viewmeta.labels, appdir=appdir, appname=appname)
+        self.bbox_3ds_elements.write(data_i, viewmeta.bbox_3d, appdir=appdir, appname=appname)
+        self.landmarks_elements.write(data_i, viewmeta.landmarks, appdir=appdir, appname=appname)
+        self.extr_vecs_elements.write(data_i, viewmeta.extr_vecs, appdir=appdir, appname=appname)
+
+class LinemodFormat(PostureDatasetFormat):
     KW_CAM_K = "cam_K"
     KW_CAM_DS = "depth_scale"
     KW_CAM_VL = "view_level"
@@ -1033,7 +1068,7 @@ class LinemodFormat(DatasetFormat):
                         landmarks,
                         visib_fract_dict)
 
-class VocFormat(DatasetFormat):
+class VocFormat(PostureDatasetFormat):
     KW_TRAIN = "train"
     KW_VAL = "val"
 
@@ -1044,8 +1079,8 @@ class VocFormat(DatasetFormat):
 
         def __exit__(self, exc_type, exc_value: Exception, traceback):
             exit_return = super().__exit__(exc_type, exc_value, traceback)
-            np.savetxt(self.format_obj.train_txt,   self.format_obj.train_idx_array,    fmt = "%6d")
-            np.savetxt(self.format_obj.val_txt,     self.format_obj.val_idx_array,      fmt = "%6d")    
+            np.savetxt(self.format_obj.train_txt,   self.format_obj.detection_train_idx_array,    fmt = "%6d")
+            np.savetxt(self.format_obj.val_txt,     self.format_obj.detection_val_idx_array,      fmt = "%6d")    
             return exit_return    
 
     class cxcywhLabelElement(IntArrayDictElement):
@@ -1123,8 +1158,8 @@ class VocFormat(DatasetFormat):
         if data_num == 0:
             # 存在则读取，不存在则创建
             if os.path.exists(self.train_txt):
-                self.train_idx_array = np.loadtxt(self.train_txt).astype(np.int32)
-                self.val_idx_array   = np.loadtxt(self.val_txt).astype(np.int32)
+                self.detection_train_idx_array = np.loadtxt(self.train_txt).astype(np.int32)
+                self.detection_val_idx_array   = np.loadtxt(self.val_txt).astype(np.int32)
             else:
                 create = True
         else:
@@ -1133,26 +1168,34 @@ class VocFormat(DatasetFormat):
         if create:
             data_i_list = list(range(data_num))
             np.random.shuffle(data_i_list) 
-            self.train_idx_array = np.array(data_i_list[: int(data_num*split_rate)]).astype(np.int32).reshape(-1)
-            self.val_idx_array   = np.array(data_i_list[int(data_num*split_rate): ]).astype(np.int32).reshape(-1)
-            np.savetxt(self.train_txt, self.train_idx_array, fmt = "%6d")
-            np.savetxt(self.val_txt, self.val_idx_array, fmt = "%6d")
+            self.detection_train_idx_array = np.array(data_i_list[: int(data_num*split_rate)]).astype(np.int32).reshape(-1)
+            self.detection_val_idx_array   = np.array(data_i_list[int(data_num*split_rate): ]).astype(np.int32).reshape(-1)
+            np.savetxt(self.train_txt, self.detection_train_idx_array, fmt = "%6d")
+            np.savetxt(self.val_txt, self.detection_val_idx_array, fmt = "%6d")
+
+    @property
+    def train_idx_array(self):
+        return self.detection_train_idx_array
+    
+    @property
+    def val_idx_array(self):
+        return self.detection_val_idx_array
 
     def decide_set(self, data_i, create_if_not_exist = False):
-        if data_i in self.train_idx_array:
+        if data_i in self.detection_train_idx_array:
             sub_set = VocFormat.KW_TRAIN
-        elif data_i in self.val_idx_array:
+        elif data_i in self.detection_val_idx_array:
             sub_set = VocFormat.KW_VAL
         else:
             if create_if_not_exist:
-                train_num = len(self.train_idx_array)
-                val_num = len(self.val_idx_array)
+                train_num = len(self.detection_train_idx_array)
+                val_num = len(self.detection_val_idx_array)
                 if train_num/self.split_rate > val_num/(1 - self.split_rate):
                     sub_set = VocFormat.KW_VAL
-                    self.val_idx_array = np.append(self.val_idx_array, data_i)
+                    self.detection_val_idx_array = np.append(self.detection_val_idx_array, data_i)
                 else:
                     sub_set = VocFormat.KW_TRAIN
-                    self.train_idx_array = np.append(self.train_idx_array, data_i)
+                    self.detection_train_idx_array = np.append(self.detection_train_idx_array, data_i)
             else:
                 raise ValueError("can't find datas of index: {}".format(data_i))
         return sub_set

@@ -4,12 +4,12 @@ import cv2
 import os
 TEST_RPnP = False
 
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 from . import SCRIPT_DIR
 
-def create_model_manager(cfg) -> MeshManager:
-    cfg_paras = yaml_load(cfg)
-    model_manager = MeshManager(cfg_paras["models_dir"],
+def create_model_manager(cfg_file) -> MeshManager:
+    cfg_paras = load_yaml(cfg_file)
+    model_manager = MeshManager(os.path.join(SCRIPT_DIR, cfg_paras["models_dir"]),
                                  cfg_paras["pcd_models"])
     return model_manager
 
@@ -35,11 +35,11 @@ class PnPSolver():
         models_info_path: 模型信息路径
         keypoint_info_path: 关键点位置信息路径
         '''
-        cfg = yaml_load(cfg_file)
+        cfg = load_yaml(cfg_file)
         self.mesh_manager = create_model_manager(cfg_file)
         if matrix_camera is None:
             # 读取内参(所有内参都一样)
-            self.matrix_camera = np.loadtxt(os.path.join(cfg["models_dir"], cfg["default_K"]))
+            self.matrix_camera = np.loadtxt(os.path.join(SCRIPT_DIR, cfg["models_dir"], cfg["default_K"]))
             # 由于图像已经缩放，内参也会变化
             self.matrix_camera = self.transform_K(self.matrix_camera, image_resize)
         self.distortion_coeffs = np.zeros((5,1))

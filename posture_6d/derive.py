@@ -44,8 +44,8 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
         CAM_WID, CAM_HGT    = intrinsics.CAM_WID, intrinsics.CAM_HGT # 重投影到的深度图尺寸
         EPS = intrinsics.EPS
         MAX_DEPTH = intrinsics.MAX_DEPTH
-        pc = meta.pcd #[N, 3]
-        triangles = meta.tris #[T, 3]
+        pc = meta.points_array #[N, 3]
+        triangles = meta.tris_array #[T, 3]
         pc = posture * pc #变换
         z = pc[:, 2]
         # 点云反向映射到像素坐标位置
@@ -132,7 +132,7 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
     for mask, orig_proj, meta in zip(masks, orig_proj_list, mesh_metas):
         orig_proj = orig_proj.astype(np.int32)
         orig_proj = intrinsics.filter_in_view(orig_proj)
-        vf = np.sum(mask[orig_proj[:,1], orig_proj[:,0]].astype(np.bool8)) / meta.pcd.shape[0]
+        vf = np.sum(mask[orig_proj[:,1], orig_proj[:,0]].astype(np.bool8)) / meta.points_array.shape[0]
         visib_fract.append(vf)
    
     return masks, visib_fract

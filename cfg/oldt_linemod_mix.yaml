@@ -1,0 +1,52 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# Default training settings and hyperparameters for medium-augmentation COCO training
+### override
+yolo_override:
+  task: detect  # YOLO task, i.e. detect, segment, classify, pose
+  mode: predict  # YOLO mode, i.e. train, val, predict, export, track, benchmark
+
+  # Train settings -------------------------------------------------------------------------------------------------------
+  model: weights/linemod_mix/000000_best.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
+  data: ./datasets/linemod_mix.yaml # path to data file, i.e. coco128.yaml
+  verbose: false  # whether to print verbose output
+
+### landmark detect settings
+max_token_num: 784
+pool_size: [24, 24]
+use_variable_tokennum: false
+normalize_before: true
+landmark_num: 24
+decoder_num_queries: 96
+calc_intermediate: false
+
+### loss
+class_loss_w: 1.0
+dist_loss_w: 5.0
+PN_loss_w: 1.0
+rotation_loss_w: 0.0
+
+score_alpha: 0.15
+score_beta: 0.4
+score_eps: 0.0001
+
+### post progress
+models_dir: datasets/linemod/models
+pcd_models:
+  0: obj_000001.ply
+  1: obj_000002.ply
+  2: obj_000003.ply
+  3: obj_000004.ply
+  4: obj_000005.ply
+  5: obj_000006.ply
+  6: obj_000007.ply
+  7: obj_000008.ply
+  8: obj_000009.ply
+  9: obj_000010.ply
+  10: obj_000011.ply
+  11: obj_000012.ply
+  12: obj_000013.ply
+  13: obj_000014.ply
+  14: obj_000015.ply
+models_info: models_info.json
+default_K: default_K.txt
+out_bbox_threshold: 1.0

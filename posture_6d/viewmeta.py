@@ -75,59 +75,71 @@ def calc_bbox2d_from_mask_dict(mask_dict:dict[int, np.ndarray]):
             bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
     return bbox_2d
 
+def calc_bbox2d_from_mask_contour(mask_dict:dict[int, np.ndarray]):
+    bbox_2d = {}
+    for id_, mask in mask_dict.items():
+        where = mask
+        if where[0].size == 0:
+            bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
+        else:
+            lt = np.min(where, -1)
+            rb = np.max(where, -1)
+            bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
+    return bbox_2d
+
+class AugmentPipeline():
+    def get_ap_of_meta(self, class_)-> Union["AugmentPipeline", None]:
+        for value in self.meta.agmts.values():
+            if isinstance(value, class_):
+                return value
+        return None
+
+    def __init__(self, meta:"ViewMeta") -> None:
+        self.meta = meta
+        self.new_obj = None
+
+    @property
+    def obj(self):
+        return None
+
+    def __inner_func(self, func, *args):
+        if self.obj is None:
+            return None
+        else:
+            self.new_obj = func(*args)
+            return self.new_obj
+
+    def _crop(self, crop_rect: ndarray):
+        return self.obj
+    
+    def crop(self, crop_rect: ndarray)-> Union[cv2.Mat, None]:
+        '''
+        crop_rect: [N, [y1, x1, y2, x2]] int
+        '''
+        return self.__inner_func(self._crop, crop_rect)
+
+    def _rotate(self, M: ndarray):
+        return self.obj
+
+    def rotate(self, M: ndarray):
+        return self.__inner_func(self._rotate, M)
+
+    def _change_brightness(self, delta_value, direction):
+        return self.obj
+
+    def change_brightness(self, delta_value:float, direction:tuple[float]=(0, 0)):
+        return self.__inner_func(self._change_brightness, delta_value, direction)
+
+    def _change_saturation(self, delta_value):
+        return self.obj
+
+    def change_saturation(self, delta_value:float):
+        return self.__inner_func(self._change_saturation, delta_value)
+
 class ViewMeta():
     '''
     一个视角下的所有数据的元
     '''
-    class AugmentPipeline():
-        def get_ap_of_meta(self, class_)-> Union["ViewMeta.AugmentPipeline", None]:
-            for value in self.meta.agmts.values():
-                if isinstance(value, class_):
-                    return value
-            return None
-
-        def __init__(self, meta:"ViewMeta") -> None:
-            self.meta = meta
-            self.new_obj = None
-
-        @property
-        def obj(self):
-            return None
-
-        def __inner_func(self, func, *args):
-            if self.obj is None:
-                return None
-            else:
-                self.new_obj = func(*args)
-                return self.new_obj
-
-        def _crop(self, crop_rect: ndarray):
-            return self.obj
-        
-        def crop(self, crop_rect: ndarray)-> Union[cv2.Mat, None]:
-            '''
-            crop_rect: [N, [y1, x1, y2, x2]] int
-            '''
-            return self.__inner_func(self._crop, crop_rect)
-
-        def _rotate(self, M: ndarray):
-            return self.obj
-
-        def rotate(self, M: ndarray):
-            return self.__inner_func(self._rotate, M)
-
-        def _change_brightness(self, delta_value, direction):
-            return self.obj
-
-        def change_brightness(self, delta_value:float, direction:tuple[float]=(0, 0)):
-            return self.__inner_func(self._change_brightness, delta_value, direction)
-
-        def _change_saturation(self, delta_value):
-            return self.obj
-
-        def change_saturation(self, delta_value:float):
-            return self.__inner_func(self._change_saturation, delta_value)
-
     class ColorAP(AugmentPipeline):
         '''
         Color image augment pipline
@@ -324,11 +336,11 @@ class ViewMeta():
 
         def _crop(self, crop_rect: ndarray):
             new_masks = self.new_masks_callback()
-            return calc_bbox2d_from_mask_dict(new_masks)
+            return self.meta.calc_bbox2d_from_mask(new_masks)
 
         def _rotate(self, M:cv2.Mat):
             new_masks = self.new_masks_callback()
-            return calc_bbox2d_from_mask_dict(new_masks)
+            return self.meta.calc_bbox2d_from_mask(new_masks)
 
     IGNORE_WARNING = False
 
@@ -405,7 +417,7 @@ class ViewMeta():
             ViewMeta.PARA_NAMES[8]: ViewMeta.VisibFractAP,
             ViewMeta.PARA_NAMES[9]: ViewMeta.LabelsAP    
         }
-        self.agmts:dict[str, ViewMeta.AugmentPipeline] = {}
+        self.agmts:dict[str, AugmentPipeline] = {}
         self.elements = {}
         self.ids = []
         self.color:np.ndarray               = self.set_element(ViewMeta.PARA_NAMES[0], color)
@@ -437,6 +449,19 @@ class ViewMeta():
             warnings.warn("WARNING: Setting properties directly is dangerous and may throw exceptions! make sure you know what you are doing", Warning)
         super().__setattr__(__name, __value)
 
+    @staticmethod
+    def calc_bbox2d_from_mask(mask_dict:dict[int, np.ndarray]):
+        bbox_2d = {}
+        for id_, mask in mask_dict.items():
+            where = np.where(mask)
+            if where[0].size == 0:
+                bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
+            else:
+                lt = np.min(where, -1)
+                rb = np.max(where, -1)
+                bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
+        return bbox_2d
+
     @property
     def bbox_2d(self) -> dict[int, np.ndarray]:
         '''
@@ -446,7 +471,7 @@ class ViewMeta():
             return self.labels
         elif self.masks is not None:
             ViewMeta.IGNORE_WARNING = True
-            self.labels = calc_bbox2d_from_mask_dict(self.masks)
+            self.labels = self.calc_bbox2d_from_mask(self.masks)
             ViewMeta.IGNORE_WARNING = False
             return self.labels
         return None
@@ -699,6 +724,69 @@ class ViewMeta():
         if self.depth is not None:
             plt.imshow(self.depth)
             plt.title("depth scale:{}".format(self.depth_scale))
+
+class ViewMetaMaskContour(ViewMeta):
+    class MasksAP(AugmentPipeline):
+        def __init__(self, meta: "ViewMeta") -> None:
+            super().__init__(meta)
+
+        @property
+        def obj(self):
+            return self.meta.masks
+
+        # TODO: _crop
+
+        def _rotate(self, M:ndarray):
+            new_masks = {}
+            for _id, contour in self.obj.items():
+                new_masks.update({_id: rot_xy_list_2dpoints(M, contour)})
+            return new_masks      
+
+    class VisibFractAP(AugmentPipeline):
+        def __init__(self, meta: "ViewMeta") -> None:
+            super().__init__(meta)
+            self.old_masks_callback = lambda :self.get_ap_of_meta(self.meta.MasksAP).obj
+            self.new_masks_callback = lambda :self.get_ap_of_meta(self.meta.MasksAP).new_obj
+
+        @property
+        def obj(self):
+            return self.meta.visib_fract
+
+        # TODO: _crop, _rotate
+
+    class LabelsAP(AugmentPipeline):
+        def __init__(self, meta: "ViewMeta") -> None:
+            super().__init__(meta)
+            self.new_masks_callback = lambda :self.get_ap_of_meta(self.meta.MasksAP).new_obj
+
+        @property
+        def obj(self):
+            return self.meta.labels
+
+        def _crop(self, crop_rect: ndarray):
+            new_masks = self.new_masks_callback()
+            return self.meta.calc_bbox2d_from_mask(new_masks)
+
+        def _rotate(self, M:cv2.Mat):
+            new_masks = self.new_masks_callback()
+            return self.meta.calc_bbox2d_from_mask(new_masks)
+
+    def __init__(self, color: ndarray, depth: ndarray, masks: dict[int, ndarray], extr_vecs: dict[int, ndarray], intr: ndarray, depth_scale: float, bbox_3d: dict[int, ndarray], landmarks: dict[int, ndarray], visib_fract: dict[int, float], labels: dict[int, ndarray] = None) -> None:
+        super().__init__(color, depth, masks, extr_vecs, intr, depth_scale, bbox_3d, landmarks, visib_fract, labels)
+
+    @staticmethod
+    def calc_bbox2d_from_mask(mask_dict: dict[int, ndarray]):
+        bbox_2d = {}
+        for id_, mask in mask_dict.items():
+            where = mask
+            if where[0].size == 0:
+                bbox_2d[id_] = np.array([0, 0, 0, 0]).astype(np.int32)
+            else:
+                lt = np.min(where, -1)
+                rb = np.max(where, -1)
+                bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
+        return bbox_2d
+
 
 def is_image(array):
     if not isinstance(array, np.ndarray):

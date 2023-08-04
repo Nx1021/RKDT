@@ -21,7 +21,7 @@ from .BasePredictor import BasePredictor
 from .OLDTDataset import OLDTDataset, collate_fn
 from .BaseLauncher import Launcher, BaseLogger
 
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 
 
 
@@ -165,7 +165,7 @@ class IntermediateManager:
         return self._load_object(class_name, index, load_pkl_func)
 
 class OLDTPredictor(BasePredictor, Launcher):
-    def __init__(self, model, cfg, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = ""):
+    def __init__(self, model, cfg_file, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = ""):
         Launcher.__init__(self, model, batch_size, log_remark)
         BasePredictor.__init__(self, model, batch_size)
 
@@ -174,8 +174,8 @@ class OLDTPredictor(BasePredictor, Launcher):
         self.model:OLDT = self.model.to(device)
         self.model.set_mode("predict")
 
-        self.pnpsolver = PnPSolver(cfg)
-        out_bbox_threshold = yaml_load(cfg)["out_bbox_threshold"]
+        self.pnpsolver = PnPSolver(cfg_file)
+        out_bbox_threshold = load_yaml(cfg_file)["out_bbox_threshold"]
         self.postprocesser = PostProcesser(self.pnpsolver, out_bbox_threshold)
         self.error_calculator = ErrorCalculator(self.pnpsolver, model.nc)
 
@@ -198,7 +198,7 @@ class OLDTPredictor(BasePredictor, Launcher):
         self.postprocess_mode = "v" # or 'v'
 
         self.logger = BaseLogger(self.log_dir)
-        self.logger.log(cfg)
+        self.logger.log(cfg_file)
 
     def _preprocess(self, inputs) -> list[cv2.Mat]:
         '''
@@ -280,7 +280,7 @@ class OLDTPredictor(BasePredictor, Launcher):
 
                 # Postprocessing
                 if self.if_postprocess:
-                    print([x.obj_list[0].tvec for x in batch if isinstance(x, ImagePosture)])
+                    # print([x.obj_list[0].tvec for x in batch if isinstance(x, ImagePosture)])
                     processed:list[ImagePosture] = self.postprocess((inputs, predictions))
                     if self.save_imtermediate:
                         for obj in processed:

@@ -205,3 +205,4 @@ class JsonIO():
         string = '{' + string[:-1] + '\n}'
         with open(path, 'w') as fw:
             fw.write(string)
+

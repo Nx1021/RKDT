@@ -17,7 +17,7 @@ from torch import nn, Tensor
 import numpy as np
 import matplotlib.pyplot as plt
 
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 
 class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,

@@ -1,10 +1,10 @@
-import yaml
+import ruamel.yaml
 import os
 from . import SCRIPT_DIR
 
 loaded_cfg = {}
 
-def yaml_load(path='data.yaml', assingle = True)->dict:
+def load_yaml(path='data.yaml', assingle=True) -> dict:
     """
     Load YAML data from a file.
 
@@ -17,7 +17,9 @@ def yaml_load(path='data.yaml', assingle = True)->dict:
     """
     def load():
         with open(path, 'r') as file:
-            return yaml.safe_load(file)
+            yaml = ruamel.yaml.YAML()
+            return yaml.load(file)
+
     if assingle:
         if path in loaded_cfg:
             yaml_data = loaded_cfg[path]
@@ -26,10 +28,12 @@ def yaml_load(path='data.yaml', assingle = True)->dict:
             loaded_cfg[path] = yaml_data
     else:
         yaml_data = load()
-    if "models_dir" in yaml_data:
-        yaml_data["models_dir"] = os.path.join(SCRIPT_DIR, yaml_data["models_dir"])
+
+    # if "models_dir" in yaml_data:
+    #     yaml_data["models_dir"] = os.path.join(SCRIPT_DIR, yaml_data["models_dir"])
     return yaml_data
 
-def yaml_dump(file_path, data):
+def dump_yaml(file_path, data):
     with open(file_path, 'w') as file:
+        yaml = ruamel.yaml.YAML()
         yaml.dump(data, file)

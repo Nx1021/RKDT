@@ -6,4 +6,7 @@ logs/
 weights/
 *.pyc
 *.pyo
+*.pt
+*.npy
+*.npz
 __pycache__/

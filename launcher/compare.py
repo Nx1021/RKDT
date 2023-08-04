@@ -2,7 +2,7 @@ from . import LOGS_DIR, _get_sub_log_dir
 from .Trainer import Trainer
 
 import os
-from utils.yaml import yaml_dump, yaml_load
+from utils.yaml import dump_yaml, load_yaml
 import pandas as pd
 
 def compare_train_log(sub_dirs):
@@ -18,7 +18,7 @@ def compare_yaml_files(root_dir, sub_dirs, yaml_name):
     for subdirectory in sub_dirs:
         setup_path = os.path.join(root_dir, subdirectory, yaml_name)
 
-        yaml_data = yaml_load(setup_path)
+        yaml_data = load_yaml(setup_path)
 
         data[subdirectory] = yaml_data
         all_keys.update(yaml_data.keys())

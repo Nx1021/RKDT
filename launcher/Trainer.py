@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, ConstantLR
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
@@ -60,6 +60,8 @@ class TrainFlow():
         if lr_name == "cosine":
             return CosineAnnealingLR(self.trainer.optimizer, 
                                                         totol_step)
+        if lr_name == "constant":
+            return ConstantLR(self.trainer.optimizer, 1.0, 1)
     
     def enter_new_stage(self):
         stage_info = self.flow[self.stage_segment[self.cur_stage]]
