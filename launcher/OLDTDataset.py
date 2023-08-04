@@ -34,10 +34,10 @@ class OLDTDataset(Dataset):
         self.vocformat = VocFormat(data_folder)
         self.vocformat.depth_elements.close()
         self.vocformat.bbox_3ds_elements.close()
-        self.vocformat.scene_bbox_3d_info.close()
-        self.vocformat.scene_landmarks_info.close()
-        self.vocformat.scene_trans_vector_info.close()
-        self.vocformat.scene_visib_fract_info.close()
+        self.vocformat.visib_fract_elements.close()
+        self.vocformat.depth_scale_elements.close()
+        # self.vocformat.masks_elements.close()
+        # self.vocformat.intr_elements.close()
 
         self.set = set_
         self.image_folder       = os.path.join(data_folder, 'images', set_)
@@ -52,7 +52,7 @@ class OLDTDataset(Dataset):
             raise ValueError("parameter set must be {} or {}".format(self.vocformat.KW_TRAIN, self.vocformat.KW_VAL))
         
         # self.data_files = len(self.idx_array)
-        self.data_files = os.listdir(self.image_folder)
+        self.data_files = self.vocformat.data_num
 
         self.set_augment_para(1,0)
 
@@ -131,7 +131,7 @@ class OLDTDataset(Dataset):
 
         image = viewmeta.color
         
-        class_id = list(viewmeta.masks.keys()) 
+        class_id = list(viewmeta.labels.keys()) 
         landmarks = [viewmeta.landmarks[x] for x in class_id]
         bbox_2d = viewmeta.bbox_2d
         bbox = np.array([bbox_2d[x] for x in class_id])

@@ -34,7 +34,7 @@ if __name__ == '__main__':
     train_dataset = OLDTDataset(data_folder, "train")
     val_dataset = OLDTDataset(data_folder, "val")
     load_brach_i = 0
-    load_from = f"{WEIGHTS_DIR}/20230730131531branch00.pt"
+    load_from = f"{WEIGHTS_DIR}/20230731205759branch00.pt"
     # cfg = find_record(load_from, f"{CFG_DIR}/config.yaml")
     cfg = f"{CFG_DIR}/config_linemod_000000.yaml"
     print("config file: ", cfg)
