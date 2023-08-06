@@ -96,14 +96,14 @@ if __name__ == "__main__":
     load_from = f"{WEIGHTS_DIR}/20230802012000branch00.pt"
     # load_from = f"{WEIGHTS_DIR}/self.base_idx"
     model.load_branch_weights(load_brach_i, load_from)
-    start_epoch = 40
+    start_epoch = 1
 
 
     if sys == "Windows":
         batch_size = 2
         # model = torch.nn.DataParallel(model)
     elif sys == "Linux":
-        batch_size = 16 # * torch.cuda.device_count()
+        batch_size = 32 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
     else:
         raise SystemError

@@ -1,10 +1,10 @@
 import os
 import numpy as np
-
+from aruco_decter
 
 class PipeLine():
-    def __init__(self, direct) -> None:
-        pass
+    def __init__(self, directory) -> None:
+        self.directory = directory
 
     def capture_image(self):
         pass

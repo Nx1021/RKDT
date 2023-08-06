@@ -19,7 +19,7 @@ from models.results import ImagePosture
 from .OLDTDataset import transpose_data
 from .OLDTDataset import collate_fn
 from .BaseLauncher import BaseLogger, Launcher
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 import cv2
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -32,7 +32,7 @@ import time
 from typing import Union
 sys_name = platform.system()
 if sys_name == "Windows":
-    TESTFLOW = False
+    TESTFLOW = True
 else:
     TESTFLOW = False
 
@@ -40,7 +40,7 @@ class TrainFlow():
     def __init__(self, trainer:"Trainer", flowfile) -> None:
         self.trainer = trainer
         self.epoch = 0
-        self.flow:dict = yaml_load(flowfile, False)
+        self.flow:dict = load_yaml(flowfile, False)
         self.stage_segment = list(self.flow.keys())
         if self.stage_segment[0] != 0:
             raise ValueError("the first stage must start at epoch 0!")
@@ -51,9 +51,10 @@ class TrainFlow():
         return sum([self.epoch >= x for x in self.stage_segment]) - 1
 
     def get_lr_func(self, lr_name, totol_step, initial_lr):
-        totol_step = totol_step * int(np.round(len(self.trainer.train_dataset) / self.trainer.batch_size))
+        # totol_step = totol_step * int(np.round(len(self.trainer.train_dataset) / self.trainer.batch_size))
         for param_group in self.trainer.optimizer.param_groups:
             param_group['initial_lr'] = initial_lr
+            param_group['lr'] = initial_lr
         if lr_name == "warmup":
             return LambdaLR(self.trainer.optimizer, 
                             lr_lambda=lambda step: min(step / totol_step, 1.0))
@@ -82,8 +83,8 @@ class TrainFlow():
             raise StopIteration      
         if self.epoch in self.stage_segment:
             self.enter_new_stage()    
-        # if self.scheduler is not None:
-        #     self.scheduler.step()             
+        if self.scheduler is not None:
+            self.scheduler.step()             
         self.epoch += 1 
         return self.epoch
 
@@ -205,7 +206,7 @@ class Trainer(Launcher):
             
             if backward:
                 self.optimizer.step()
-                self.flow.scheduler.step()
+                # self.flow.scheduler.step()
 
             # 更新进度条信息
             progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss()), "Lr": "{:>2.7f}".format(self.optimizer.param_groups[0]["lr"])})
