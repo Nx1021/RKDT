@@ -14,8 +14,8 @@ from torch.optim.lr_scheduler import LambdaLR
 
 import numpy as np
 from models.OLDT import OLDT
-from models.loss import LandmarkLossRecorder
-from models.results import ImagePosture
+from models.loss import LandmarkLossRecorder, LandmarkLoss
+from models.results import ImagePosture, GtResult, PredResult, MatchedRoi
 from .OLDTDataset import transpose_data
 from .OLDTDataset import collate_fn
 from .BaseLauncher import BaseLogger, Launcher
@@ -136,7 +136,7 @@ class Trainer(Launcher):
         self.model = self.model.to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters())  # 初始化优化器
-        self.criterion = criterion
+        self.criterion:LandmarkLoss = criterion
 
         self.best_val_loss = float('inf')  # 初始化最佳验证损失为正无穷大
 
@@ -163,11 +163,22 @@ class Trainer(Launcher):
             return self.model
 
     def pre_process(self, batch:list[ImagePosture]):
-        images, keypoints, labels, bboxes_n, trans_vecs = transpose_data([x.split() for x in batch])
-        keypoints = self._to_device(keypoints)
-        labels = self._to_device(labels)
+        images, landmarks, class_ids, bboxes_n, trans_vecs = transpose_data([x.split() for x in batch])
+        class_ids = self._to_device(class_ids)        
+        landmarks = self._to_device(landmarks)
         bboxes_n = self._to_device(bboxes_n)
-        return images, keypoints, labels, bboxes_n
+        trans_vecs = self._to_device(trans_vecs)
+        intr_Ms = [torch.Tensor(np.tile(np.expand_dims(x.intr_M, 0), (len(y),1,1))).to(class_ids[0].device) for x, y in zip(batch, landmarks)]
+        gt_result = GtResult(
+            gt_class_ids= class_ids,
+            gt_landmarks= landmarks,
+            gt_bboxes_n= bboxes_n,
+            gt_trans_vecs= trans_vecs,
+            intr_M= intr_Ms)
+        gt_result.gt_batch_idx = gt_result.boardcast(
+            np.expand_dims(np.arange(len(class_ids)), -1), dtype=torch.int32)
+        gt_result[0].squeeze()
+        return images, gt_result
 
 
     def _to_device(self, tensor_list:list[torch.Tensor]):
@@ -190,18 +201,19 @@ class Trainer(Launcher):
         progress = tqdm(dataloader, desc=desc, leave=True)
         for image_posture in progress:
             if not self.skip:
-                images, gt_landmarks, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
-                if self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
+                images, gt_result = self.pre_process(image_posture)
+                if self.check_has_target(gt_result.gt_class_ids, self.inner_model.landmark_branch_classes):
                     # 前向传播
-                    detection_results = self.model(images)
-                    loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results, ldmk_loss_mngr)
+                    detection_results:dict[int, PredResult] = self.model(images)
+                    self.criterion.calc_cam_dist_fix = self.inner_model.branch_mode == self.inner_model.BRANCH_MODE_CDF
+                    loss:torch.Tensor = self.criterion(gt_result, detection_results, ldmk_loss_mngr)
                     if torch.isnan(loss).item():
                         print("loss nan, break!")
                         self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp)
                         sys.exit()
                     # 反向传播和优化
                     self.optimizer.zero_grad()
-                    if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor):
+                    if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor) and loss.grad_fn is not None:
                         loss.backward()
             
             if backward:
@@ -262,29 +274,29 @@ class Trainer(Launcher):
         if self.distribute:
             dist.destroy_process_group()
 
-    def _compare(self):
-        print("start to compare... time:{}".format(self.start_timestamp))
-        self.cur_epoch = 0
-        train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
-        val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+    # def _compare(self):
+    #     print("start to compare... time:{}".format(self.start_timestamp))
+    #     self.cur_epoch = 0
+    #     train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+    #     val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
 
-        for module in self.freeze_modules:
-            module.train(False)
-        for image_posture in train_dataloader:
-            break
-        # image_posture = next(train_dataloader)
-        images, gt_landmarks, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
-        self.inner_model.train()
-        if self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
+    #     for module in self.freeze_modules:
+    #         module.train(False)
+    #     for image_posture in train_dataloader:
+    #         break
+    #     # image_posture = next(train_dataloader)
+    #     images, gt_landmarks, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
+    #     self.inner_model.train()
+    #     if self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
             
-            self.inner_model.set_mode("train")    
-            # 前向传播
-            detection_results = self.model(images)
-            train_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
+    #         self.inner_model.set_mode("train")    
+    #         # 前向传播
+    #         detection_results = self.model(images)
+    #         train_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
             
-            self.inner_model.set_mode("val")
-            detection_results = self.model(images)
-            val_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
+    #         self.inner_model.set_mode("val")
+    #         detection_results = self.model(images)
+    #         val_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
 
-            print("train_loss", train_loss, "val_loss", val_loss)
+    #         print("train_loss", train_loss, "val_loss", val_loss)
             

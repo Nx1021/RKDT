@@ -1,12 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-"""
-LandmarkBranch Transformer class.
-
-Copy-paste from torch.nn.Transformer with modifications:
-    * positional encodings are passed in MHattention
-    * extra LN at the end of encoder is removed
-    * decoder returns a stack of activations from all decoding layers
-"""
 import copy
 from typing import Optional, List
 
@@ -391,9 +382,12 @@ class LandmarkBranch(nn.Module):
         pos = self.position_embedding(roi_feature, masks)
         hs = self.transformer(self.input_proj(roi_feature), masks, self.query_embed.weight, pos)[0]
 
-        outputs_class = self.class_embed(hs).softmax(-1)
-        outputs_coord = self.pos_embed(hs)
+        outputs_class = self.class_embed(hs).softmax(-1)    #[outputnum, batch, decoder_num, class_num + 1]
+        outputs_coord = self.pos_embed(hs)                  #[outputnum, batch, decoder_num, 2]
 
+        outputs_class = torch.transpose(outputs_class, 0, 1) #[batch, outputnum, decoder_num, class_num + 1]
+        outputs_coord = torch.transpose(outputs_coord, 0, 1) #[batch, outputnum, decoder_num, 2]
+        
         return outputs_coord, outputs_class
 
     # @torch.jit.unused

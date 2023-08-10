@@ -120,7 +120,7 @@ class ErrorCalculator():
             selected_metrics = [selected_metrics]
 
         error_result:list[ErrorResult] = []
-        print(gt_vector_T[2] / pred_vector_T[2])        
+        # print(gt_vector_T[2] / pred_vector_T[2])        
         for metrics_type in selected_metrics:
             metrics = self.get_metrics(metrics_type)
             # pred_vector_T = pred_vector_T * (gt_vector_T[2] / pred_vector_T[2])

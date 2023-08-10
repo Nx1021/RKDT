@@ -10,15 +10,7 @@ import time
 from typing import OrderedDict, Union
 import torch
 
-#keywords:
-class _KW:
-    LDMKS = "ldmks"
-    PROBS = "probs"
-    BBOX_N = "bbox_n"
-    BBOX = "bbox"
-    BACTH = "batch"
-    INPUT_SIZE = "input_size"
-
+from typing import TypeVar
 
 class WeightLoader():
     STRICT     = 0
@@ -168,52 +160,90 @@ class WeightLoader():
     #     if hasattr(self.f, 'close'):
     #         self.f.close()
 
-def denormalize_bbox(bbox_n:Union[torch.Tensor, np.ndarray], 
-                     img_size:Union[tuple, list, torch.Tensor]):
+T = TypeVar('T', bound=Union[torch.Tensor, np.ndarray])
+
+def denormalize_bbox(bbox_n:T, 
+                     image_size:Union[tuple, list, torch.Tensor]) -> T:
     """
     将归一化的边界框坐标还原为像素单位。
 
     parameter
     -----
         - bbox_n: (N, 4) 归一化的边界框坐标，形状为 (N, 4)，其中 N 是边界框的数量。每个边界框由四个值表示 (xmin, ymin, xmax, ymax)。值应在 [0, 1] 范围内。
-        - img_size: (w, h) 图像的大小，可以是元组、列表或形状为 (2,) 的张量，表示图像的宽度和高度。
+        - image_size: (w, h) 图像的大小，可以是元组、列表或形状为 (2,) 的张量，表示图像的宽度和高度。
 
     return
     -----
         - bbox: 还原为像素单位的边界框坐标，形状为 (N, 4)。
     """
     if isinstance(bbox_n, torch.Tensor):
-        img_size = torch.Tensor(img_size)
-        img_size = torch.cat([img_size, img_size]).to(bbox_n.device)
+        image_size = torch.Tensor(image_size)
+        image_size = torch.cat([image_size, image_size], dim=-1).to(bbox_n.device)
     elif isinstance(bbox_n, np.ndarray):
-        img_size = np.array(img_size)
-        img_size = np.concatenate((img_size, img_size))
+        image_size = np.array(image_size)
+        image_size = np.concatenate((image_size, image_size), axis=-1)
 
-    bbox = bbox_n * img_size
+    bbox = bbox_n * image_size
     return bbox
 
-def normalize_bbox(bbox: torch.Tensor, img_size: Union[tuple, list, torch.Tensor]):
+def normalize_bbox(bbox: torch.Tensor, image_size: Union[tuple, list, torch.Tensor]):
     """
     将边界框坐标转换为归一化的形式。
 
     parameter
     -----
         - bbox_n: 归一化的边界框坐标，形状为 (N, 4)，其中 N 是边界框的数量。每个边界框由四个值表示 (xmin, ymin, xmax, ymax)。值应在 [0, 1] 范围内。
-        - img_size: 图像的大小，可以是元组、列表或形状为 (2,) 的张量，表示图像的宽度和高度。
+        - image_size: 图像的大小，可以是元组、列表或形状为 (2,) 的张量，表示图像的宽度和高度。
 
     return
     -----
         - bbox: 还原为像素单位的边界框坐标，形状为 (N, 4)。
     """
     if isinstance(bbox, torch.Tensor):
-        img_size = torch.Tensor(img_size)
-        img_size = torch.cat([img_size, img_size]).to(bbox.device)
+        image_size = torch.Tensor(image_size)
+        image_size = torch.cat([image_size, image_size]).to(bbox.device)
     elif isinstance(bbox, np.ndarray):
-        img_size = np.array(img_size)
-        img_size = np.concatenate((img_size, img_size))
+        image_size = np.array(image_size)
+        image_size = np.concatenate((image_size, image_size))
 
-    bbox_n = bbox / img_size
+    bbox_n = bbox / image_size
     return bbox_n
+
+def denormalize_points(point_n:Union[torch.Tensor, np.ndarray],
+                       bbox:Union[torch.Tensor, np.ndarray]):
+    """
+    restore normalized points to pixel points.
+
+    point_n: (..., (x, y))
+    bbox: (..., (x1, y1, x2, y2))
+    """
+    if isinstance(point_n, torch.Tensor):
+        bbox = torch.Tensor(bbox).to(point_n.device)
+    elif isinstance(point_n, np.ndarray):
+        bbox = np.array(bbox)
+
+    wh = bbox[..., 2:] - bbox[..., :2]
+    lt = bbox[..., :2]
+    point = point_n * wh + lt
+    return point
+
+def normalize_points(point:Union[torch.Tensor, np.ndarray],
+                        bbox:Union[torch.Tensor, np.ndarray]):
+    """
+    normalize pixel points to normalized points.
+
+    point: (..., (x, y))
+    bbox: (..., (x1, y1, x2, y2))
+    """
+    if isinstance(point, torch.Tensor):
+        bbox = torch.Tensor(bbox).to(point.device)
+    elif isinstance(point, np.ndarray):
+        bbox = np.array(bbox)
+
+    wh = bbox[..., 2:] - bbox[..., :2]
+    lt = bbox[..., :2]
+    point_n = (point - lt) / wh
+    return point_n
 
 def tensor_to_numpy(tensor: torch.Tensor) -> np.ndarray:
     if tensor.is_cuda:

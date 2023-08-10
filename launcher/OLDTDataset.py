@@ -96,30 +96,6 @@ class OLDTDataset(Dataset):
         data_i = self.idx_array[idx]
         path = os.path.join(self.data_folder, self.set, str(data_i).rjust(6, '0')+'.pkl')
 
-    def read_by_viewmeta(self, idx):
-        data_i = self.idx_array[idx]
-        viewmeta = self.vocformat.read_one(data_i)        
-        image = viewmeta.color
-        
-        class_id = list(viewmeta.masks.keys()) 
-        landmarks = [viewmeta.landmarks[x] for x in class_id]
-        bbox_2d = viewmeta.bbox_2d
-        bbox = np.array([bbox_2d[x] for x in class_id])
-        bbox_n = normalize_bbox(bbox, image.shape[:2][::-1])
-        trans_vecs = [viewmeta.extr_vecs[x] for x in class_id]
-
-        image_posture = ImagePosture(image)
-        for obj_i in range(len(class_id)):
-            image_posture.obj_list.append(
-                ObjPosture(landmarks[obj_i], 
-                       bbox_n[obj_i],
-                       class_id[obj_i],
-                       image_posture.image_size,
-                       trans_vecs[obj_i])
-            )
-
-        return image_posture
-
     def __getitem__(self, idx) -> ImagePosture:
         if_aug = idx % self.data_inflation > 0
         orig_idx = int(idx / self.data_inflation)
@@ -137,8 +113,9 @@ class OLDTDataset(Dataset):
         bbox = np.array([bbox_2d[x] for x in class_id])
         bbox_n = normalize_bbox(bbox, image.shape[:2][::-1])
         trans_vecs = [viewmeta.extr_vecs[x] for x in class_id]
+        intr_M = viewmeta.intr
 
-        image_posture = ImagePosture(image)
+        image_posture = ImagePosture(image, intr_M=intr_M)
         for obj_i in range(len(class_id)):
             image_posture.obj_list.append(
                 ObjPosture(landmarks[obj_i], 

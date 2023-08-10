@@ -1,5 +1,5 @@
-from .results import LandmarkDetectionResult
-from .utils import denormalize_bbox, normalize_bbox, _KW
+from .results import LandmarkDetectionResult, PredResult, RoiFeatureMapWithMask
+from .utils import denormalize_bbox, normalize_bbox
 from utils.yaml import load_yaml
 import torch
 import torch.nn as nn
@@ -89,42 +89,6 @@ import matplotlib.pyplot as plt
 #     def compute_output_shape(self, input_shape):
 #         return (input_shape[0][0], input_shape[0][1]) + self.pool_shape + (input_shape[2][3],)
 
-class NestedTensor(object):
-    def __init__(self, tensors:torch.Tensor, mask:torch.Tensor):
-        self.tensor = tensors
-        self.mask = mask
-
-    def to(self, device):
-        # type: (torch.Device) -> NestedTensor # noqa
-        cast_tensor = self.tensor.to(device)
-        mask = self.mask
-        if mask is not None:
-            assert mask is not None
-            cast_mask = mask.to(device)
-        else:
-            cast_mask = None
-        return NestedTensor(cast_tensor, cast_mask)
-
-    def decompose(self):
-        return self.tensor, self.mask
-
-    def __getitem__(self, index):
-        return self.tensor[index].unsqueeze(0), self.mask[index].unsqueeze(0)
-
-    def __repr__(self):
-        return self.__class__.__name__ + ':' \
-            + "tensor of shape" + str(list(self.tensor.shape)) + ", " \
-            + "mask of shape" + str(list(self.mask.shape))\
-    
-    @staticmethod
-    def cat(nested_tensor_list:list["NestedTensor"]):
-        tensors_list = []
-        mask_list = []
-        for nt in nested_tensor_list:
-            tensors_list.append(nt.tensor)
-            mask_list.append(nt.mask)
-        return NestedTensor(torch.cat(tensors_list), 
-                            torch.cat(mask_list))
 
 class CropLayer(nn.Module):
     def __init__(self, cfg, max_token_num = 784, pool_size = (24, 24)) -> None:
@@ -253,7 +217,7 @@ class FeatureMapDistribution(nn.Module):
     def use_variable_tokennum(self):
         return self.cfg["use_variable_tokennum"]
 
-    def distribute(self, class_ids, croped_feature_map:list[list[torch.Tensor]]) -> tuple[dict[int, NestedTensor], dict[int, list[list[int]]]]:
+    def distribute(self, class_ids, croped_feature_map:list[list[torch.Tensor]]) -> tuple[dict[int, RoiFeatureMapWithMask], dict[int, list[list[int]]]]:
         roi_feature_dict:dict[int, list[torch.Tensor]] = {}
         org_idx:dict[int, list[list[int]]] = {}
         for bn in range(len(class_ids)):
@@ -263,7 +227,7 @@ class FeatureMapDistribution(nn.Module):
                 org_idx.setdefault(int(id_), []).append([bn, i])
         for id_, tensor_list in roi_feature_dict.items():
             tensor, mask = self.expand_and_merge(tensor_list)
-            roi_feature_dict[id_] = NestedTensor(tensor, mask)
+            roi_feature_dict[id_] = RoiFeatureMapWithMask(feature_maps=tensor, masks=mask)
         return roi_feature_dict, org_idx
 
     @staticmethod
@@ -321,7 +285,7 @@ class FeatureMapDistribution(nn.Module):
 def gather_results(class_ids:list[torch.Tensor], 
             bboxes:list[torch.Tensor], 
             org_idx:dict[int, list[list[int]]], 
-            landmark_dict:dict[int, dict[str, torch.Tensor]],
+            landmark_dict:dict[int, PredResult],
             input_size_list: list[tuple]) -> list[list[LandmarkDetectionResult]]:
     # with torch.no_grad():
     BN = len(class_ids)
@@ -330,13 +294,13 @@ def gather_results(class_ids:list[torch.Tensor],
         if id_ not in landmark_dict:
             continue
         else:
-            coords = landmark_dict[id_][_KW.LDMKS]
-            probs = landmark_dict[id_][_KW.PROBS]
+            coords  = landmark_dict[id_].pred_landmarks_coord # [num_landmark_group?, output_num, decoder_num, 2]
+            probs   = landmark_dict[id_].pred_landmarks_probs # [num_landmark_group?, output_num, decoder_num, landmarknum + 1]
         oi = org_idx[id_] # 坐标对应的原位
         # 循环还原坐标到原位，通过LandmarkDetectionResult将每个roi的类别、bbox、landmarks绑定
         for ci, idx in enumerate(oi):
-            c = coords[:, ci, ...] 
-            p = probs[:, ci, ...] 
+            c = coords[ci, ...] 
+            p = probs[ci, ...] 
             bbox = bboxes[idx[0]][idx[1]]
             input_size = input_size_list[idx[0]]
             result = LandmarkDetectionResult(bbox, id_, c, p, input_size)

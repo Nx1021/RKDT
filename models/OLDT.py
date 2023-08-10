@@ -1,7 +1,9 @@
 from typing import Any
-from .roi_pipeline import FeatureMapDistribution, gather_results, NestedTensor
+from .roi_pipeline import FeatureMapDistribution, gather_results, RoiFeatureMapWithMask
 from .transformer import LandmarkBranch
-from .utils import WeightLoader, normalize_bbox, _KW
+from .CamDistFix import CamDistFixBranch
+from .utils import WeightLoader, normalize_bbox
+from .results import PredResult
 from . import yolo8_patch 
 import ultralytics
 from ultralytics import YOLO, yolo
@@ -80,6 +82,10 @@ class OLDT(nn.Module):
     -----
     
     '''
+
+    MODULE_DETECTION    = 0
+    MODULE_LDMK         = 1
+
     def __init__(self, yolo_weight_path, cfg_file, landmark_branch_classes:list[int] = [], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._backbone = YOLO(yolo_weight_path, "detect")
@@ -97,28 +103,32 @@ class OLDT(nn.Module):
 
         self.feature_map_distribution = FeatureMapDistribution(self.cfg)
         self.if_gather = True
+        self.locked_val = { self.MODULE_DETECTION: True,
+                            self.MODULE_LDMK: False}
 
         self.landmark_branch_classes = landmark_branch_classes
         
         self.landmark_branches:dict[int, LandmarkBranch] = {}
         for branch_i in landmark_branch_classes:
-            assert isinstance(branch_i, int)
-            branch = LandmarkBranch(self.cfg).to("cuda")
-            self.add_module(f"LandmarkBranch_{str(branch_i).rjust(2,'0')}", branch)
-            self.landmark_branches[branch_i] = branch
-            self.set_branch_trainable(branch_i)
+            self.add_branch(branch_i)
         # self.transformer = Transformer()
 
         self.last_detect_rlt:list[Results] = []
 
-        self.freeze_detection()
+        self.freeze_detection()  
 
+    def add_branch(self, branch_i):
+        assert isinstance(branch_i, int)
+        ldmk_branch = LandmarkBranch(self.cfg).to("cuda")
+        self.add_module(f"{LandmarkBranch.__name__}_{str(branch_i).rjust(2,'0')}", ldmk_branch)
+        self.landmark_branches[branch_i] = ldmk_branch
+        
     def parse_results(self, rlts:list[Results]):
         class_ids = [x.boxes.data[:, -1] for x in rlts]
 
-        img_size = [x.orig_shape for x in rlts]
+        image_size = [x.orig_shape for x in rlts]
         normed_bboxes = []
-        for i, size in enumerate(img_size):
+        for i, size in enumerate(image_size):
             epd_size = torch.Tensor([size[1], size[0]]).to('cuda')
             nb = normalize_bbox(rlts[i].boxes.data[:, :4], epd_size)
             normed_bboxes.append(nb)
@@ -141,21 +151,26 @@ class OLDT(nn.Module):
         feature_map = self.reshape_feature_maps((P3,))
         class_ids, bboxes_n = self.parse_results(detect_rlt) #[bn, num_roi?] [bn, num_roi?, 4]
         distribution = self.feature_map_distribution(class_ids, bboxes_n, feature_map)
-        roi_feature_dict:dict[int, NestedTensor]    = distribution[0]
+        roi_feature_dict:dict[int, RoiFeatureMapWithMask]    = distribution[0]
         org_idx:dict[int, list[list[int]]]          = distribution[1]
         bboxes_n:list[torch.Tensor]                 = distribution[2]
 
         ### LDT
-        landmark_dict:dict[int, dict[str, torch.Tensor]] = {}
+        # landmark_dict:dict[int, dict[str, torch.Tensor]] = {}
+        landmark_dict:dict[int, PredResult] = {}
         for class_id in self.landmark_branch_classes:
             try:
-                rois:torch.Tensor = roi_feature_dict[class_id].tensor #[num_landmark_group?, C, H, W]
-                masks:torch.Tensor = roi_feature_dict[class_id].mask #[num_landmark_group?, H, W]
+                rois:torch.Tensor = roi_feature_dict[class_id].rois_feature_map #[num_landmark_group?, C, H, W]
+                masks:torch.Tensor = roi_feature_dict[class_id].masks #[num_landmark_group?, H, W]
             except:
                 continue # 只选取关注的class
-            branch = self.landmark_branches[class_id]
-            landmark_coords, landmark_probs = branch(rois, masks) #[decoder_num, num_landmark_group?, landmarknum, 2]
-            landmark_dict[class_id] = {_KW.LDMKS:landmark_coords, _KW.PROBS:landmark_probs}
+            landmark_coords, landmark_probs = self.forward_ldmk(class_id, rois, masks)
+
+            pred_result = PredResult(
+                pred_landmarks_coord    = landmark_coords, 
+                pred_landmarks_probs     = landmark_probs)
+            pred_result.pred_class  = pred_result.boardcast([class_id], torch.int32)
+            landmark_dict[class_id] = pred_result
         
         if not self.if_gather:
             # 用于计算损失，
@@ -164,10 +179,12 @@ class OLDT(nn.Module):
                 bbox_n_list = []
                 for idx in origin:
                     bbox_n_list.append(bboxes_n[idx[0]][idx[1]])
-                bbox_ns = torch.stack(bbox_n_list)
-                bn_list = torch.Tensor([x[0] for x in origin]).to(bbox_ns.device)
-                input_size_list = torch.Tensor([input_size[x[0]] for x in origin]).to(bbox_ns.device)
-                landmark_dict[id_].update({_KW.BBOX_N:bbox_ns, _KW.BACTH:bn_list, _KW.INPUT_SIZE:input_size_list})
+                bboxes_n:torch.Tensor = torch.stack(bbox_n_list)
+                bn_list = torch.Tensor([x[0] for x in origin]).to(bboxes_n.device)
+                input_size_list = torch.Tensor([input_size[x[0]] for x in origin]).to(bboxes_n.device)
+                landmark_dict[id_].pred_bboxes_n = bboxes_n
+                landmark_dict[id_].pred_batch_idx = bn_list
+                landmark_dict[id_].input_size = landmark_dict[id_].boardcast(input_size_list)
             detection_results = landmark_dict
         else:
             # 重新汇聚
@@ -176,22 +193,33 @@ class OLDT(nn.Module):
 
         return detection_results
 
+    def forward_ldmk(self, class_id, rois, masks):
+        branch = self.landmark_branches[class_id]
+        landmark_coords, landmark_probs = branch(rois, masks) #[decoder_num, num_landmark_group?, landmarknum, 2]
+        return landmark_coords, landmark_probs
+
     def set_mode(self, mode):
         '''
         mode: "train" / "val" / "predict"
         '''
+        def lock():
+            if self.locked_val[self.MODULE_DETECTION]:
+                self.yolo_detection.eval()
+            if self.locked_val[self.MODULE_LDMK]:
+                for branch in self.landmark_branches.values():
+                    branch.eval()
         assert mode == "train" or mode == "val" or mode == "predict" 
         if mode == "train":
             super().train(True)
-            self.yolo_detection.eval()
-            for branch in self.landmark_branches.values():
-                branch.train(True)
+            lock()
             self.if_gather = False
         elif mode == "val":
             super().eval()
+            lock()
             self.if_gather = False
         elif mode == "predict":
             super().eval()
+            lock()
             self.if_gather = True
         else:
             raise ValueError
@@ -200,24 +228,14 @@ class OLDT(nn.Module):
         for p in self.yolo_detection.parameters():
             p.requires_grad = False
 
-    def set_branch_trainable(self, branch_i:int, trainable = True):
-        try: branch = self.landmark_branches[branch_i]
-        except KeyError:
-            print(f"branch {branch_i} doesn't exist")
-            return
-        for p in branch.parameters():
-            p.requires_grad = trainable
-
     def save_branch_weights(self, save_dir, prefix = ""):
         for key, value in self.landmark_branches.items():
-            save_path = os.path.join(save_dir, prefix + "branch"+str(key).rjust(2,"0") + ".pt")
+            save_path = os.path.join(save_dir, prefix + "branch_ldt_"+str(key).rjust(2,"0") + ".pt")
             torch.save(value.state_dict(), save_path)
 
-    def load_branch_weights(self, branch_i, weights_path):
-        try: branch = self.landmark_branches[branch_i]
-        except KeyError: return
-        if weights_path == "":
-            return
-        pretrained = torch.load(weights_path, map_location='cuda')
-        WeightLoader(branch).load_weights_to_layar(pretrained, WeightLoader.CORRISPONDING)
-
+    def load_branch_weights(self, branch_i, ldt_weights_path):
+        if ldt_weights_path != "":        
+            try: branch = self.landmark_branches[branch_i]
+            except KeyError: return
+            pretrained = torch.load(ldt_weights_path, map_location='cuda')
+            WeightLoader(branch).load_weights_to_layar(pretrained, WeightLoader.CORRISPONDING)
