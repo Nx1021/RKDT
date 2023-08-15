@@ -76,13 +76,17 @@ def setup(
     ### set data
     server_full_data_dir = os.path.join(server_dataset_dir, sub_data_dir)
     local_full_data_dir = os.path.join(DATASETS_DIR, sub_data_dir)
+    copy = False
     if use_data_on_server and sys == "Linux":
         if not os.path.exists(server_full_data_dir):
             # copy
             assert os.path.exists(local_full_data_dir), f"local data dir {local_full_data_dir} not exist"
             print(f"copy data to the server: {server_full_data_dir}, it may take a while...")
-            shutil.copytree(local_full_data_dir, server_full_data_dir)
-            print(f"copy done")
+            voc = dataset_format(local_full_data_dir)
+            voc.set_elements_cachemode(True)
+            voc.copyto(server_full_data_dir, cover=True)
+            # shutil.copytree(local_full_data_dir, server_full_data_dir)
+            copy = True
         data_folder = server_full_data_dir
         print("use data on the server: ", data_folder)
     else:
@@ -93,8 +97,20 @@ def setup(
     train_dataset = OLDTDataset(data_folder, "train", dataset_format) 
     val_dataset = OLDTDataset(data_folder, "val", dataset_format)
 
+    train_dataset.vocformat.set_elements_cachemode(True)
+    val_dataset.vocformat.set_elements_cachemode(True)
+
+    # if copy:
+    #     print(f"copy data to the server: {server_full_data_dir}, it may take a while...")
+    #     train_dataset.vocformat.set_elements_cachemode(True)
+    #     train_dataset.vocformat.copyto(server_full_data_dir, cover=True)
+    #     print(f"copy done")
+
+
     model = OLDT(yolo_weight_path, cfg_file, list(ldt_branches.keys()))  
     for load_brach_i, load_from in ldt_branches.items():
+        if load_from == "":
+            continue
         if '.' not in load_from:
             load_from += '.pt'
         load_from = f"{WEIGHTS_DIR}/{load_from}"

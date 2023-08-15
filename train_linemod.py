@@ -19,17 +19,19 @@ from gen_mixed_linemod import MixLinemod_VocFormat
 
 if __name__ == "__main__":
     cfg_file = f"{CFG_DIR}/oldt_linemod_mix.yaml"
-    setup_paras = load_yaml(cfg_file)["setup"]
+    for i in [1,3]:
+        setup_paras = load_yaml(cfg_file)["setup"]
 
-    sys = platform.system()
-    if sys == "Windows":
-        batch_size = 4
-        # model = torch.nn.DataParallel(model)
-    elif sys == "Linux":
-        batch_size = 32 # * torch.cuda.device_count()
-        # model = torch.nn.DataParallel(model)
-    setup_paras["ldt_branches"] = {0: ""}
-    setup_paras["batch_size"] = batch_size
+        sys = platform.system()
+        if sys == "Windows":
+            batch_size = 4
+            # model = torch.nn.DataParallel(model)
+        elif sys == "Linux":
+            batch_size = 32 # * torch.cuda.device_count()
+            # model = torch.nn.DataParallel(model)
+        setup_paras["ldt_branches"] = {i: ""}
+        setup_paras["batch_size"] = batch_size
+        setup_paras["sub_data_dir"] = f"linemod_mix/{str(i).rjust(6, '0')}"
 
-    trainer = setup("train", **setup_paras)
-    trainer.train()
+        trainer = setup("train", **setup_paras)
+        trainer.train()

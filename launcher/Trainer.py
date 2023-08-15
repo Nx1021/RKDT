@@ -148,7 +148,7 @@ class Trainer(Launcher):
         self.cur_epoch = 0
         self.start_epoch = start_epoch
 
-        self.freeze_modules = [self.inner_model.landmark_branches[0].pos_embed]
+        self.freeze_modules = [x.pos_embed for x in self.inner_model.landmark_branches.values()]
 
     @property
     def skip(self):

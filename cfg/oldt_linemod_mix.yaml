@@ -6,15 +6,15 @@ yolo_override:
   mode: predict  # YOLO mode, i.e. train, val, predict, export, track, benchmark
 
   # Train settings -------------------------------------------------------------------------------------------------------
-  model: weights/linemod_mix/000000_best.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
+  model: weights/linemod_mix/000001_best.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
   data: ./datasets/linemod_mix.yaml # path to data file, i.e. coco128.yaml
   verbose: false  # whether to print verbose output
 
 ### setup
 setup:
-  sub_data_dir: linemod_mix/000000
+  sub_data_dir: linemod_mix/000001
   ldt_branches:
-    0: 20230811084907branch_ldt_00.pt
+    1: ''
   batch_size: 32
   start_epoch: 1
   dataset_format: MixLinemod_VocFormat
