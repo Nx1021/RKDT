@@ -1,7 +1,6 @@
 from typing import Any
 from .roi_pipeline import FeatureMapDistribution, gather_results, RoiFeatureMapWithMask
 from .transformer import LandmarkBranch
-from .CamDistFix import CamDistFixBranch
 from .utils import WeightLoader, normalize_bbox
 from .results import PredResult
 from . import yolo8_patch 

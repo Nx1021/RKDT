@@ -8,9 +8,9 @@ from torchvision.ops.boxes import box_area
 from torchvision.ops import generalized_box_iou
 from scipy.optimize import linear_sum_assignment
 from .roi_pipeline import LandmarkDetectionResult
-from .utils import _KW, denormalize_bbox, tensor_to_numpy, denormalize_points
+from .utils import denormalize_bbox, tensor_to_numpy, denormalize_points
 from .results import GtResult, PredResult, MatchedRoi
-from post_processer.PostProcesser import PostProcesser, PnPSolver
+
 from . import SYS
 import platform
 import matplotlib.pyplot as plt
@@ -482,7 +482,7 @@ class LandmarkLoss(nn.Module):
         # 类别损失
         target_probs: Tensor = self.calculate_cluster_scores(pred_landmarks_n, target_landmarks_n).detach() #[match_num, output_num, num_queries, ldmk_num + 1]
         class_loss: Tensor = self.probs_loss(pred_landmarks_probs, target_probs, with_weight=True) #[match_num, output_num]
-        cdf_loss = torch.zeros(dist_loss.shape).to(dist_loss.device)            
+ 
         # 正负样本损失，只考虑正样本判断的损失
         # target_obj = torch.stack([torch.sum(target_probs[...,:-1], dim = -1), target_probs[..., -1]], dim=-1) # [match_num, num_queries, 2]
         # pred_obj = torch.stack([torch.sum(pred_landmarks_probs[...,:-1], dim = -1), pred_landmarks_probs[..., -1]], dim=-1)

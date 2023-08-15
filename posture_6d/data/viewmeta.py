@@ -10,11 +10,8 @@ import io
 import copy
 import pickle
 from typing import Union, Any, Callable
-from .posture import Posture
-from .intr import CameraIntr
-from .mesh_manager import MeshMeta
-from .derive import calc_bbox_3d_proj, calc_landmarks_proj, calc_masks
-from .utils import get_bbox_connections, modify_class_id, get_meta_dict
+from . import Posture, CameraIntr, calc_bbox_3d_proj, calc_landmarks_proj, calc_masks, modify_class_id, get_meta_dict
+from .mesh_manager import MeshMeta, get_bbox_connections
 import inspect
 import warnings
 

@@ -1,4 +1,4 @@
-from posture_6d.posture import Posture
+
 import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d
@@ -17,11 +17,10 @@ from scipy.spatial import ConvexHull
 import shapely.geometry
 
 from typing import Union
-from . import SphereAngle, MeshMeta, Voxelized, CameraIntr, CALI_INTR_FILE, calc_masks
-from data_recoder import Recorder, FrameMeta
-from model_manager import ModelManager
-from utils import homo_pad
-from pcd_creator import ProcessData
+from . import Posture, SphereAngle, MeshMeta, Voxelized, CameraIntr, CALI_INTR_FILE, calc_masks
+from .data_manager import DataRecorder, FrameMeta, ModelManager, ProcessData
+from .utils import homo_pad
+from .pcd_creator import ProcessData
 
 class MyGA(GA):
     def __init__(self, func, n_dim, size_pop=50, max_iter=200, prob_mut=0.001, lb=-1, ub=1, constraint_eq=[], constraint_ueq=[], precision=1e-7, early_stop=None, result_precision = 0.01):
@@ -65,15 +64,15 @@ class MyGA(GA):
 class ModelInfo(MeshMeta):
     def __init__(self, mesh, name="", class_id=-1) -> None:
         super().__init__(mesh, None, None, None, None, name, class_id)
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = mesh.vertices
-        distances = pcd.compute_nearest_neighbor_distance()
+        self.pcd = o3d.geometry.PointCloud()
+        self.pcd.points = mesh.vertices
+        distances = self.pcd.compute_nearest_neighbor_distance()
         self.avg_dist = np.mean(distances)  # 点云密度
         # 重心
-        self.barycenter = self.calc_barycenter(self.avg_dist*1.2)
+        self.barycenter = self.calc_barycenter(self.avg_dist*3)
 
     def calc_barycenter(self, voxel_size):
-        voxelized = Voxelized.from_pcd(self.mesh, voxel_size)
+        voxelized = Voxelized.from_mesh(self.mesh, voxel_size)
         body_points = voxelized.entity_indices
         body_points = np.hstack((body_points, np.ones((body_points.shape[0], 1))))
         body_points = voxelized.restore_mat.dot(body_points.T).T
@@ -87,14 +86,14 @@ class ModelBalencePosture():
     POINT_BALENCE_TOL = 0.5 * np.pi / 180
     POINT_STABLE_TOL = 0.1 * np.pi / 180
     def __init__(self) -> None:
-        # self.std_models_dir = os.path.join(os.path.abspath(os.path.join(directory, "..")), "dense_models")
-        # self.std_models_list = [x for x in os.listdir(self.std_models_dir) if os.path.splitext(x)[-1] == ".ply"]
+        # self.std_meshes_dir = os.path.join(os.path.abspath(os.path.join(directory, "..")), "dense_models")
+        # self.std_models_list = [x for x in os.listdir(self.std_meshes_dir) if os.path.splitext(x)[-1] == ".ply"]
 
         self.current_mi:ModelInfo = None
         # self.model_list = [] # 模型点云列表
         # for name in std_models_list:
         #     print(name)
-        #     path = os.path.join(std_models_dir, name)
+        #     path = os.path.join(std_meshes_dir, name)
         #     mi = ModelInfo(path)
         #     self.model_list.append(mi)
     
@@ -463,7 +462,7 @@ class ModelBalencePosture():
     #         # if name == "ape_dense.ply":
     #         #     continue
     #         print(name)
-    #         path = os.path.join(self.std_models_dir, name)
+    #         path = os.path.join(self.std_meshes_dir, name)
     #         mi = ModelInfo(path)
     #         stable_dict.update({name: []})
     #         rot_N = len(sphere_angle.rvec)
@@ -482,12 +481,12 @@ class ModelBalencePosture():
     #                 stable_dict[name].append(rvec.tolist())
     #         print()
     #         break
-    #     with open(os.path.join(self.std_models_dir, "stable.json"), 'w') as jf:
+    #     with open(os.path.join(self.std_meshes_dir, "stable.json"), 'w') as jf:
     #         json.dump(stable_dict, jf)
 
 class MaskBilter():
     SHOW_NUM = 6
-    def __init__(self, data_recorder:Recorder) -> None:
+    def __init__(self, data_recorder:DataRecorder) -> None:
         self.data_recorder = data_recorder
         self.directory = directory
         # 视角变换矩阵
@@ -734,26 +733,22 @@ class MaskBilter():
 
 
 
-class Interact_icp(ProcessData):
-    def __init__(self, datarecorder: Recorder, model_manager: ModelManager) -> None:
-        super().__init__(datarecorder.directory)
+class InteractIcp():
+    def __init__(self, datarecorder: DataRecorder, model_manager: ModelManager) -> None:
         self.data_recorder = datarecorder
         self.model_manager = model_manager
 
-        self.std_models_dir = os.path.join(os.path.abspath(os.path.join(directory, "..")), "models")
-        self.std_models_list = [x for x in os.listdir(self.std_models_dir) if os.path.splitext(x)[-1] == ".ply"]
-        try: self.std_models_list.remove('7x7cube.ply')
-        except: pass
-        self.std_models_mainname_list = self.model_manager.model_names
+        self.std_meshes_dir = self.model_manager.std_meshes_dir
+        self.std_models_mainname_list = self.model_manager.std_meshes_names
 
         # self.segmesh_dir = os.path.join(directory, SEGMESH_DIR)
         # self.segmesh_list = os.listdir(self.segmesh_dir)
         # self.icp_dir = os.path.join(directory, ICP_DIR)
         # self.regis_dir = os.path.join(directory, REGIS_DIR)
         ### scs
-        aruco_centers  = self.process_data[self.ARUCO_CENTERS]
-        plane_equation = self.process_data[self.PLANE_EQUATION]
-        trans_mat      = self.process_data[self.TRANS_MAT_C0_2_SCS]
+        aruco_centers  = self.model_manager.process_data[ProcessData.ARUCO_CENTERS]
+        plane_equation = self.model_manager.process_data[ProcessData.PLANE_EQUATION]
+        trans_mat      = self.model_manager.process_data[ProcessData.TRANS_MAT_C0_2_SCS]
         ###
         # 读取所有的std和unf
         self.std_mi_list = []
@@ -822,7 +817,7 @@ class Interact_icp(ProcessData):
         self.is_refine_mode = True
         self.step = 1.0
         self.refine_mode(None) #非精确模式
-        self.color_g = Interact_icp.color_generator()
+        self.color_g = InteractIcp.color_generator()
         self.modelbalenceposture = ModelBalencePosture(directory)
         self.std_model_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.040, origin=[0,0,0])
         self.std_model_baryline = \
@@ -982,7 +977,7 @@ class Interact_icp(ProcessData):
     def get_O2C0(self):
         # 根据当前坐标反求变换矩阵
         # transed_std_mesh = self.current_std_mi.mesh #标准点云，找标准点云和估计点云最匹配的姿态
-        # path = os.path.join(self.std_models_dir, self.std_models_list[self.current_index])
+        # path = os.path.join(self.std_meshes_dir, self.std_models_list[self.current_index])
         # org_std_pcd = io.read_point_cloud(path) #标准点云，找标准点云和估计点云最匹配的姿态
         transed_std_mesh = self.current_std_mi.mesh #transformed standard mesh
         org_std_pcd = self.model_manager.std_meshes.read(self.current_index)
@@ -1121,7 +1116,7 @@ class Interact_icp(ProcessData):
         posture = Posture(homomat=icp.transformation)
         posture_t = Posture(tvec = posture.tvec)
         self.current_std_mi_transform(vis, posture.trans_mat)
-        # std_pcd_o3d_geometry = o3d.io.read_triangle_mesh(os.path.join(std_models_dir, std_models_list[std_model_index]))
+        # std_pcd_o3d_geometry = o3d.io.read_triangle_mesh(os.path.join(std_meshes_dir, std_models_list[std_model_index]))
         # std_pcd_o3d_geometry.compute_vertex_normals()
     
     def nearest_points_mean_d(self):

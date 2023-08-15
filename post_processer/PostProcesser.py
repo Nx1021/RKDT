@@ -1,17 +1,31 @@
-from .pnpsolver import PnPSolver
-
+from . import SCRIPT_DIR
 from posture_6d.posture import Posture
+from posture_6d.derive import PnPSolver
+from posture_6d.metric import MetricCalculator
+from posture_6d.data.mesh_manager import MeshManager
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 import math
 import torch
-
-
+import os
 
 from models.results import LandmarkDetectionResult, ImagePosture, ObjPosture
 from models.utils import tensor_to_numpy, normalize_points, denormalize_points
+from utils.yaml import load_yaml
 from scipy.optimize import linear_sum_assignment
+
+def create_model_manager(cfg_file) -> MeshManager:
+    cfg_paras = load_yaml(cfg_file)
+    model_manager = MeshManager(os.path.join(SCRIPT_DIR, cfg_paras["models_dir"]),
+                                 cfg_paras["pcd_models"])
+    return model_manager
+
+def create_pnpsolver(cfg_file) -> PnPSolver:
+    cfg_paras = load_yaml(cfg_file)
+    default_K = os.path.join(SCRIPT_DIR, cfg_paras["models_dir"], cfg_paras["default_K"])
+    return PnPSolver(default_K)
+
 class PostProcesser():
     '''
     后处理
@@ -19,7 +33,7 @@ class PostProcesser():
     所有的变量名，不带_batch的表示是单个关键点对应的数据，例如坐标、热图
     带有_batch的是一整组，形状为 [N, ..., kpnum, ...]
     '''
-    def __init__(self, pnpsolver:PnPSolver, out_bbox_threshold=0.2):
+    def __init__(self, pnpsolver:PnPSolver, mesh_manager:MeshManager, out_bbox_threshold=0.2):
         '''
         parameters
         -----
@@ -32,9 +46,9 @@ class PostProcesser():
         -----
         Description of the return
         '''
-        self.pnpsolver = pnpsolver
-        self.mesh_manager = self.pnpsolver.mesh_manager
-        self.ldmk_out_upper = out_bbox_threshold
+        self.pnpsolver:PnPSolver        = pnpsolver
+        self.mesh_manager:MeshManager   = mesh_manager
+        self.ldmk_out_upper:float       = out_bbox_threshold
 
         self.desktop_plane:np.ndarray = None
 
@@ -89,11 +103,11 @@ class PostProcesser():
 
     # 沿着物体中心与相机坐标系原点的连线移动物体
     @staticmethod
-    def move_obj_by_optical_link(trans_vecs, move_dist):
-        optical_link = trans_vecs[1]
+    def move_obj_by_optical_link(posture:Posture, move_dist) -> Posture:
+        optical_link = posture.tvec
         optical_link = optical_link / np.linalg.norm(optical_link)# normalize
-        new_t = trans_vecs[1] + optical_link * move_dist
-        return (trans_vecs[0], new_t)
+        new_t = posture.tvec + optical_link * move_dist
+        return Posture(rvec=posture.rvec, tvec=new_t)
 
     def desktop_assumption(self, trans_vecs, points_3d):
         '''
@@ -130,16 +144,17 @@ class PostProcesser():
 
         return (trans_vecs[0], updated_tvec)
 
-    def bbox_area_assumption(self, trans_vecs, class_id, bbox):
+    def bbox_area_assumption(self, posture:Posture, class_id, bbox):
         # 假设预测的物体的投影面积和真实的投影面积相同，重新计算物体的trans_vecs
         points = self.mesh_manager.get_model_pcd(class_id)
-        reproj = self.pnpsolver.calc_reproj(trans_vecs[0], trans_vecs[1], points)#[N, 2]
-        reproj_bbox_area = (np.max(reproj[:, 0]) - np.min(reproj[:, 0]) - 1) * (np.max(reproj[:, 1]) - np.min(reproj[:, 1]) - 1)
+        reproj = self.pnpsolver.calc_reproj(points, posture = posture)#[N, 2]
+        reproj_bbox = (np.min(reproj[:, 0]), np.min(reproj[:, 1]), np.max(reproj[:, 0]), np.max(reproj[:, 1]))
+        reproj_bbox_area = (reproj_bbox[2] - reproj_bbox[0]) * (reproj_bbox[3] - reproj_bbox[1])
         bbox_area = tensor_to_numpy((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
         scale = np.sqrt(bbox_area / reproj_bbox_area)
-        move_dist = -(1 - 1/scale) * trans_vecs[1][2]
-        new_trans = self.move_obj_by_optical_link(trans_vecs, move_dist)
-        return new_trans
+        move_dist = -(1 - 1/scale) * posture.tvec[2]
+        new_posture = self.move_obj_by_optical_link(posture, move_dist)
+        return new_posture
 
     def process_one(self, pred_probs, pred_ldmks, class_id, bbox, mode = 'v', intr_M = None):
         if mode == "e":
@@ -149,28 +164,27 @@ class PostProcesser():
         else:
             raise ValueError                    
         if np.sum(mask) < 8:
-            trans_vecs = None
+            posture = None
         elif self.obj_out_bbox(ldmks, tensor_to_numpy(bbox)):
-            trans_vecs = None
+            posture = None
         else:
             # 计算姿态
             points_3d = self.mesh_manager.get_ldmk_3d(class_id)
-            rvec, tvec = self.pnpsolver.solvepnp(ldmks, points_3d, mask, K=intr_M)
-            (rvec, tvec) = self.bbox_area_assumption((rvec, tvec), class_id, bbox)
-            trans_vecs = (rvec, tvec)
-        return ldmks, trans_vecs
+            posture = self.pnpsolver.solvepnp(ldmks, points_3d, mask, K=intr_M, return_posture=True)
+            posture = self.bbox_area_assumption(posture, class_id, bbox)
+        return ldmks, posture
 
     def process(self, image_list:list[np.ndarray], ldmk_detection:list[list[LandmarkDetectionResult]], mode = "v"):
         image_posture_list = []
         for bi, batch in enumerate(ldmk_detection):
             image_posture = ImagePosture(image_list[bi])
             for rlt in batch:
-                ldmks, trans_vecs = self.process_one(rlt.landmarks_probs, rlt.landmarks, rlt.class_id, rlt.bbox, mode)
+                ldmks, posture = self.process_one(rlt.landmarks_probs, rlt.landmarks, rlt.class_id, rlt.bbox, mode)
                 image_posture.obj_list.append(ObjPosture(ldmks, 
                                                 rlt.bbox_n, 
                                                 rlt.class_id, 
                                                 image_posture.image_size,
-                                                trans_vecs))
+                                                posture)) #TODO
             image_posture_list.append(image_posture)
         return image_posture_list
             

@@ -28,7 +28,10 @@ SINGLE_BASE_FRAME_ARUCO_NUM = 3
 STOP_COLOR_THRESHOLD = 30
 STOP_BLACK_TIME = 3
 
+TEST = False
+
 from . import RGB_DIR, DEPTH_DIR, CALI_INTR_FILE, DATA_INTR_FILE, FRAMETYPE_DATA
+from . import JsonIO
 import pyrealsense2 as rs
 import json
 import logging
@@ -41,13 +44,16 @@ import os
 import shutil
 import sys
 import matplotlib.pyplot as plt
+from typing import Union
 
-from aruco_detector import ArucoDetector
-from data_recoder import Recorder
+
+from . import CameraIntr
+from .aruco_detector import ArucoDetector
+from .data_manager import DataRecorder
 # from config.DataAcquisitionParameters import DEPTH_THRESH
 
 class Motion():
-    def __init__(self, sensor) -> None:
+    def __init__(self, sensor, imu_calibration:Union[str, dict] = None) -> None:
         # self.sync_imu_by_this_stream = rs.stream.any
         active_imu_profiles = []
 
@@ -79,7 +85,7 @@ class Motion():
         # Make the device use the original IMU values and not already calibrated:
         if self.imu_sensor.supports(rs.option.enable_motion_correction):
             self.imu_sensor.set_option(rs.option.enable_motion_correction, 0)
-        self.read_calibrate("imu_calibration.json")
+        self.read_calibrate(imu_calibration)
 
         self.last_a_time = 0
         self.last_g_time = 0
@@ -104,18 +110,28 @@ class Motion():
         '''
         读取校准矩阵
         '''
-        with open(path) as jf:
-            cali_dict = json.load(jf)
-        cali_dict = cali_dict["imus"][0]
-
-        accel_X = np.zeros(12) #加速度的补偿矩阵
-        accel_X[:9]     = np.array(cali_dict["accelerometer"]["scale_and_alignment"])
-        accel_X[9:12]   = np.array(cali_dict["accelerometer"]["bias"])
-        self.accel_X    = np.reshape(accel_X, (4,3))
-        gyro_X          = np.zeros(12) #角加速度的补偿矩阵
-        gyro_X[:9]      = np.array(cali_dict["gyroscope"]["scale_and_alignment"])
-        gyro_X[9:12]    = np.array(cali_dict["gyroscope"]["bias"])
-        self.gyro_X     = np.reshape(gyro_X, (4,3))
+        if path is None:
+            self.accel_X = np.array([[1, 0, 0],
+                                     [0, 1, 0],
+                                     [0, 0, 1],
+                                     [0, 0, 0]], np.float32)
+            self.gyro_X = np.array([[1, 0, 0],
+                                     [0, 1, 0],
+                                     [0, 0, 1],
+                                     [0, 0, 0]], np.float32)
+        else:
+            if isinstance(path, dict):
+                cali_dict = path["imus"][0]
+            elif isinstance(path, str):
+                cali_dict = JsonIO.load_json(path)["imus"][0]
+            accel_X = np.zeros(12) #加速度的补偿矩阵
+            accel_X[:9]     = np.array(cali_dict["accelerometer"]["scale_and_alignment"])
+            accel_X[9:12]   = np.array(cali_dict["accelerometer"]["bias"])
+            self.accel_X    = np.reshape(accel_X, (4,3))
+            gyro_X          = np.zeros(12) #角加速度的补偿矩阵
+            gyro_X[:9]      = np.array(cali_dict["gyroscope"]["scale_and_alignment"])
+            gyro_X[9:12]    = np.array(cali_dict["gyroscope"]["bias"])
+            self.gyro_X     = np.reshape(gyro_X, (4,3))
 
     def imu_callback(self, frame):
         '''
@@ -197,11 +213,10 @@ class Motion():
             self.last_g_time = this_time
         return
 
-class Camera():
+class RsCamera():
     MODE_CALI = 0
     MODE_DATA = 1
-    def __init__(self, directory, mode) -> None:
-
+    def __init__(self, mode, imu_calibration = None) -> None:
         # 创建一个pipeline实例
         self.pipeline = rs.pipeline()
         # 创建配置实例
@@ -213,18 +228,18 @@ class Camera():
         sensors = self.device.query_sensors()
         self.depth_sensor = rs.depth_sensor(sensors[0])
         self.color_sensor = rs.color_sensor(sensors[1])
-        self.motion_module = Motion(sensors[2])
+        self.motion_module = Motion(sensors[2], imu_calibration)
         self.depth_sensor.set_option(rs.option.visual_preset, 3)
         # 将深度单位设置为毫米
         self.depth_sensor.set_option(rs.option.depth_units, 0.0005)
 
         # 配置深度流和彩色流
         self.mode = mode
-        if mode == Camera.MODE_DATA:
+        if mode == RsCamera.MODE_DATA:
             intr_name = DATA_INTR_FILE
             self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
             self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
-        elif mode == Camera.MODE_CALI:
+        elif mode == RsCamera.MODE_CALI:
             intr_name = CALI_INTR_FILE
             self.config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
             self.config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
@@ -236,20 +251,19 @@ class Camera():
         self.call_num = 0
 
         # 获取相机内参
-        self.intr = color_frame.profile.as_video_stream_profile().intrinsics
-        self.camera_parameters = {'fx': self.intr.fx, 'fy': self.intr.fy,
-                                  'ppx': self.intr.ppx, 'ppy': self.intr.ppy,
-                                  'height': self.intr.height, 'width': self.intr.width,
-                                  'depth_scale':self.profile.get_device().first_depth_sensor().get_depth_scale()
-                                  }
-        # 将相机内参保存到json文件中
-        with open(os.path.join(directory, intr_name), 'w') as fp:
-            json.dump(self.camera_parameters, fp)
+        rs_intr = color_frame.profile.as_video_stream_profile().intrinsics
+        camera_parameters = {CameraIntr.CAM_FX: rs_intr.fx, CameraIntr.CAM_FY: rs_intr.fy,
+                            CameraIntr.CAM_CX: rs_intr.ppx, CameraIntr.CAM_CY: rs_intr.ppy,
+                            CameraIntr.CAM_HGT: rs_intr.height, CameraIntr.CAM_WID: rs_intr.width,
+                            CameraIntr.DEPTH_SCALE: self.profile.get_device().first_depth_sensor().get_depth_scale() * 1000 # m 2 mm
+                            }
+        self.intr = CameraIntr.from_json(camera_parameters)
 
         # 设置亮度、对比度和曝光度等参数
-        sensors[1].set_option(rs.option.brightness,5)
-        sensors[1].set_option(rs.option.contrast,40)
-        sensors[1].set_option(rs.option.exposure, 120.000)
+        sensors[1].set_option(rs.option.brightness,0)
+        sensors[1].set_option(rs.option.contrast, 50)
+        sensors[1].set_option(rs.option.exposure, 312)
+        sensors[1].set_option(rs.option.saturation, 70)
 
         # 定义深度图滤波器
         self.spatial = rs.spatial_filter() # 空间滤波器
@@ -377,13 +391,10 @@ def multiframe_distortion_correction(color_list: list[np.ndarray], image_size) -
         median_color = color_list[0]
     return median_color
 
-class RecordingPipeline():
-    def __init__(self, directory, data_recorder:Recorder, rs_camera:Camera, aruco_detector:ArucoDetector) -> None:
-        self.directory = directory
+class Capturing():
+    def __init__(self, data_recorder:DataRecorder, aruco_detector:ArucoDetector, rs_camera:RsCamera = None) -> None:
         self.data_recorder = data_recorder
-        self.rs_camera = rs_camera
         self.aruco_detector = aruco_detector
-        self.H, self.W = self.rs_camera.camera_parameters["height"], self.rs_camera.camera_parameters["width"]
         self.trans_mat_list = []
         self.record_pos_list = []
 
@@ -402,9 +413,7 @@ class RecordingPipeline():
         self.record_pos_image = None
         # 物品例像字典
         self.obj_exanple_img_dict = {}
-        for name in data_recorder.std_models_names:
-            img = cv2.imread(
-                os.path.join(data_recorder.std_models_dir, name + ".jpg"))
+        for name, img in zip(data_recorder.std_meshes_names, self.data_recorder.std_meshes_image):
             if img is None:
                 img = np.zeros((480, 640, 3), np.uint8)
             self.obj_exanple_img_dict.update({name: img})
@@ -413,13 +422,14 @@ class RecordingPipeline():
         self.parameters = aruco.DetectorParameters_create()
         self.ignore_stable = False
 
+        self.rs_camera = rs_camera
+
     def read_trans_mats(self):
-        self.data_recorder.trans_elements.read()
         # 清空变换矩阵列表和记录位置列表
         self.trans_mat_list.clear()
         self.record_pos_list.clear()
         # 遍历模型索引范围中的每个模型
-        for trans_mat in self.data_recorder.trans_elements:
+        for trans_mat in self.data_recorder.trans_elements.in_current_category():
             # 将变换矩阵添加到变换矩阵列表中
             self.trans_mat_list.append(trans_mat)
             # 将变换矩阵转换为位置点并添加到记录位置列表中
@@ -460,12 +470,14 @@ class RecordingPipeline():
         self.record_pos_image = img
 
     def start(self, break_callback, record_gate = True):
+        assert self.rs_camera is not None, "RsCamera is None"
+
         self.record_gate = record_gate
 
         self.T_start = time.time() # 开始时间
         last_recorded_color_image = None # 上一次被记录的色彩图
 
-        enter_buffer_permitted = True        # 标志位：准许进入缓存队列
+        pushto_buffer_permitted = True        # 标志位：准许进入缓存队列
         has_made_directories = False        # 标志位：已经生成文件夹
         is_recording_model = True
         skip = False
@@ -478,10 +490,10 @@ class RecordingPipeline():
                 continue
             c = np.asanyarray(color_frame.get_data())
             c_int16 = c.astype(np.int16)
-            enter_buffer_permitted = self.process_one_frame(c, depth_frame)
+            pushto_buffer_permitted = self.process_one_frame(c, depth_frame)
             if not self.is_waiting:
                 ### 根据输入动作切换采集的模型                
-                if break_callback(self.data_recorder) or self.data_recorder.is_all_recorded() or skip:
+                if break_callback(self.data_recorder) or self.data_recorder.is_all_recorded or skip:
                     break #结束采集
                 if np.mean(c_int16) < STOP_COLOR_THRESHOLD:
                     if time.time() - start_stand_by_time > STOP_BLACK_TIME and is_recording_model == False:
@@ -493,9 +505,9 @@ class RecordingPipeline():
                 else:
                     if is_recording_model == False:
                         is_recording_model = True
-                        self.data_recorder.record()
+                        self.data_recorder.inc_idx()
                         self.read_trans_mats()
-                if enter_buffer_permitted:
+                if pushto_buffer_permitted:
                     self.process_buffer()
             if not is_recording_model:
                 self.info_txt = "stand by" + "." * int(time.time() - start_stand_by_time)
@@ -507,12 +519,15 @@ class RecordingPipeline():
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
         self.data_recorder.skip_to_seg()
-        self.data_recorder.rename_all()
-        self.data_recorder.save_record()
+        # self.data_recorder.rename_all()
+        # self.data_recorder.save_record()
+        cv2.destroyAllWindows()  # 关闭窗口
         self.rs_camera.pipeline.stop()
 
     @property
     def is_waiting(self):
+        if TEST:
+            return False
         return time.time() - self.T_start < WAIT_LENGTH
 
     @property
@@ -524,20 +539,22 @@ class RecordingPipeline():
         return list(self.this_other_aruco_dict.values())
         
     def visualise(self):
+        if self.data_recorder.is_all_recorded:
+            return
         ### 可视化
         c = self.this_color.copy()
         # 深度图色彩化
         d = np.asanyarray(self.this_depth_frame.get_data())  # 获取深度图像数据
         norm_depth_image = d.astype(np.float32)  # 转换数据类型为浮点型
         # 对深度图像进行限制，超过一定深度范围的值设为最大深度值
-        norm_depth_image[norm_depth_image > int(2 / self.rs_camera.camera_parameters["depth_scale"])] = int(2 / self.rs_camera.camera_parameters["depth_scale"])
+        norm_depth_image[norm_depth_image > int(2 / self.rs_camera.intr.depth_scale)] = int(2 / self.rs_camera.intr.depth_scale)
         norm_depth_image = (norm_depth_image)/(norm_depth_image.max()+1)  # 归一化深度图像
         norm_depth_image = (norm_depth_image*255).astype(np.uint8)  # 缩放深度图像的像素值到 0~255
         depth_colormap = cv2.applyColorMap(norm_depth_image, cv2.COLORMAP_JET)  # 将深度图像转换为伪彩色图像
 
         ### 图片拼接
         shape = np.array((c.shape[1], c.shape[0]))
-        if self.rs_camera.mode == Camera.MODE_CALI:
+        if self.rs_camera.mode == RsCamera.MODE_CALI:
             c = cv2.rectangle(c, (shape*0.25).astype(np.int32),
                                 (shape*0.75).astype(np.int32), (255,0,0), 4)
         camera_field = np.hstack((c, depth_colormap))  # 将彩色图像和深度图像水平拼接在一起
@@ -546,9 +563,9 @@ class RecordingPipeline():
         
         # obj_exanple_img 在每个物品采集过程的第一帧，显示图像进行提示
         obj_exanple_img = np.zeros((camera_field.shape[0], int(camera_field.shape[1]/2), 3))
-        if self.data_recorder.FileNum == 0 or self.data_recorder.AddNum == 0:
+        if self.data_recorder.AddNum == 0:
             try:
-                obj_exanple_img = self.obj_exanple_img_dict[self.data_recorder.current_model_name]
+                obj_exanple_img = self.obj_exanple_img_dict[self.data_recorder.current_category_name]
                 obj_exanple_img = cv2.resize(obj_exanple_img, (int(camera_field.shape[1]/2), camera_field.shape[0]))
             except KeyError:
                 pass
@@ -572,13 +589,13 @@ class RecordingPipeline():
         # 如果已经开始记录数据
         else:
             # 显示当前已记录数据的数量和最大深度变化值
-            cv2.putText(shown_image,"all:" + str(self.data_recorder.all_num) + \
+            cv2.putText(shown_image,"all:" + str(self.data_recorder.data_num) + \
                         "|" * len(self.color_image_list),
                         (0,480 + 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 4,(0,0,255),2,cv2.LINE_AA, False)
             # 显示当前正在记录的模型名称和已记录的数据范围
-            cv2.putText(shown_image,"{}:{}".format(self.data_recorder.current_model_name,
-                                                    str(self.data_recorder.current_model_index_range[1] - self.data_recorder.current_model_index_range[0] + self.data_recorder.AddNum)),
+            cv2.putText(shown_image,"{}:{}".format(self.data_recorder.current_category_name,
+                                                    self.data_recorder.current_categroy_num),
                 (0,480 + 200),
                 cv2.FONT_HERSHEY_SIMPLEX, 4,(0,0,255),2,cv2.LINE_AA, False)
             cv2.putText(shown_image,"add:{}".format(str(self.data_recorder.AddNum)),
@@ -646,9 +663,9 @@ class RecordingPipeline():
             corners_dict_list.append(corners_dict)
         floor_aruco_dict, other_aruco_dict = corners_dict_list
         # aruco数量阈值
-        if self.data_recorder.current_model_index == 0:
+        if self.data_recorder.current_category_index == 0:
             aruco_num_thre = FIRST_FRAME_ARUCO_NUM
-        elif self.data_recorder.current_model_index == 1:
+        elif self.data_recorder.current_category_index == 1:
             aruco_num_thre = BASE_FRAME_ARUCO_NUM
         else:
             aruco_num_thre = SINGLE_BASE_FRAME_ARUCO_NUM
@@ -721,46 +738,59 @@ class RecordingPipeline():
         pos = (z_points_C[0] - z_points_C[1])[:3]
         return pos
 
-    def get_buffer_length(self):
-        return len(self.color_image_list)
-
     def process_buffer(self):
         '''
         添加到缓冲区
         '''
-        if not self.__pushbask_to_buffer():
-            return
-        ### 比较最后一帧与前面逐帧的aruco位置的差，总差求和
-        try:
-            ids_list = [list(d.keys()) for d in self.aruco_dict_list]
-            sets = [set(lst) for lst in ids_list]# 将所有子列表转换为set类型
-            common_ids = list(set.intersection(*sets))# 计算所有子列表的交集
-            if len(common_ids) < 2:
+        if not TEST:
+            if not self.__pushbask_to_buffer():
+                return
+            ### 比较最后一帧与前面逐帧的aruco位置的差，总差求和
+            try:
+                ids_list = [list(d.keys()) for d in self.aruco_dict_list]
+                sets = [set(lst) for lst in ids_list]# 将所有子列表转换为set类型
+                common_ids = list(set.intersection(*sets))# 计算所有子列表的交集
+                if len(common_ids) < 2:
+                    max_delta = 1e6
+                else:
+                    arcuo_array = np.array([[d[id_] for id_ in common_ids] for d in self.aruco_dict_list])
+                    deltas = arcuo_array - arcuo_array[-1] #[MAX_LENGTH, N, 4, 2]
+                    max_delta = np.max(np.linalg.norm(deltas, axis = -1))
+                    # print(max_delta)
+            except ValueError:
                 max_delta = 1e6
+            ### 根据采集的内容调整对精度的严格程度
+            if self.data_recorder.current_category_index == 0:
+                restrict = 0.85
+            elif self.data_recorder.current_category_index == len(self.data_recorder.std_meshes_names) - 1:
+                restrict = 2.0
             else:
-                arcuo_array = np.array([[d[id_] for id_ in common_ids] for d in self.aruco_dict_list])
-                deltas = arcuo_array - arcuo_array[-1] #[MAX_LENGTH, N, 4, 2]
-                max_delta = np.max(np.linalg.norm(deltas, axis = -1))
-                # print(max_delta)
-        except ValueError:
-            max_delta = 1e6
-        ### 根据采集的内容调整对精度的严格程度
-        if self.data_recorder.categroy_index == 0:
-            restrict = 0.85
-        elif self.data_recorder.categroy_index == len(self.data_recorder.std_models_names) - 1:
-            restrict = 2.0
+                restrict =  1.0
+            ### 采集后处理与保存
+            if self.record_gate and max_delta < DELTA_THRESHOLD*restrict:
+                # 可以采集
+                c = multiframe_distortion_correction(self.color_image_list, 
+                                                    (self.rs_camera.intr.cam_hgt, self.rs_camera.intr.cam_wid))
+                for df in self.depth_frame_list:
+                    depth_frame = self.rs_camera.temporal.process(df)
+                d = np.asanyarray(depth_frame.get_data())
+                # 对采集的帧进行误差检验
+                ok, transform = self.aruco_detector.verify_frame(c, d, self.rs_camera.intr)
+                # ok = True
+                if ok:
+                    self.data_recorder.save_frames(c, d, transform)
+                    self.keep_at_last_position = True
+                    # 计算采集的方位
+                    pos = self.__trans_mat_2_pos_point(transform)
+                    self.pushback_to_record_pos_list(pos)
+                else:
+                    pass
+                self.__clear_buffer()
         else:
-            restrict =  1.0
-        ### 采集后处理与保存
-        if self.record_gate and max_delta < DELTA_THRESHOLD*restrict:
-            # 可以采集
-            c = multiframe_distortion_correction(self.color_image_list, 
-                                                 (self.rs_camera.camera_parameters["height"], self.rs_camera.camera_parameters["width"]))
-            for df in self.depth_frame_list:
-                depth_frame = self.rs_camera.temporal.process(df)
-            d = np.asanyarray(depth_frame.get_data())
+            c = np.load("cad_test.npy")
+            d = np.load("depth_test.npy")
             # 对采集的帧进行误差检验
-            ok, transform = self.aruco_detector.verify_frame(c, d, self.rs_camera.camera_parameters)
+            ok, transform = self.aruco_detector.verify_frame(c, d, self.rs_camera.intr)
             # ok = True
             if ok:
                 self.data_recorder.save_frames(c, d, transform)
@@ -770,7 +800,19 @@ class RecordingPipeline():
                 self.pushback_to_record_pos_list(pos)
             else:
                 pass
-            self.__clear_buffer()
+            self.__clear_buffer()           
+
+
+
+    # for mode, func in zip([Camera.MODE_DATA], [callback_DATA]):
+    #     BUFFER_MAX_LENGTH = 4        
+    #     record_pipeline.rs_camera = Camera(folder, mode)
+    #     # record_pipeline.ignore_stable = True     
+    #     record_pipeline.data_recorder.skip_to_seg()   
+    #     record_pipeline.start(func)
+
+
+   
 
 # if __name__ == "__main__":
 
@@ -778,7 +820,7 @@ class RecordingPipeline():
 #     record_gate = True
 
 #     def callback_CALI(data_recorder:Recorder):
-#         if data_recorder.categroy_index != FRAMETYPE_DATA:
+#         if data_recorder.current_category_index != FRAMETYPE_DATA:
 #             return False
 #         else:
 #             return True
@@ -796,7 +838,7 @@ class RecordingPipeline():
 
 #     record_pipeline = RecordingPipeline(folder, data_recorder, rs_camera, gt_posture_computer)
 #     # record_pipeline.data_recorder.delete(list(range(421, 847)))
-#     record_pipeline.data_recorder.add_skip_seg(len(record_pipeline.data_recorder.std_models_names) - 1)
+#     record_pipeline.data_recorder.add_skip_seg(len(record_pipeline.data_recorder.std_meshes_names) - 1)
     
 #     for mode, func in zip([Camera.MODE_CALI, Camera.MODE_DATA], [callback_CALI, callback_DATA]):
 #         record_pipeline.rs_camera = Camera(folder, mode)

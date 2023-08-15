@@ -32,9 +32,9 @@ import cv2.aruco as aruco
 from . import JsonIO, Posture, CameraIntr
 from typing import Union
 
-from utils.camera_sys import convert_depth_frame_to_pointcloud
-from utils.plane import findplane_wo_outliers
-from utils import homo_pad
+from .utils.camera_sys import convert_depth_frame_to_pointcloud
+from .utils.plane import findplane_wo_outliers
+from .utils import homo_pad
 
 
 
@@ -43,15 +43,29 @@ class ArucoDetector():
      '''
      detect aruco marker and compute its pose
      '''
-     def __init__(self, aruco_floor:str = "") -> None:
-          if aruco_floor :    
-               suffix = aruco_floor.split('.')[-1]
-               if suffix == 'json':
-                    self.C0_aruco_3d_dict = JsonIO.load_json(aruco_floor)
-               elif suffix == "png" or suffix == "bmp":
-                    self.C0_aruco_3d_dict = self.get_C0_aruco_3d_dict_from_image(aruco_floor)
-          else:
-               pass
+     def __init__(self, aruco_floor:Union[str, dict, np.ndarray], *, long_side_real_size = None) -> None:
+          if isinstance(aruco_floor, str):
+               if aruco_floor :    
+                    suffix = aruco_floor.split('.')[-1]
+                    if suffix == 'json':
+                         self.C0_aruco_3d_dict = JsonIO.load_json(aruco_floor)
+                    elif suffix == "png" or suffix == "bmp":
+                         assert long_side_real_size is not None, "long_side_real_size must be specified"                         
+                         self.C0_aruco_3d_dict = self.get_C0_aruco_3d_dict_from_image(aruco_floor, long_side_real_size=long_side_real_size)
+                         raise ValueError("long_side_real_size must be specified")
+               else:
+                    pass
+          elif isinstance(aruco_floor, dict):
+               # check the dict 
+               for k, v in aruco_floor.items():
+                    assert isinstance(k, int), "the key of aruco_floor must be int"
+                    assert isinstance(v, np.ndarray), "the value of aruco_floor must be ndarray"
+                    assert v.shape[0] == 4 and v.shape[1] == 3, "the shape of aruco_floor must be [4, 3]"
+                    assert np.issubdtype(v.dtype, np.floating)
+               self.C0_aruco_3d_dict = aruco_floor
+          elif isinstance(aruco, np.ndarray):
+               assert long_side_real_size is not None, "long_side_real_size must be specified"
+               self.C0_aruco_3d_dict = self.get_C0_aruco_3d_dict_from_image(aruco_floor, long_side_real_size=long_side_real_size)
           self.verify_tol = 0.01
      
      @staticmethod
@@ -169,16 +183,13 @@ class ArucoDetector():
           return points_I #[N, 2]
 
      @staticmethod
-     def restore(camera_intrinsics, points_I):
+     def restore(camera_intrinsics:Union[np.ndarray, CameraIntr], points_I):
           '''
           points_I: [N, 2]
           '''
-          fx = camera_intrinsics["fx"]
-          fy = camera_intrinsics["fy"]
-          ppx = camera_intrinsics["ppx"]
-          ppy = camera_intrinsics["ppy"]
+          camera_intrinsics = CameraIntr(camera_intrinsics)
           points_I = homo_pad(points_I)
-          K = np.array([[fx, 0, ppx],[0, fy, ppy],[0, 0, 1]])
+          K = camera_intrinsics.intr_M
           points_C = np.linalg.inv(K).dot(points_I.T) #[3, N]
           return points_C.T #[N, 3]          
 
@@ -195,9 +206,8 @@ class ArucoDetector():
                          c.append(v[i])
           return C0_aruco_3d, *collectors
 
-
      def get_T_3d(self, color, depth, camera_intrinsics, tol = 0.01, return_coords = True):
-          scene_aruco_3d, ids = ArucoDetector.detect_aruco_3d(color, depth, camera_intrinsics)
+          scene_aruco_3d, ids, _ = ArucoDetector.detect_aruco_3d(color, depth, camera_intrinsics)
           C0_aruco_3d, common_scene_aruco_3d = self.collect_if_id_in_C0_aruco(ids, scene_aruco_3d)
           if len(common_scene_aruco_3d) == 0:
                transform = np.eye(4)
@@ -246,15 +256,12 @@ class ArucoDetector():
           else:
                return transform
 
-     @staticmethod
-     def get_T_2d(self, cad, depth, camera_intrinsics, return_coords = True):
-          scene_aruco_2d, ids = ArucoDetector.detect_aruco_2d(cad) # [N, 4, 2], [N]
-          scene_aruco_3d, ids = ArucoDetector.detect_aruco_3d(cad, depth, camera_intrinsics, scene_aruco_2d, ids) # [N, 4, 3], [N]
+     def get_T_2d(self, color:np.ndarray, depth:np.ndarray, camera_intrinsics:CameraIntr, return_coords = True):
+          assert self.C0_aruco_3d_dict is not None
+          scene_aruco_2d, ids, _ = ArucoDetector.detect_aruco_2d(color) # [N, 4, 2], [N]
           (C0_aruco_3d, 
-           common_scene_aruco_ids, 
-           common_scene_aruco_2d, 
-           common_scene_aruco_3d) = self.collect_if_id_in_C0_aruco(ids, scene_aruco_2d, scene_aruco_3d)
-          if len(common_scene_aruco_3d) < 1:
+           common_scene_aruco_2d) = self.collect_if_id_in_C0_aruco(ids, scene_aruco_2d)
+          if len(common_scene_aruco_2d) < 1:
                transform = np.eye(4)
           else:
                C0_aruco_3d = np.array(C0_aruco_3d).reshape((-1, 4, 3))   #[N, 3]
@@ -271,17 +278,17 @@ class ArucoDetector():
                ### 
                C0_aruco_3d = np.reshape(C0_aruco_3d, (-1, 3))
                common_scene_aruco_2d = np.reshape(common_scene_aruco_2d, (-1, 2))
-               fx = camera_intrinsics["fx"]
-               fy = camera_intrinsics["fy"]
-               ppx = camera_intrinsics["ppx"]
-               ppy = camera_intrinsics["ppy"]
+               fx = camera_intrinsics.cam_fx
+               fy = camera_intrinsics.cam_fy
+               ppx = camera_intrinsics.cam_cx
+               ppy = camera_intrinsics.cam_cy
                cameraMatrix = np.array([[fx, 0, ppx], [0, fy, ppy], [0,0,1]])
                distCoeffs = np.array([0.0,0,0,0,0])
                _, rvec, tvec = cv2.solvePnP(C0_aruco_3d, common_scene_aruco_2d, cameraMatrix, distCoeffs)
                posture = Posture(rvec = rvec, tvec = np.squeeze(tvec))
                transform = posture.inv_transmat
           if return_coords:
-               re_trans =cv2.projectPoints(C0_aruco_3d, rvec, tvec, cameraMatrix, distCoeffs)[0]
+               re_trans = cv2.projectPoints(C0_aruco_3d, rvec, tvec, cameraMatrix, distCoeffs)[0]
                re_trans = np.squeeze(re_trans, axis=1)
                return transform, (scene_aruco_2d, C0_aruco_3d, re_trans, ids)
           else:
@@ -303,7 +310,7 @@ class ArucoDetector():
           else:
                # cannot be verified by 2d
                transform = self.get_T_2d(
-                    cad, depth, camera_intrinsics, self.C0_aruco_3d_dict, return_coords = False)
+                    cad, depth, camera_intrinsics, return_coords = False)
                return True, transform
           
 
@@ -1101,7 +1108,7 @@ class ArucoDetector():
 #           if_2d = True
 
 #           C0_aruco_3d_dict = {}
-#           model_index_dict = read_json_as_int_ndarray(os.path.join(self.directory, "model_index_range.json"), np.int32)
+#           model_index_dict = read_json_as_int_ndarray(os.path.join(self.directory, "category_idx_range.json"), np.int32)
 #           C0_aruco_3d_dict, ids  = self.calc_C0_aruco_3d_dict(model_index_dict)
 
 #           data_recorder = Recorder(self.directory, os.path.join(os.path.abspath(os.path.join(self.directory, "..")), "models"))
@@ -1185,7 +1192,7 @@ class ArucoDetector():
 #           C0_aruco_3d_dict = {}
 #           Ts = []
 #           frames_aruco_3d = []
-#           model_index_dict = read_json_as_int_ndarray(os.path.join(self.directory, "model_index_range.json"), np.int32)
+#           model_index_dict = read_json_as_int_ndarray(os.path.join(self.directory, "category_idx_range.json"), np.int32)
 #           # C0_aruco_3d_dict, ids  = self.calc_C0_aruco_3d_dict(model_index_dict)
 #           C0_aruco_3d_dict = self.C0_aruco_3d_dict
 #           data_recorder = Recorder(self.directory, os.path.join(os.path.abspath(os.path.join(self.directory, "..")), "models"))

@@ -32,7 +32,7 @@ import time
 from typing import Union
 sys_name = platform.system()
 if sys_name == "Windows":
-    TESTFLOW = True
+    TESTFLOW = False
 else:
     TESTFLOW = False
 
@@ -114,7 +114,7 @@ class Trainer(Launcher):
                  val_dataset,
                  criterion,
                  batch_size,
-                 flowfile = "",
+                 flow_file = "",
                  distribute = False,
                  test=False,
                  start_epoch = 0):
@@ -123,7 +123,7 @@ class Trainer(Launcher):
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
 
-        self.flow = TrainFlow(self, flowfile)
+        self.flow = TrainFlow(self, flow_file)
         self.distribute = distribute
         self.test = test
 
@@ -205,7 +205,6 @@ class Trainer(Launcher):
                 if self.check_has_target(gt_result.gt_class_ids, self.inner_model.landmark_branch_classes):
                     # 前向传播
                     detection_results:dict[int, PredResult] = self.model(images)
-                    self.criterion.calc_cam_dist_fix = self.inner_model.branch_mode == self.inner_model.BRANCH_MODE_CDF
                     loss:torch.Tensor = self.criterion(gt_result, detection_results, ldmk_loss_mngr)
                     if torch.isnan(loss).item():
                         print("loss nan, break!")

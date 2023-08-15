@@ -10,9 +10,10 @@ import torch
 from ultralytics.yolo.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, RANK, __version__
 from ultralytics.yolo.utils.checks import check_version
 TORCH_2_0 = check_version(torch.__version__, minimum='2.0')
-
+import shutil
 import ultralytics.yolo.engine.predictor as _predictor
 import ultralytics.yolo.engine.trainer as _trainer
+from ultralytics.yolo.v8.detect.train import DetectionTrainer
 
 def _select_device(device='', batch=0, newline=False, verbose=True):
     
@@ -64,6 +65,16 @@ def _select_device(device='', batch=0, newline=False, verbose=True):
     if verbose and RANK == -1:
         LOGGER.info(s if newline else s.rstrip())
     return torch.device(arg)
+
+def get_MyTrainer(weights_copy_path):
+    class MyBaseTrainer(DetectionTrainer):
+        def final_eval(self):
+            rlt = super().final_eval()
+            shutil.copy(self.best, weights_copy_path)            
+            return rlt
+    return MyBaseTrainer
+
+
 print("_select_device", _select_device)
 _predictor.select_device = _select_device
 _trainer.select_device = _select_device

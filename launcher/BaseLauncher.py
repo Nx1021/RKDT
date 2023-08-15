@@ -10,6 +10,9 @@ import shutil
 import datetime
 from utils.yaml import dump_yaml, load_yaml
 import pandas as pd
+import time
+
+from typing import Callable
 
 class BaseLogger():
     def __init__(self, log_dir):
@@ -81,7 +84,80 @@ class PrintCapture:
         self.output_buffer.seek(0)  # 重置缓冲区的指针
         return output
 
+def get_attr_by_class(obj, class_:type):
+    process_timers = {}
+    attributes = vars(obj)  # 获取对象的所有属性和值
+
+    for attr_name, attr_value in attributes.items():
+        if isinstance(attr_value, class_):
+            process_timers[attr_name] = attr_value
+
+    return process_timers
+
+class _process_timer():
+    def __init__(self, name:str) -> None:
+        self.reset()
+        self.name = name
+
+    def update(self, time, bn = 1):
+        self.time += time
+        self.count += bn
+
+    def reset(self):
+        self.time = 0
+        self.count = 0
+
+    def print(self, intent=4):
+        print(self.name)
+        if self.count == 0:
+            print(" " * intent + "not executed")
+            return
+        print(" " * intent + "total_frames: " + str(self.count))
+        print(" " * intent + "total_time: " + str(self.time))
+        rate = self.count / self.time
+        if rate > 1:
+            print(" " * intent + "frame_rate: " + str(rate))
+        else:
+            print(" " * intent + "average_time_per_frame: " + str(1 / rate))
+
+class FrameTimer():
+    def __init__(self) -> None:
+        self.timers:dict[str, _process_timer] = {}
+
+    def get(self, name):
+        return self.timers.setdefault(name, _process_timer(name))
+
+    def reset(self):
+        for x in self.timers.values():
+            x.reset()      
+
+    def print(self):
+        process_timers: dict[str, _process_timer] = self.timers
+
+        total_time      = sum(process_timer.time  for process_timer in process_timers.values())
+        total_frames    = max(process_timer.count for process_timer in process_timers.values())
+
+        if total_frames == 0:
+            print("No frames processed yet")
+            return
+
+        average_frame_rate = total_frames / total_time
+
+        print("Total time:", total_time)
+        print("Total num frames:", total_frames)
+        print("Average frame rate:", average_frame_rate)
+
+        for name, obj in process_timers.items():
+            # 调用每个_process_timer对象的print函数
+            obj.print(intent=4)
+        print()
+
+
 class Launcher():
+    DONOT_COUNT_BATCH = 0
+    COUNT_BY_INPUT_1 = 1
+    COUNT_BY_RETURN_1 = -1
+
     def __init__(self, model, batch_size=32, log_remark = "") -> None:
         # 初始化 Launcher 类
         self.model:torch.Module = model
@@ -96,5 +172,40 @@ class Launcher():
         if log_remark != '':
             self.log_dir += '_' + log_remark # TensorBoard日志文件保存目录
         os.makedirs(self.log_dir, exist_ok=True)
+
+        self.frame_timer = FrameTimer()
+
+    @staticmethod
+    def timing(count_batch_from = DONOT_COUNT_BATCH):
+        '''
+        time the function
+
+        parameters
+        ----
+        * count_batch_from: int, default Launcher.DONOT_COUNT_BATCH.
+        if count_batch_from == 0, the function will not count the batch number.
+        if count_batch_from > 0, the function will count the batch number from the count_batch_from-th input.
+        if count_batch_from < 0, the function will count the batch number from the count_batch_from-th return.
+        '''
+        assert isinstance(count_batch_from, int)
+        def decorator(func:Callable):
+            def wrapper(obj: Launcher, *args, **kwargs):
+                timer = obj.frame_timer.get(func.__name__)
+                start = time.time()
+                rlt = func(obj, *args, **kwargs)
+                end = time.time()
+                if count_batch_from == 0:
+                    bn = 1
+                elif count_batch_from > 0:
+                    bn = len(args[count_batch_from - 1])
+                else: 
+                    if isinstance(rlt, tuple):
+                        bn = len(rlt[-count_batch_from - 1])
+                    else:
+                        bn = len(rlt)
+                timer.update((end - start), bn)
+                return rlt
+            return wrapper
+        return decorator
 
 

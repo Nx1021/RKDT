@@ -3,8 +3,7 @@ import numpy as np
 import open3d as o3d
 import cv2
 import scipy.ndimage as ndimage
-from .posture import Posture
-from .utils import JsonIO, modify_class_id, get_meta_dict
+from . import Posture, JsonIO, modify_class_id, get_meta_dict
 
 from typing import Union
 
@@ -57,6 +56,8 @@ class MeshMeta:
             self.ldmk_3d = new_ldmk
             return self
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}:{self.name} at {id(self)}"
 
 class MeshManager:
     _instance = None
@@ -66,22 +67,29 @@ class MeshManager:
             cls._instance = super(MeshManager, cls).__new__(cls)
         return cls._instance
     
-    def __init__(self, root, model_names: dict[int, str], load_all = False, modify_class_id_pairs:list[tuple[int]]=[]) -> None:
+    def __init__(self, root, model_names: dict[int, str] = {}, load_all = False, modify_class_id_pairs:list[tuple[int]]=[]) -> None:
+        self.root = root
         self.model_names: dict[int, str] = model_names
-        self.model_dirs : dict[int, str]      = {}
-        for id_, name in self.model_names.items():
+        self.model_dirs : dict[int, str] = {}
+        if len(model_names) > 0:
+            model_src = self.model_names.items()
+        else:
+            model_src = enumerate([x for x in os.listdir(self.root) if os.path.splitext(x)[-1] == ".ply"])
+        for id_, name in model_src:
             # 模型名称
-            dir_ = os.path.join(root, name)
-            self.model_dirs.update({id_: dir_}) 
+            path = os.path.join(self.root, name)
+            self.model_dirs.update({id_: path}) 
             name = os.path.splitext((os.path.split(name)[-1]))[0]
             self.model_names[id_] = name
+
+        self.landmark_info_path = os.path.join(self.root, "landmarks.json")
+        self.models_info_path = os.path.join(self.root, "models_info.json")
+        
         self.model_meshes       = {}
         self.model_bbox_3d          = {}
         self.model_symmetries = {} #"symmetries_continuous": "symmetries_discrete": 
         self.model_diameter = {}
         self.model_ldmk_3d = {}
-        self.landmark_info_path = os.path.join(root, "landmarks.json")
-        self.models_info_path = os.path.join(root, "models_info.json")
         self.load_landmarks(self.landmark_info_path)
         self.load_models_info(self.models_info_path)
         if load_all or len(modify_class_id_pairs)>0:
@@ -90,6 +98,10 @@ class MeshManager:
                     self.load_model(key)
         if len(modify_class_id_pairs)>0:
             self.modify_class_id(modify_class_id_pairs)
+
+    @property
+    def class_num(self):
+        return len(self.model_dirs)
 
     def modify_class_id(self, modify_class_id_pairs):
         orig_dict_list = get_meta_dict(self)
@@ -258,6 +270,42 @@ class MeshManager:
             meta_dict[key] = meta
         return meta_dict
 
+def get_bbox_connections(bbox_3d_proj:np.ndarray):
+    '''
+      1_______7
+     /|      /|         Z
+    3_______5 |         |__Y 
+    | 0_____|_6        /
+    |/      |/        X
+    2_______4        
+
+    params
+    -----
+    bbox_3d_proj: [..., B, (x,y)]
+
+    return
+    -----
+    lines: [..., ((x1,x2), (y1,y2)), 12]
+    '''
+    b = bbox_3d_proj
+    lines = [
+    ([b[...,0,0], b[...,1,0]], [b[...,0,1], b[...,1,1]]),
+    ([b[...,0,0], b[...,6,0]], [b[...,0,1], b[...,6,1]]),
+    ([b[...,6,0], b[...,7,0]], [b[...,6,1], b[...,7,1]]),
+    ([b[...,1,0], b[...,7,0]], [b[...,1,1], b[...,7,1]]),
+
+    ([b[...,2,0], b[...,3,0]], [b[...,2,1], b[...,3,1]]),
+    ([b[...,2,0], b[...,4,0]], [b[...,2,1], b[...,4,1]]),
+    ([b[...,4,0], b[...,5,0]], [b[...,4,1], b[...,5,1]]),
+    ([b[...,3,0], b[...,5,0]], [b[...,3,1], b[...,5,1]]),
+
+    ([b[...,0,0], b[...,2,0]], [b[...,0,1], b[...,2,1]]),
+    ([b[...,1,0], b[...,3,0]], [b[...,1,1], b[...,3,1]]),
+    ([b[...,7,0], b[...,5,0]], [b[...,7,1], b[...,5,1]]),
+    ([b[...,6,0], b[...,4,0]], [b[...,6,1], b[...,4,1]]),
+    ]
+    lines = np.stack(lines)
+    return lines #[12, ..., ((x1,x2), (y1,y2))]
 
 class Voxelized():
     def __init__(self, 
@@ -408,7 +456,15 @@ class Voxelized():
         return restore_mat
 
     @staticmethod
-    def from_mesh(o3d_mesh, voxel_size):
+    def auto_voxel_size(geometry) -> float:
+        max_bound = geometry.get_max_bound()
+        min_bound = geometry.get_min_bound()
+        return max(max_bound - min_bound) / 30
+
+    @staticmethod
+    def from_mesh(o3d_mesh, voxel_size = None):
+        if voxel_size is None:
+            voxel_size = Voxelized.auto_voxel_size(o3d_mesh)
         ### 进行体素化
         voxel_grid = o3d.geometry.VoxelGrid.create_from_triangle_mesh(o3d_mesh, voxel_size)
         
@@ -420,7 +476,9 @@ class Voxelized():
         return Voxelized(entity, restore_mat, orig_geometry = o3d_mesh)
 
     @staticmethod
-    def from_pcd(o3d_pcd, voxel_size):
+    def from_pcd(o3d_pcd, voxel_size = None):
+        if voxel_size is None:
+            voxel_size = Voxelized.auto_voxel_size(o3d_pcd)
         voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(o3d_pcd, voxel_size=voxel_size)
         
         ###retore_mat

@@ -7,11 +7,6 @@ This mesh needs to be processed in a mesh processing tool to remove the artifact
 
 """
 from tqdm import tqdm, trange
-from data_recoder import Recorder
-from model_manager import EnumElements, ModelManager
-from aruco_detector import ArucoDetector
-from utils.camera_sys import convert_depth_frame_to_pointcloud
-from utils.bounded_voronoi import bounded_voronoi
 import open3d as o3d
 import numpy as np
 import cv2
@@ -19,38 +14,23 @@ import colorsys
 import os
 from scipy.optimize import linear_sum_assignment
 
-from . import Posture, JsonIO
-from utils.plane import fitplane
-from utils.pc_voxelize import pc_voxelize, pc_voxelize_reture
+from .data_manager import DataRecorder, EnumElements, ModelManager, ProcessData
+from .aruco_detector import ArucoDetector
+from .utils.camera_sys import convert_depth_frame_to_pointcloud
+from .utils.bounded_voronoi import bounded_voronoi
+from .utils.plane import fitplane
+from .utils.pc_voxelize import pc_voxelize, pc_voxelize_reture
+from . import Posture, JsonIO, JsonDict
 
-class ProcessData():
 
-    ARUCO_USED_TIMES = "aruco_used_times"
-    ARUCO_CENTERS = "aruco_centers"
-    PLANE_EQUATION = "plane_equation"
-    TRANS_MAT_C0_2_SCS = "trans_mat_C0_2_SCS"
-    VOR_POLYS_COORD = "vor_polys_coord"
-    FLOOR_COLOR = "floor_color"
 
-    def __init__(self, directory) -> None:
-        self.directory = directory
-        self.process_file = os.path.join(self.directory, "pcd_creator_process_data.json")
-        self.load_process_data()
-
-    def load_process_data(self):
-        self.process_data = JsonIO.load_json(self.process_file)
-
-    def dump_process_data(self):
-        JsonIO.dump_json(self.process_file, self.process_data)
-
-class PcdCreator(ProcessData):
+class PcdCreator():
     '''
     1.register the pointclouds of the scene
     2.segment the scene into different parts
     3.match the name of the segment with the name of the object
     '''
-    def __init__(self, data_recorder:Recorder, aruco_detector:ArucoDetector, model_manager:ModelManager, voxel_size = 0.5) -> None:
-        super().__init__(data_recorder.directory)
+    def __init__(self, data_recorder:DataRecorder, aruco_detector:ArucoDetector, model_manager:ModelManager, voxel_size = 0.5) -> None:
         
         self.data_recorder = data_recorder
         self.aruco_detector = aruco_detector
@@ -60,6 +40,8 @@ class PcdCreator(ProcessData):
         self.radius = self.voxel_size * 2
         self.max_correspondence_distance_coarse     = voxel_size * 15
         self.max_correspondence_distance_fine       = voxel_size * 1.5
+        
+        self.process_data = self.model_manager.process_data
         
     def _register_post_process(self, originals:list[o3d.geometry.PointCloud]):
         """
@@ -105,13 +87,13 @@ class PcdCreator(ProcessData):
         # 降采样合并结果
         # mesh_pcd, _ = mesh_pcd.remove_statistical_outlier(20, 0.8)
         scenemerged_pcd = scenemerged_pcd.voxel_down_sample(voxel_size=0.001)
-        self.model_manager.write_merged_registered_pcd(scenemerged_pcd)
+        self.model_manager.merged_regist_pcd_file.write(scenemerged_pcd)
 
     def register(self, downsample = True):
         raw_pcd_dict = {}
         aruco_used_times = {}
         for category_idx, framemeta in tqdm(self.data_recorder.read_in_category_range(0, -1)):
-            category_name = self.data_recorder.std_models_names[category_idx]
+            category_name = self.data_recorder.std_meshes_names[category_idx]
 
             color   = framemeta.color
             depth   = framemeta.depth
@@ -143,12 +125,12 @@ class PcdCreator(ProcessData):
                 aruco_used_times[category_name].setdefault(id_, 0)
                 aruco_used_times[category_name][id_] += 1
         
-        self.process_data[self.ARUCO_USED_TIMES] = aruco_used_times
+        self.process_data[ProcessData.ARUCO_USED_TIMES] = aruco_used_times
         # post process
         for k, pcd_list in raw_pcd_dict.items():
             singlemerged_pcd = self._register_post_process(pcd_list)
             # write
-            name = self.data_recorder.std_models_names[k]
+            name = self.data_recorder.std_meshes_names[k]
             self.model_manager.registerd_pcd.write(name, singlemerged_pcd)
         self._merge_meshes()
         
@@ -316,7 +298,10 @@ class PcdCreator(ProcessData):
         '''
         org_pcd = self.crop_sence(trans_mat, arucos_SCS)
         ### 1 ###
-        if update:
+        if update or \
+                PcdCreator.ARUCO_CENTERS not in self.process_data or \
+                PcdCreator.PLANE_EQUATION not in self.process_data or \
+                PcdCreator.TRANS_MAT_C0_2_SCS not in self.process_data:
             aruco_centers, plane_equation, trans_mat = self.build_build_sceneCS(org_pcd)
         else:
             aruco_centers = self.process_data[PcdCreator.ARUCO_CENTERS]
@@ -327,17 +312,20 @@ class PcdCreator(ProcessData):
         # ax = plt.axes(projection='3d')  # 设置三维轴
         # ax.scatter(arucos_SCS[:, 0], arucos_SCS[:, 1], arucos_SCS[:, 2])
         # plt.show()
-        if update:
-            floor_color = self.get_floor_color(org_pcd)
+        if update or PcdCreator.VOR_POLYS_COORD not in self.process_data:
             pointcloud = np.array(org_pcd.points) * 1000
             ### 3 ###
             colors =  np.array(org_pcd.colors)
             box, box_color, restore_mat = pc_voxelize(pointcloud, voxel_size, pcd_color = colors) #???
             vor_polys_coord = get_seg_maps(box[:,:,0], restore_mat, scale = 1000) #???
             self.process_data[PcdCreator.VOR_POLYS_COORD] = vor_polys_coord
-            self.process_data[PcdCreator.FLOOR_COLOR] = floor_color
         else:
             vor_polys_coord = self.process_data[PcdCreator.VOR_POLYS_COORD]
+        ### 3 ###
+        if update or PcdCreator.FLOOR_COLOR not in self.process_data:
+            floor_color = self.get_floor_color(org_pcd)
+            self.process_data[PcdCreator.FLOOR_COLOR] = floor_color
+        else:
             floor_color = self.process_data[PcdCreator.FLOOR_COLOR]
 
         seged_pcds = self.match_segmesh_name(vor_polys_coord, trans_mat)
@@ -432,7 +420,7 @@ class PcdCreator(ProcessData):
         # pointcloud_path = os.path.join(directory, REGIS_DIR, "merged.ply")
         # org_pcd = o3d.io.read_point_cloud(pointcloud_path)  
         # org_pcd = org_pcd.voxel_down_sample(voxel_size=0.001)
-        org_pcd = self.model_manager.read_merged_registered_pcd()
+        org_pcd = self.model_manager.merged_regist_pcd_file.read()[0]
         org_pcd.transform(trans_mat)
         w,h,_ = np.max(arucos_SCS, axis=0) - np.min(arucos_SCS, axis=0)
 

@@ -1,5 +1,5 @@
 from posture_6d.posture import Posture
-from posture_6d.mesh_manager import MeshMeta
+from posture_6d.data.mesh_manager import MeshMeta
 
 import numpy as np
 import open3d as o3d

@@ -6,8 +6,10 @@ import numpy as np
 import open3d as o3d
 import cv2
 import matplotlib.pyplot as plt
+import os
+from typing import Union
 
-from .mesh_manager import MeshMeta
+from .data.mesh_manager import MeshMeta
 from .posture import Posture
 from .intr import CameraIntr
 
@@ -144,3 +146,151 @@ def calc_landmarks_proj(mesh_meta:MeshMeta, postures:Posture, intrinsics:CameraI
 def calc_bbox_3d_proj(mesh_meta:MeshMeta, postures:Posture, intrinsics:CameraIntr):
     bbox_3d = mesh_meta.bbox_3d
     return intrinsics * (postures * bbox_3d)
+
+class PnPSolver():
+    '''
+    解PnP
+    '''
+    def __init__(self, matrix_camera:Union[np.ndarray, str, None] = None, distortion_coeffs:Union[np.ndarray, None] = None) -> None:
+        '''
+        brief
+        -----
+        PnP求解器，内置了各个物体的关键点3D坐标、包围盒3D坐标
+        
+        parameters
+        -----
+        image_resize: 经过网络预测的图像的大小会变化，这会导致内参的变换，需要传入该参数以确保内参的正确
+        matrix_camera: 相机内参（原图）
+        models_info_path: 模型信息路径
+        keypoint_info_path: 关键点位置信息路径
+        '''
+        self.init_default_intr(matrix_camera)
+        self.init_distortion_coeffs(distortion_coeffs)
+
+    def init_default_intr(self, matrix_camera:Union[np.ndarray, str, None] = None):
+        if isinstance(matrix_camera, str):
+            # read from file
+            if os.path.splitext(matrix_camera)[-1] == ".txt":
+                K = np.loadtxt(matrix_camera)
+                self.intr = CameraIntr(K)
+            elif os.path.splitext(matrix_camera)[-1] == ".json":
+                self.intr = CameraIntr.from_json(matrix_camera)
+            elif os.path.splitext(matrix_camera)[-1] == ".npy":
+                self.intr = CameraIntr(np.load(matrix_camera))
+            else:
+                raise ValueError("Unknown file type: {}, '.txt', '.json', '.npy' is expected.".format(os.path.splitext(matrix_camera)[-1]))
+        elif isinstance(matrix_camera, np.ndarray):
+            self.intr = CameraIntr(matrix_camera)
+        elif matrix_camera is None:
+            self.intr = None
+        else:
+            raise TypeError("matrix_camera should be str or np.ndarray, but got {}".format(type(matrix_camera)))        
+
+    def init_distortion_coeffs(self, distortion_coeffs:Union[np.ndarray, None] = None):
+        if distortion_coeffs is None:
+            self.distortion_coeffs = np.zeros((5,1))
+        elif isinstance(distortion_coeffs, np.ndarray):
+            self.distortion_coeffs = distortion_coeffs
+        else:
+            raise ValueError("distortion_coeffs should be None or np.ndarray, but got {}".format(type(distortion_coeffs)))
+
+    @staticmethod
+    def get_zoomed_K(K:np.ndarray, image_resize:tuple[tuple[int, int], tuple[int, int]]) -> np.ndarray:
+        '''
+        K: np.ndarray, 3x3
+        image_resize: ((w, h), (w, h)), eg.((640, 480), (640, 480))
+        '''
+        # the intrinsics matrix should be scaled accordingly
+        resize_ratio = image_resize[1][0] / np.max(image_resize[0])
+        M1 = np.array([[1,0,image_resize[1][0]/2],[0,1,image_resize[1][1]/2],[0, 0, 1]])
+        M2 = np.array([[resize_ratio,0,0],[0,resize_ratio,0],[0, 0, 1]])
+        # M2 = np.array([[1,0,0],[0,1,0],[0, 0, resize_ratio]])
+        M3 = np.array([[1,0,-image_resize[0][0]/2],[0,1,-image_resize[0][1]/2],[0, 0, 1]])
+        M:np.ndarray = np.linalg.multi_dot((M1, M2, M3))
+        return M.dot(K)
+
+    def __filter_cam_parameter(self, 
+                               K:Union[np.ndarray, CameraIntr, None], 
+                               D:Union[np.ndarray, None]):
+        # intrinsics
+        assert isinstance(K, (np.ndarray, CameraIntr, type(None))), "K should be np.ndarray or CameraIntr, but got {}".format(type(K))
+        assert isinstance(D, (np.ndarray, type(None))), "D should be np.ndarray, but got {}".format(type(D))
+        if isinstance(K, np.ndarray):
+            assert K.shape == (3,3)
+        elif isinstance(K, CameraIntr):
+            K = K.intr_M
+        else:
+            assert self.intr is not None, "K is None and self.intr is None, please at least set one of them."
+            K = self.intr.intr_M
+        
+        # distortion_coeffs
+        if isinstance(D, np.ndarray):
+            assert D.shape == (5,1)
+        else:
+            D = self.distortion_coeffs
+        return K, D
+
+    def __filter_visib(self,
+                        points      :np.ndarray, 
+                        points_3d   :np.ndarray, 
+                        points_visib:Union[np.ndarray, None] == None):
+        if points_visib is None or len(points_visib) == 0:
+            pass
+        elif points_visib.shape[0] == points_3d.shape[0]:
+            points_visib = points_visib.astype(np.bool_)
+            points_3d = points_3d[points_visib]
+            points = points[points_visib]
+        else:
+            raise ValueError("PnPSolver.__filter_visib: she shape of 'points_visib' is not matched with 'points' or 'points_3d'")
+
+        return points, points_3d
+
+    def solvepnp(self,
+                        points      :np.ndarray, 
+                        points_3d   :np.ndarray,
+                        points_visib:np.ndarray = None,  
+                        K           :Union[np.ndarray, CameraIntr] = None,  
+                        D           :np.ndarray = None,
+                        *, return_posture = False):
+        '''
+        point_type: 'kp', 'bbox'
+        '''
+        K,D = self.__filter_cam_parameter(K, D)
+        points, points_3d = self.__filter_visib(points, points_3d, points_visib)
+        # 计算
+        success, vector_R, vector_T  = cv2.solvePnP(points_3d, points, K, D, flags=cv2.SOLVEPNP_EPNP)
+        if return_posture:
+            return Posture(rvec=vector_R, tvec=vector_T)
+        else:
+            return vector_R, vector_T
+        
+    def calc_reproj(self, points_3d   :np.ndarray, 
+                        vector_R    :np.ndarray = None, 
+                        vector_T    :np.ndarray = None,
+                        posture     :Posture    = None,
+                        K           :np.ndarray = None, 
+                        D           :np.ndarray = None) ->np.ndarray:
+        '''
+        * points_3d: [N,3]
+        * vector_R: [3,1] or [3]
+        * vector_T: [3,1] or [3]
+        * posture: Posture
+        * K: [3,3]
+        * D: [5,1]
+
+        return 
+        -----
+        * point2D: [N,2]
+        '''
+        assert (vector_R is not None and vector_T is not None) or posture is not None, "vector_R and vector_T or posture should be provided."
+        if posture is not None:
+            assert isinstance(posture, Posture), "posture should be Posture, but got {}".format(type(posture))
+            vector_R = posture.rvec
+            vector_T = posture.tvec
+        else:
+            assert isinstance(vector_R, np.ndarray) and isinstance(vector_T, np.ndarray) and\
+                vector_R.size == 3 and vector_T.size == 3
+        K,D = self.__filter_cam_parameter(K, D)
+        point2D, _ = cv2.projectPoints(points_3d, vector_R, vector_T, K, D)
+        point2D = np.squeeze(point2D, 1)
+        return point2D

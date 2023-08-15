@@ -86,7 +86,7 @@ if __name__ == "__main__":
     else:
         raise SystemError
     trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
-                      flowfile= flow,
+                      flow_file= flow,
                       distribute=False,
                       start_epoch = start_epoch
                       )

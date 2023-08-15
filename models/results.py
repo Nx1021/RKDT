@@ -462,7 +462,7 @@ class LandmarkDetectionResult():
         return landmarks
     
 class ObjPosture():
-    def __init__(self, landmarks, bbox_n, class_id, image_size, trans_vecs=None):
+    def __init__(self, landmarks, bbox_n, class_id, image_size, posture:Posture=None):
         """
         初始化ObjPosture对象。
 
@@ -475,11 +475,7 @@ class ObjPosture():
         self.landmarks = landmarks
         self.bbox_n:np.ndarray = bbox_n
         self.class_id: int = class_id
-        if trans_vecs is not None:
-            rvec, tvec = trans_vecs
-            self.posture = Posture(rvec=rvec, tvec=tvec)
-        else:
-            self.posture = None
+        self.posture = posture
         self.image_posture:ImagePosture = None
 
         self.image_size = image_size
@@ -636,7 +632,7 @@ class ImagePosture():
         self.obj_list.insert(index, obj)
         obj.image_posture = self
 
-    def split(self):
+    def split(self, get_trans_vecs = True):
         """
         将ImagePosture对象拆分为图像、关键点、类别标识、边界框和姿态向量的列表。
 
@@ -650,12 +646,15 @@ class ImagePosture():
         landmarks = []
         class_ids = []
         bboxes = []
-        trans_vecs = []
+        trans_vecs:list[Union[tuple[np.ndarray], Posture]] = []
         for obj_i in range(len(self.obj_list)):
             landmarks.append(self.obj_list[obj_i].landmarks)
             class_ids.append(self.obj_list[obj_i].class_id)
             bboxes.append(self.obj_list[obj_i].bbox_n)
-            trans_vecs.append((self.obj_list[obj_i].rvec, self.obj_list[obj_i].tvec))
+            if get_trans_vecs:
+                trans_vecs.append((self.obj_list[obj_i].rvec, self.obj_list[obj_i].tvec))
+            else:
+                trans_vecs.append(self.obj_list[obj_i].posture)
         return self.image, landmarks, class_ids, bboxes, trans_vecs
 
     def plot(self, color = "black", show_image = True):

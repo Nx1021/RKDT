@@ -1,10 +1,11 @@
-from .. import dataset_format
-from .. import viewmeta
-from ..mesh_manager import MeshManager, MeshMeta, Voxelized
+from ..data import dataset_format
+from ..data import viewmeta
+from ..data.mesh_manager import MeshManager, MeshMeta, Voxelized
 from ..derive import calc_masks
 from ..posture import Posture, SphereAngle
 from ..intr import CameraIntr
-from ..dataset_format import DatasetFormat, LinemodFormat, Elements, JsonDict
+from ..data.dataset_format import *
+from ..data.viewmeta import ViewMeta
 from ..utils import JsonIO
 
 RGB_DIR     = LinemodFormat.RGB_DIR

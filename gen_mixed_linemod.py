@@ -2,15 +2,15 @@ from __init__ import DATASETS_DIR, CFG_DIR
 import os
 import cv2
 import numpy as np
-from posture_6d.dataset_format import LinemodFormat, VocFormat
-from posture_6d.mesh_manager import MeshManager
-from posture_6d.viewmeta import ViewMeta
+from posture_6d.data.dataset_format import LinemodFormat, VocFormat, FileCluster
+from posture_6d.data.mesh_manager import MeshManager
+from posture_6d.data.viewmeta import ViewMeta
 from tqdm import tqdm
 import copy
 import matplotlib.pyplot as plt
 
-base_aug_ratio = 3
-isolate_aug_ratio = 5
+BASE_AUG_RATIO = 3
+ISOLATE_AUG_RATIO = 5
 
 def aug_viewmeta(viewmeta:ViewMeta):
     angle = np.random.rand() * 2 * np.pi/6 - np.pi/6
@@ -39,22 +39,24 @@ class MixLinemod_Modes(enumerate):
     OLDT = 1
 
 class MixLinemod_VocFormat(VocFormat):
-    class _Writer(VocFormat._Writer):
-        def __exit__(self, exc_type, exc_value: Exception, traceback):
-            format_obj:MixLinemod_VocFormat = self.format_obj
-            format_obj.save_log()
-            return super().__exit__(exc_type, exc_value, traceback)
-
     def __init__(self, directory, data_num=0, split_rate=0.75, clear=False) -> None:
         super().__init__(directory, data_num, split_rate, clear)
-        self.base_logfile = f"{self.directory}/base_log.txt"
-        self.isolate_logfile = f"{self.directory}/isolate_log.txt"
-        self.oldt_train_file    = f"{self.directory}/oldt_train.txt"
-        self.oldt_val_file      = f"{self.directory}/oldt_val.txt"
-        self.load_data_log()
-        self.load_oldt_log()
-
         self.mode = MixLinemod_Modes.OLDT
+
+    def _init_clusters(self):
+        super()._init_clusters()
+        self.base_logfile       = "base_log.txt"
+        self.isolate_logfile    = "isolate_log.txt"
+        self.oldt_train_file    = "oldt_train.txt"
+        self.oldt_val_file      = "oldt_val.txt"
+        self.base_iso_split_files = FileCluster(self, "", True,
+                                                FileCluster.SingleFile(self.base_logfile,    self.loadsplittxt_func, self.savesplittxt_func),
+                                                FileCluster.SingleFile(self.isolate_logfile, self.loadsplittxt_func, self.savesplittxt_func))
+        self.oldt_split_files = FileCluster(self, "", True,
+                                            FileCluster.SingleFile(self.oldt_train_file, self.loadsplittxt_func, self.savesplittxt_func),
+                                            FileCluster.SingleFile(self.oldt_val_file,   self.loadsplittxt_func, self.savesplittxt_func))
+        self.load_data_log()
+        self.load_oldt_log()    
 
     def set_mode(self, mode:MixLinemod_Modes, train:bool):
         self.mode   = mode
@@ -78,51 +80,74 @@ class MixLinemod_VocFormat(VocFormat):
             raise ValueError("Unknown mode")
 
     def load_data_log(self):
-        if os.path.exists(self.base_logfile):
-            self.base_idx = np.loadtxt(self.base_logfile, dtype=np.int32).reshape(-1)
+        if self.base_iso_split_files.all_exist:
+            self.base_idx, self.isolate_idx = self.base_iso_split_files.read_all()
         else:
-            self.base_idx = np.array([], dtype=np.int32)
-        if os.path.exists(self.isolate_logfile):
-            self.isolate_idx = np.loadtxt(self.isolate_logfile, dtype=np.int32).reshape(-1)
-        else:
-            self.isolate_idx = np.array([], dtype=np.int32)
+            self.base_idx       = np.array([], dtype=np.int32)
+            self.isolate_idx    = np.array([], dtype=np.int32)
+
+        # if os.path.exists(self.base_logfile):
+        #     self.base_idx = np.loadtxt(self.base_logfile, dtype=np.int32).reshape(-1)
+        # else:
+        #     self.base_idx = np.array([], dtype=np.int32)
+        # if os.path.exists(self.isolate_logfile):
+        #     self.isolate_idx = np.loadtxt(self.isolate_logfile, dtype=np.int32).reshape(-1)
+        # else:
+        #     self.isolate_idx = np.array([], dtype=np.int32)
     
     def load_oldt_log(self):
-        if os.path.exists(self.oldt_train_file) and os.path.exists(self.oldt_val_file):
-            self.oldt_train_idx_array = np.loadtxt(self.oldt_train_file, dtype=np.int32).reshape(-1)
-            self.oldt_val_idx_array = np.loadtxt(self.oldt_val_file, dtype=np.int32).reshape(-1)
+        if self.oldt_split_files.all_exist:
+            self.oldt_train_idx_array, self.oldt_val_idx_array = self.oldt_split_files.read_all()
         else:
             base_idx = self.base_idx.copy()
-            base_idx = base_idx[base_idx % base_aug_ratio == 0] 
+            base_idx = base_idx[base_idx % BASE_AUG_RATIO == 0] 
             np.random.shuffle(base_idx)
             self.oldt_val_idx_array = base_idx[:int(len(base_idx)*0.85)]
             self.oldt_train_idx_array = np.setdiff1d(
                 np.union1d(self.base_idx, self.isolate_idx),
                 self.oldt_val_idx_array
                 )
-            with open(self.oldt_train_file, "w") as f:
-                f.writelines("".join([str(i)+"\n" for i in self.oldt_train_idx_array]))
-            with open(self.oldt_val_file, "w") as f:
-                f.writelines("".join([str(i)+"\n" for i in self.oldt_val_idx_array]))
+            self.oldt_split_files.write_all((self.oldt_train_idx_array, self.oldt_val_idx_array))
 
 
+        # if os.path.exists(self.oldt_train_file) and os.path.exists(self.oldt_val_file):
+        #     self.oldt_train_idx_array = np.loadtxt(self.oldt_train_file, dtype=np.int32).reshape(-1)
+        #     self.oldt_val_idx_array = np.loadtxt(self.oldt_val_file, dtype=np.int32).reshape(-1)
+        # else:
+        #     base_idx = self.base_idx.copy()
+        #     base_idx = base_idx[base_idx % base_aug_ratio == 0] 
+        #     np.random.shuffle(base_idx)
+        #     self.oldt_val_idx_array = base_idx[:int(len(base_idx)*0.85)]
+        #     self.oldt_train_idx_array = np.setdiff1d(
+        #         np.union1d(self.base_idx, self.isolate_idx),
+        #         self.oldt_val_idx_array
+        #         )
+        #     with open(self.oldt_train_file, "w") as f:
+        #         f.writelines("".join([str(i)+"\n" for i in self.oldt_train_idx_array]))
+        #     with open(self.oldt_val_file, "w") as f:
+        #         f.writelines("".join([str(i)+"\n" for i in self.oldt_val_idx_array]))
     
     def save_log(self):
-        with open(self.base_logfile, "w") as f:
-            f.writelines("".join([str(i)+"\n" for i in self.base_idx]))
-        with open(self.isolate_logfile, "w") as f:
-            f.writelines([str(i)+"\n" for i in self.isolate_idx])
+        self.base_iso_split_files.write_all((self.base_idx, self.isolate_idx))
+        # with open(self.base_logfile, "w") as f:
+        #     f.writelines("".join([str(i)+"\n" for i in self.base_idx]))
+        # with open(self.isolate_logfile, "w") as f:
+        #     f.writelines([str(i)+"\n" for i in self.isolate_idx])
     
     def clear(self, ignore_warning=False):
         super().clear(ignore_warning)
-        self.base_idx.clear()
-        self.isolate_idx.clear()
-        with open(self.base_logfile, "w") as f:
-            pass
-        with open(self.isolate_logfile, "w") as f:
-            pass
+        self.base_idx = np.array([], dtype=np.int32)
+        self.isolate_idx = np.array([], dtype=np.int32)
+        self.base_iso_split_files.clear()
+        # with open(self.base_logfile, "w") as f:
+        #     pass
+        # with open(self.isolate_logfile, "w") as f:
+        #     pass
 
-
+    def stop_writing(self):
+        self.save_log()
+        super().stop_writing()
+    
     
 def aug_isolate(viewmeta:ViewMeta, bgg):
     viewmeta = viewmeta.rotate()
@@ -153,12 +178,12 @@ if __name__ == '__main__':
     for di in range(1, 15):
         isolate = LinemodFormat(r"E:\shared\code\OLDT\datasets\linemod_isolate\{}".format(str(di+1).rjust(6, "0")))
         lmvf = VocFormat(r"E:\shared\code\OLDT\datasets\linemod\{}".format(str(di).rjust(6, "0")))
-        lmmix_vf = MixLinemod_VocFormat(r"E:\shared\code\OLDT\datasets\linemod_mix\{}".format(str(di).rjust(6, "0")), isolate_aug_ratio*isolate.data_num + base_aug_ratio*lmvf.data_num)
+        lmmix_vf = MixLinemod_VocFormat(r"E:\shared\code\OLDT\datasets\linemod_mix\{}".format(str(di).rjust(6, "0")), ISOLATE_AUG_RATIO*isolate.data_num + BASE_AUG_RATIO*lmvf.data_num)
         lmmix_vf.close_all(False)
         
-        with lmmix_vf.start_to_write():
+        with lmmix_vf.writer:
             for viewmeta in tqdm(lmvf.read_from_disk()):
-                for _ in range(base_aug_ratio):
+                for _ in range(BASE_AUG_RATIO):
                     lmmix_vf.base_idx.append(lmmix_vf.data_num)
                     if _ != 0:
                         v = copy.deepcopy(aug_viewmeta(viewmeta))
@@ -167,14 +192,14 @@ if __name__ == '__main__':
                     lmmix_vf.write_to_disk(v)
                 
         
-        with lmmix_vf.start_to_write():
+        with lmmix_vf.writer:
             for viewmeta in tqdm(isolate.read_from_disk()):
                 viewmeta.modify_class_id([(di+1, di)])
                 viewmeta.visib_fract = {di: 1.0}
                 viewmeta.calc_by_base(mesh_dict)
                 ### use background from backgroundloader
                 ###
-                for _ in range(isolate_aug_ratio):
+                for _ in range(ISOLATE_AUG_RATIO):
                     lmmix_vf.isolate_idx.append(lmmix_vf.data_num)
                     if _ != 0:
                         v = copy.deepcopy(aug_viewmeta(viewmeta))

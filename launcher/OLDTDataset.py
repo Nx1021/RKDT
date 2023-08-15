@@ -3,8 +3,9 @@ import torch
 from torch.utils.data import Dataset
 from models.results import ObjPosture, ImagePosture
 from models.utils import normalize_bbox
-from posture_6d.dataset_format import VocFormat
-from posture_6d.viewmeta import  ViewMeta
+from posture_6d.data.dataset_format import VocFormat
+from posture_6d.data.viewmeta import  ViewMeta
+from posture_6d.posture import Posture
 
 import numpy as np
 import os
@@ -101,6 +102,7 @@ class OLDTDataset(Dataset):
         orig_idx = int(idx / self.data_inflation)
         data_i = self.idx_array[orig_idx]
         viewmeta = self.vocformat.read_one(data_i)   
+        viewmeta.calc_bbox2d_from_mask(viewmeta.masks)
         if if_aug:
             viewmeta = self.augment(viewmeta)
         # viewmeta = viewmeta.rotate(0.2)
@@ -113,6 +115,7 @@ class OLDTDataset(Dataset):
         bbox = np.array([bbox_2d[x] for x in class_id])
         bbox_n = normalize_bbox(bbox, image.shape[:2][::-1])
         trans_vecs = [viewmeta.extr_vecs[x] for x in class_id]
+        postures = [Posture(rvec=x[0], tvec=x[1]) for x in trans_vecs]
         intr_M = viewmeta.intr
 
         image_posture = ImagePosture(image, intr_M=intr_M)
@@ -122,7 +125,7 @@ class OLDTDataset(Dataset):
                        bbox_n[obj_i],
                        class_id[obj_i],
                        image_posture.image_size,
-                       trans_vecs[obj_i])
+                       postures[obj_i])
             )
 
         return image_posture

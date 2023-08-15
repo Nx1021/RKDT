@@ -10,6 +10,19 @@ yolo_override:
   data: ./datasets/linemod_mix.yaml # path to data file, i.e. coco128.yaml
   verbose: false  # whether to print verbose output
 
+### setup
+setup:
+  sub_data_dir: linemod_mix/000000
+  ldt_branches:
+    0: 20230811084907branch_ldt_00.pt
+  batch_size: 32
+  start_epoch: 1
+  dataset_format: MixLinemod_VocFormat
+  use_data_on_server: true
+  flow_file: train_flow.yaml
+  server_dataset_dir: /home/nerc-ningxiao/datasets/   # server dataset dir  
+
+
 ### landmark detect settings
 max_token_num: 784
 pool_size: [24, 24]
