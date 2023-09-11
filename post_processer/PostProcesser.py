@@ -1,5 +1,5 @@
 from . import SCRIPT_DIR
-from posture_6d.posture import Posture
+from posture_6d.core.posture import Posture
 from posture_6d.derive import PnPSolver
 from posture_6d.metric import MetricCalculator
 from posture_6d.data.mesh_manager import MeshManager

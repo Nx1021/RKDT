@@ -1,7 +1,7 @@
 from .gripper import MyThreeFingerGripper
 from .object_pcd import ObjectPcd, create_ObjectPcd_from_file
 
-from posture_6d.posture import Posture
+from posture_6d.core.posture import Posture
 import numpy as np
 import open3d as o3d
 import copy

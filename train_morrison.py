@@ -18,9 +18,9 @@ from utils.yaml import load_yaml, dump_yaml
 from posture_6d.data.dataset_format import Mix_VocFormat
 
 if __name__ == "__main__":
-    cfg_file = f"{CFG_DIR}/oldt_linemod_mix.yaml"
+    cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
     # torch.cuda.set_device("cuda:0")
-    for i in [2, 14]:
+    for i in range(1, 2):
         setup_paras = load_yaml(cfg_file)["setup"]
 
         sys = platform.system()
@@ -32,9 +32,14 @@ if __name__ == "__main__":
             # model = torch.nn.DataParallel(model)
         setup_paras["ldt_branches"] = {i: ""}
         setup_paras["batch_size"] = batch_size
-        setup_paras["sub_data_dir"] = f"linemod_mix/{str(i).rjust(6, '0')}"
+        setup_paras["sub_data_dir"] = f"morrison_mix/"
 
         trainer = setup("train", **setup_paras)
+        trainer.train_dataset.vocformat.spliter_group.set_split_mode("posture")
+        trainer.train_dataset.vocformat.set_elements_cachemode(True)
+        format:Mix_VocFormat = trainer.train_dataset.vocformat
+        # format.gen_posture_log(0.5)
+        # trainer.train_dataset.vocformat.spliter_group.copyto(os.path.join(setup_paras["server_dataset_dir"], "morrison_mix", "ImageSets"))
         trainer.train()
 
         trainer = None

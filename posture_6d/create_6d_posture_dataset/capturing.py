@@ -418,11 +418,28 @@ class Capturing():
                 img = np.zeros((480, 640, 3), np.uint8)
             self.obj_exanple_img_dict.update({name: img})
 
-        self.aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
-        self.parameters = aruco.DetectorParameters_create()
+        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+        self.parameters = aruco.DetectorParameters()
         self.ignore_stable = False
 
-        self.rs_camera = rs_camera
+        self.__rs_camera = rs_camera
+
+    @property
+    def rs_camera(self):
+        return self.__rs_camera
+    
+    @rs_camera.setter
+    def rs_camera(self, rs_camera:RsCamera):
+        assert isinstance(rs_camera, RsCamera), "para:rs_camera is not a RsCamera"
+        self.__rs_camera = rs_camera
+
+        if rs_camera.mode == 0:
+            intr_json_dir = list(self.data_recorder.intr_0_file.files.keys())[0]
+        elif rs_camera.mode == 1:
+            intr_json_dir = list(self.data_recorder.intr_1_file.files.keys())[0]
+        else:
+            raise Exception("rs_camera.mode is illegal")
+        self.__rs_camera.intr.save_as_json(intr_json_dir)
 
     def read_trans_mats(self):
         # 清空变换矩阵列表和记录位置列表
@@ -471,7 +488,7 @@ class Capturing():
 
     def start(self, break_callback, record_gate = True):
         assert self.rs_camera is not None, "RsCamera is None"
-
+        self.data_recorder.open_all()
         self.record_gate = record_gate
 
         self.T_start = time.time() # 开始时间
@@ -506,6 +523,8 @@ class Capturing():
                     if is_recording_model == False:
                         is_recording_model = True
                         self.data_recorder.inc_idx()
+                        if self.data_recorder.current_category_index in self.data_recorder.skip_segs:
+                            skip = True
                         self.read_trans_mats()
                 if pushto_buffer_permitted:
                     self.process_buffer()
@@ -523,6 +542,8 @@ class Capturing():
         # self.data_recorder.save_record()
         cv2.destroyAllWindows()  # 关闭窗口
         self.rs_camera.pipeline.stop()
+
+        self.data_recorder.close_all()
 
     @property
     def is_waiting(self):
@@ -545,9 +566,11 @@ class Capturing():
         c = self.this_color.copy()
         # 深度图色彩化
         d = np.asanyarray(self.this_depth_frame.get_data())  # 获取深度图像数据
+        max_dn = self.rs_camera.intr.max_depth / self.rs_camera.intr.depth_scale
+        d[d > max_dn] = max_dn
         norm_depth_image = d.astype(np.float32)  # 转换数据类型为浮点型
         # 对深度图像进行限制，超过一定深度范围的值设为最大深度值
-        norm_depth_image[norm_depth_image > int(2 / self.rs_camera.intr.depth_scale)] = int(2 / self.rs_camera.intr.depth_scale)
+        # norm_depth_image[norm_depth_image > int(2 / self.rs_camera.intr.depth_scale)] = int(2 / self.rs_camera.intr.depth_scale)
         norm_depth_image = (norm_depth_image)/(norm_depth_image.max()+1)  # 归一化深度图像
         norm_depth_image = (norm_depth_image*255).astype(np.uint8)  # 缩放深度图像的像素值到 0~255
         depth_colormap = cv2.applyColorMap(norm_depth_image, cv2.COLORMAP_JET)  # 将深度图像转换为伪彩色图像
@@ -801,7 +824,6 @@ class Capturing():
             else:
                 pass
             self.__clear_buffer()           
-
 
 
     # for mode, func in zip([Camera.MODE_DATA], [callback_DATA]):

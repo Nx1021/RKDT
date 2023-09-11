@@ -2,8 +2,8 @@ from torch import Tensor
 import torch
 from .utils import denormalize_bbox, normalize_bbox, tensor_to_numpy
 
-from posture_6d.posture import Posture
-from posture_6d.intr import CameraIntr
+from posture_6d.core.posture import Posture
+from posture_6d.core.intr import CameraIntr
 
 import matplotlib.pyplot as plt
 import numpy as np

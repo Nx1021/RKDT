@@ -7,11 +7,13 @@ import open3d as o3d
 import cv2
 import matplotlib.pyplot as plt
 import os
-from typing import Union
+from typing import Union, Iterable, TypeVar, Callable
 
 from .data.mesh_manager import MeshMeta
-from .posture import Posture
-from .intr import CameraIntr
+from .data.viewmeta import ViewMeta, ignore_viewmeta_warning
+# from .data.viewmeta import ViewMeta
+from .core.posture import Posture
+from .core.intr import CameraIntr
 
 def inv_proj(intr_M:np.ndarray, pixels:np.ndarray, depth:float):
     '''
@@ -43,9 +45,9 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
     visib_fract: list[float]
     '''
     def draw_one_mask(meta:MeshMeta, posture:Posture):
-        CAM_WID, CAM_HGT    = intrinsics.CAM_WID, intrinsics.CAM_HGT # 重投影到的深度图尺寸
-        EPS = intrinsics.EPS
-        MAX_DEPTH = intrinsics.MAX_DEPTH
+        CAM_WID, CAM_HGT    = intrinsics.cam_wid, intrinsics.cam_hgt # 重投影到的深度图尺寸
+        EPS = intrinsics.eps
+        MAX_DEPTH = intrinsics.max_depth
         pc = meta.points_array #[N, 3]
         triangles = meta.tris_array #[T, 3]
         pc = posture * pc #变换
@@ -65,7 +67,7 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
             new_pc_index[valid] = np.arange(np.sum(valid)).astype(np.int32)
             ### 绘制掩膜
             if not tri_mode:
-                mask[v, u] = 255
+                mask[tuple(pts[:, ::-1].T)] = 255
                 kernel_size = max(int((u.max() - u.min()) * (v.max() - v.min()) / u.shape[0]), 3)
                 kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, 
@@ -102,8 +104,8 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
             min_depth = np.full((CAM_HGT, CAM_WID), MAX_DEPTH)
         return min_depth, orig_proj
 
-    depth_images = []
-    orig_proj_list = []
+    depth_images:list[np.ndarray] = []
+    orig_proj_list:list[np.ndarray] = []
     for meta, posture in zip(mesh_metas, postures):
         min_depth, orig_proj = draw_one_mask(meta, posture)
         depth_images.append(min_depth)
@@ -116,9 +118,9 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
         mask[min_depth < min_depth.max()] = 255
         masks.append(mask)
     else:
-        depth_tensor = np.array(depth_images) #[N, H, W]
-        scene_mask = np.argmin(depth_tensor, axis=0)
-        back_ground = np.all(depth_tensor == intrinsics.MAX_DEPTH, axis=0)
+        depth_tensor:np.ndarray = np.array(depth_images) #[N, H, W]
+        scene_mask:np.ndarray = np.argmin(depth_tensor, axis=0)
+        back_ground:np.ndarray = np.all(depth_tensor == intrinsics.max_depth, axis=0)
         scene_mask[back_ground] = -1
         if reserve_empty:
             label_range = depth_tensor.shape[0] - 1
@@ -146,6 +148,101 @@ def calc_landmarks_proj(mesh_meta:MeshMeta, postures:Posture, intrinsics:CameraI
 def calc_bbox_3d_proj(mesh_meta:MeshMeta, postures:Posture, intrinsics:CameraIntr):
     bbox_3d = mesh_meta.bbox_3d
     return intrinsics * (postures * bbox_3d)
+
+def calc_bbox_2d_proj(mesh_meta:MeshMeta, postures:Posture, intrinsics:CameraIntr):
+    point_array = mesh_meta.points_array
+    proj = intrinsics * (postures * point_array)
+    # filter the points out of view
+    proj = intrinsics.filter_in_view(proj)
+    # bbox: [x1, y1, x2, y2]
+    bbox = np.array([np.min(proj[:,0]), np.min(proj[:,1]), np.max(proj[:,0]), np.max(proj[:,1])])
+    return bbox
+
+def cvt_by_intr(image:np.ndarray, 
+                cam_intr_1: Union[np.ndarray, CameraIntr],
+                cam_intr_2: Union[np.ndarray, CameraIntr],
+                new_image_shape:Iterable[int] = None):
+    '''
+    new_image_shape: (w, h)
+    '''
+    # assert isinstance(image, (np.ndarray, ViewMeta)), "image should be np.ndarray or ViewMeta, but got {}".format(type(image))
+    assert isinstance(cam_intr_1, (np.ndarray, CameraIntr)), "cam_intr_1 should be np.ndarray or CameraIntr, but got {}".format(type(cam_intr_1))
+    assert isinstance(cam_intr_2, (np.ndarray, CameraIntr)), "cam_imtr_2 should be np.ndarray or CameraIntr, but got {}".format(type(cam_intr_2))
+    if isinstance(cam_intr_2, np.ndarray) or cam_intr_2.cam_hgt == 0 or cam_intr_2.cam_wid == 0:
+        assert isinstance(new_image_shape, Iterable) and len(new_image_shape) == 2, \
+        "new_image_size should be Iterable and len(new_image_size) == 2, but got {}".format(new_image_shape)
+    else:
+        new_image_shape = (cam_intr_2.cam_wid, cam_intr_2.cam_hgt)
+
+    if isinstance(cam_intr_1, CameraIntr):
+        K1 = cam_intr_1.intr_M
+    else:
+        K1 = cam_intr_1
+    if isinstance(cam_intr_2, CameraIntr):
+        K2 = cam_intr_2.intr_M
+    else:
+        K2 = cam_intr_2
+
+    # 计算从图像1到图像2的透视变换矩阵（单应性矩阵）
+    H = K2.dot(np.linalg.inv(K1))
+
+    # 使用透视变换将图像1转换到图像2的坐标系
+    result_image = cv2.warpPerspective(image, H, new_image_shape) 
+
+    return result_image
+
+@ignore_viewmeta_warning
+def calc_viewmeat_by_base(viewmeta:ViewMeta, mesh_dict:dict[int, MeshMeta], cover = False):
+
+    def _calc_in_loop(keys:list[int], mesh_dict:dict[int, MeshMeta], postures:dict[int, Posture], camera_intr:CameraIntr, func:Callable):
+        _dict = {}
+        for k in keys:
+            _dict[k] = func(mesh_dict[k], postures[k], camera_intr)
+        return _dict
+
+    assert viewmeta.color is not None
+    assert viewmeta.extr_vecs is not None
+    assert viewmeta.intr is not None
+
+    # get camera intr, postures
+    camera_intr = CameraIntr(viewmeta.intr, viewmeta.color.shape[1], viewmeta.color.shape[0], viewmeta.depth_scale)
+    postures_dict = {}
+    keys = []
+    for key in viewmeta.extr_vecs:
+        posture = Posture(rvec=viewmeta.extr_vecs[key][0], tvec=viewmeta.extr_vecs[key][1])
+        postures_dict[key] = posture
+        keys.append(key)
+
+    # calc masks and visib_fract
+    if cover or viewmeta.masks is None or viewmeta.visib_fract is None:
+        mesh_list = [mesh_dict[key] for key in keys]
+        posture_list = [postures_dict[key] for key in keys]
+        masks, visib_fracts = calc_masks(mesh_list, posture_list, camera_intr, ignore_depth=True)
+
+        masks_dict = {}
+        visib_fract_dict = {}
+        for key, mask, visib_fract in zip(keys, masks, visib_fracts):
+            masks_dict[key] = mask
+            visib_fract_dict[key] = visib_fract
+
+        if cover or viewmeta.masks is None:
+            viewmeta.masks = masks_dict
+        if cover or viewmeta.visib_fract is None:
+            viewmeta.visib_fract = visib_fract_dict
+
+    # filter unvisible
+    visible_ids = viewmeta.filter_unvisible()
+
+    # calc bbox_3d, landmarks, labels
+    if cover or viewmeta.bbox_3d is None:
+        viewmeta.bbox_3d = _calc_in_loop(visible_ids, mesh_dict, postures_dict, camera_intr, calc_bbox_3d_proj)
+
+    if cover or viewmeta.landmarks is None:
+        viewmeta.landmarks = _calc_in_loop(visible_ids, mesh_dict, postures_dict, camera_intr, calc_landmarks_proj)
+
+    if cover or viewmeta.labels is None:
+        viewmeta.labels = _calc_in_loop(visible_ids, mesh_dict, postures_dict, camera_intr, calc_bbox_2d_proj)
+
 
 class PnPSolver():
     '''

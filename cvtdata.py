@@ -3,7 +3,7 @@ import sys
 from __init__ import DATASETS_DIR, CFG_DIR
 from posture_6d.data.dataset_format import VocFormat, LinemodFormat, _LinemodFormat_sub1, Elements
 from posture_6d.data.mesh_manager import MeshManager
-from posture_6d.utils import JsonIO
+from posture_6d.core.utils import JsonIO
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import time

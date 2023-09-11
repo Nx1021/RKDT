@@ -42,18 +42,24 @@ class MeshMeta:
         if isinstance(posture, np.ndarray):
             posture = Posture(homomat=posture)
 
-        new_mesh = o3d.geometry.TriangleMesh(self.mesh)
-        new_mesh = new_mesh.transform(posture.trans_mat)
-
         new_bbox = posture * self.bbox_3d if self.bbox_3d is not None else None
         new_ldmk = posture * self.ldmk_3d if self.ldmk_3d is not None else None
 
         if copy:
+            new_mesh = o3d.geometry.TriangleMesh(self.mesh)
+            new_mesh = new_mesh.transform(posture.trans_mat)
+
             return MeshMeta(new_mesh, new_bbox, self.symmetries, self.diameter, new_ldmk, self.name, self.class_id)
         else:
-            self.mesh = new_mesh
-            self.bbox_3d = new_bbox
-            self.ldmk_3d = new_ldmk
+            self.mesh.transform(posture.trans_mat)
+            if new_bbox is not None:
+                self.bbox_3d[:] = new_bbox
+            else:
+                self.bbox_3d = None
+            if new_ldmk is not None:
+                self.ldmk_3d[:] = new_ldmk
+            else:
+                self.ldmk_3d = None
             return self
 
     def __repr__(self) -> str:
@@ -70,8 +76,13 @@ class MeshManager:
     def __init__(self, root, model_names: dict[int, str] = {}, load_all = False, modify_class_id_pairs:list[tuple[int]]=[]) -> None:
         self.root = root
         self.model_names: dict[int, str] = model_names
+        self.__model_name_json = os.path.join(self.root, "models_name.json")
         self.model_dirs : dict[int, str] = {}
         if len(model_names) > 0:
+            model_src = self.model_names.items()
+            JsonIO.dump_json(self.__model_name_json, self.model_names)
+        elif os.path.exists(self.__model_name_json):
+            self.model_names = JsonIO.load_json(self.__model_name_json)
             model_src = self.model_names.items()
         else:
             model_src = enumerate([x for x in os.listdir(self.root) if os.path.splitext(x)[-1] == ".ply"])

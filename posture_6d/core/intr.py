@@ -58,10 +58,9 @@ class CameraIntr():
         u = points[:, 0] * cam_fx / z + cam_cx
         v = points[:, 1] * cam_fy / z + cam_cy
         pixels = np.stack([u,v], axis=-1)
-        valid = z > self.eps
-        return pixels[valid]
+        return pixels
     
-    def filter_in_view(self, pixels):
+    def filter_in_view(self, pixels:np.ndarray):
         '''
         pixels: ndarray [N, (x,y)]
         '''

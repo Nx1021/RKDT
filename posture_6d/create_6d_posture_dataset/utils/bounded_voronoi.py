@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection
 from scipy.spatial import Voronoi
 from shapely.geometry import Polygon
+import cv2
+import skimage
 
 def bounded_voronoi(bnd, pnts, plot = False):
     """
@@ -31,30 +33,60 @@ def bounded_voronoi(bnd, pnts, plot = False):
         i_cell = bnd_poly.intersection(Polygon(vor_poly))
         # 存储考虑封闭空间的Voronoi区域的顶点坐标
         vor_polys.append(list(i_cell.exterior.coords[:-1]))
-    # if plot:
-    # ボロノイ図の描画
-    fig = plt.figure(figsize=(7, 6))
-    ax = fig.add_subplot(111)
+    if plot:
+        # ボロノイ図の描画
+        fig = plt.figure(figsize=(7, 6))
+        ax = fig.add_subplot(111)
 
-    # 母点
-    ax.scatter(pnts[:,0], pnts[:,1])
+        # 母点
+        ax.scatter(pnts[:,0], pnts[:,1])
 
-    # # ボロノイ領域
-    # poly_vor = PolyCollection(vor_polys, edgecolor="black",
-    #                         facecolors="None", linewidth = 1.0)
-    # ax.add_collection(poly_vor)
+        # ボロノイ領域
+        poly_vor = PolyCollection(vor_polys, edgecolor="black",
+                                facecolors="None", linewidth = 1.0)
+        ax.add_collection(poly_vor)
 
-    # xmin = np.min(bnd[:,0])
-    # xmax = np.max(bnd[:,0])
-    # ymin = np.min(bnd[:,1])
-    # ymax = np.max(bnd[:,1])
+        xmin = np.min(bnd[:,0])
+        xmax = np.max(bnd[:,0])
+        ymin = np.min(bnd[:,1])
+        ymax = np.max(bnd[:,1])
 
-    # ax.set_xlim(xmin-0.1, xmax+0.1)
-    # ax.set_ylim(ymin-0.1, ymax+0.1)
-    # ax.set_aspect('equal')
+        ax.set_xlim(xmin-0.1, xmax+0.1)
+        ax.set_ylim(ymin-0.1, ymax+0.1)
+        ax.set_aspect('equal')
 
-    # plt.show()
+        plt.show()
     return vor_polys
+
+def get_seg_maps(floor_slice_map, restore_mat, scale = 1000, model_num = 9):
+    filter_k = np.ones((3,3), np.uint8)
+    image = cv2.morphologyEx(floor_slice_map, cv2.MORPH_CLOSE, filter_k, iterations=1)
+    ### 根据第一层提取中心点，完成vorinoi图的分割
+    not_image = np.logical_not(image).astype(np.uint8)
+    labels_num = 0
+    while np.max(skimage.measure.label(not_image)) > model_num:
+        not_image = cv2.morphologyEx(not_image, cv2.MORPH_DILATE, filter_k, iterations=1)
+    labels = skimage.measure.label(not_image) #分割孤立实体
+    labels_num = np.max(labels)
+    ptns = []
+    for i in range(1, labels.max() + 1):
+        area = np.sum(labels == i)
+        if area < 9:
+            continue
+        else:
+            coords = np.array(np.where(labels == i)).T
+            ptns.append(np.mean(coords, axis=0))
+    ptns = np.array(ptns)        
+    bnd = np.array([[0, 0], [image.shape[0], 0], image.shape, [0, image.shape[1]]])
+    vor_polys = bounded_voronoi(bnd, ptns)
+    vor_polys_restore = []
+    for vp in vor_polys:
+        vp = np.array(vp)
+        vp = np.hstack((vp, np.zeros((vp.shape[0], 1))))
+        vp = np.hstack((vp, np.ones((vp.shape[0], 1))))
+        vp_coord = restore_mat.dot(vp.T).T[:, :3] / scale
+        vor_polys_restore.append(vp_coord)
+    return vor_polys_restore
 
 if __name__ == "__main__":
     # ボロノイ分割する領域

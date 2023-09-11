@@ -1,6 +1,6 @@
 from .derive import PnPSolver
 from .data.mesh_manager import MeshManager
-from .posture import Posture
+from .core.posture import Posture
 import numpy as np
 import pandas as pd
 import cv2

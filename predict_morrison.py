@@ -18,7 +18,7 @@ from utils.yaml import load_yaml, dump_yaml
 from posture_6d.data.dataset_format import Mix_VocFormat
 
 if __name__ == "__main__":
-    cfg_file = f"{CFG_DIR}/oldt_linemod_mix.yaml"
+    cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
     setup_paras = load_yaml(cfg_file)["setup"]
 
     sys = platform.system()
@@ -28,8 +28,8 @@ if __name__ == "__main__":
     elif sys == "Linux":
         batch_size = 32 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
-    setup_paras["sub_data_dir"] = "linemod_mix/000003"
-    setup_paras["ldt_branches"] = {3: "20230817050741branch_ldt_03.pt"}
+    setup_paras["sub_data_dir"] = "morrison_mix/"
+    setup_paras["ldt_branches"] = {0: "20230909124109branch_ldt_00.pt"}
     setup_paras["batch_size"] = batch_size
 
     predictor = setup("predict", **setup_paras)

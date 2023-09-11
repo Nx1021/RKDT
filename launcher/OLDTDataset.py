@@ -5,7 +5,7 @@ from models.results import ObjPosture, ImagePosture
 from models.utils import normalize_bbox
 from posture_6d.data.dataset_format import VocFormat
 from posture_6d.data.viewmeta import  ViewMeta
-from posture_6d.posture import Posture
+from posture_6d.core.posture import Posture
 
 import numpy as np
 import os
@@ -45,17 +45,20 @@ class OLDTDataset(Dataset):
         self.landmarks_folder   = os.path.join(data_folder, 'landmarks', set_)
         self.labels_folder      = os.path.join(data_folder, 'labels', set_)
         self.trans_vecs_folder  = os.path.join(data_folder, 'trans_vecs', set_)
-        if self.set == self.vocformat.KW_TRAIN:
-            self.idx_array = self.vocformat.train_idx_array
-        elif self.set == self.vocformat.KW_VAL:
-            self.idx_array = self.vocformat.val_idx_array
-        else:
-            raise ValueError("parameter set must be {} or {}".format(self.vocformat.KW_TRAIN, self.vocformat.KW_VAL))
         
         # self.data_files = len(self.idx_array)
         self.data_files = self.vocformat.data_num
 
         self.set_augment_para(1,0)
+
+    @property
+    def idx_array(self):
+        if self.set == self.vocformat.KW_TRAIN:
+            return self.vocformat.train_idx_array
+        elif self.set == self.vocformat.KW_VAL:
+            return self.vocformat.val_idx_array
+        else:
+            raise ValueError("parameter set must be {} or {}".format(self.vocformat.KW_TRAIN, self.vocformat.KW_VAL))
 
     def set_augment_para(self, data_inflation: int, max_rotate_angle:float):
         self.data_inflation = int(max(data_inflation, 1))

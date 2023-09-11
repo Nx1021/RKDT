@@ -175,8 +175,11 @@ class Trainer(Launcher):
             gt_bboxes_n= bboxes_n,
             gt_trans_vecs= trans_vecs,
             intr_M= intr_Ms)
-        gt_result.gt_batch_idx = gt_result.boardcast(
-            np.expand_dims(np.arange(len(class_ids)), -1), dtype=torch.int32)
+        gt_batch_idx = []
+        for i in range(len(class_ids)):
+            gt_batch_idx.append(torch.full((len(class_ids[i]),), i, dtype=torch.int32))
+        gt_batch_idx = self._to_device(gt_batch_idx)
+        gt_result.gt_batch_idx = gt_batch_idx
         gt_result[0].squeeze()
         return images, gt_result
 

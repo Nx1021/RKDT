@@ -23,7 +23,7 @@ import sys
 import json
 import png
 # from excude_pipeline import *
-from MyLib.posture_6d.posture import Posture
+from posture_6d.core.posture import Posture
 # from utils.plane import findplane, fitplane, point_to_plane, findplane_wo_outliers
 import matplotlib.pyplot as plt
 from sko.GA import GA
@@ -80,8 +80,8 @@ class ArucoDetector():
           # if the image has 3-channels, convert it to gray scale
           if len(image.shape) == 3:
                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-          aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
-          parameters = aruco.DetectorParameters_create()
+          aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+          parameters = aruco.DetectorParameters()
           corners_src, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)   
           if len(corners_src) > 0:
                corners_src = np.squeeze(np.array(corners_src), axis=1) # [N, 4, 2]
@@ -385,8 +385,8 @@ class ArucoDetector():
 #           '''
 #           image_dir = os.path.join("LINEMOD", "cube")
 #           image_list = []
-#           aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
-#           parameters = aruco.DetectorParameters_create()
+#           aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+#           parameters = aruco.DetectorParameters()
 #           def onclick(event):
 #                """
 #                鼠标点击事件处理函数，获取鼠标所在位置的像素坐标并将其保存到列表中
@@ -805,8 +805,8 @@ class ArucoDetector():
 
 #      @staticmethod
 #      def get_aruco_coord(cad, depth, camera_intrinsics, get3d = True):
-#           aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
-#           parameters = aruco.DetectorParameters_create()
+#           aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+#           parameters = aruco.DetectorParameters()
 #           gray = cv2.cvtColor(cad, cv2.COLOR_RGB2GRAY)
 #           corners_src, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
 #           if len(corners_src) > 0:
@@ -1018,8 +1018,8 @@ class ArucoDetector():
 #                # 粗测
 #                zoom_1 = 600 / np.max(arcuo_floor.shape)
 #                coarse_arcuo_floor = cv2.resize(arcuo_floor, (-1,-1), fx=zoom_1, fy=zoom_1)
-#                aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
-#                parameters = aruco.DetectorParameters_create()
+#                aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+#                parameters = aruco.DetectorParameters()
 #                corners_src, ids, rejectedImgPoints = aruco.detectMarkers(coarse_arcuo_floor, aruco_dict, parameters=parameters)
 #                corners_src = np.squeeze(np.array(corners_src), axis=1)    # [N, 4, 2]
 #                refine_corners_src_list = []

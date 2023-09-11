@@ -13,6 +13,8 @@ TORCH_2_0 = check_version(torch.__version__, minimum='2.0')
 import shutil
 import ultralytics.yolo.engine.predictor as _predictor
 import ultralytics.yolo.engine.trainer as _trainer
+import ultralytics.yolo.engine.validator as _validator
+
 from ultralytics.yolo.v8.detect.train import DetectionTrainer
 
 def _select_device(device='', batch=0, newline=False, verbose=True):
@@ -74,7 +76,12 @@ def get_MyTrainer(weights_copy_path):
             return rlt
     return MyBaseTrainer
 
+def img2label_paths(img_paths):
+    """Define label paths as a function of image paths."""
+    sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
+    return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
 print("_select_device", _select_device)
 _predictor.select_device = _select_device
 _trainer.select_device = _select_device
+_validator.select_device = _select_device

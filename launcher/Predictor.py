@@ -20,7 +20,7 @@ from post_processer.PostProcesser import PostProcesser, \
 
 from posture_6d.derive import PnPSolver
 from posture_6d.metric import MetricCalculator, MetricResult
-from posture_6d.posture import Posture
+from posture_6d.core.posture import Posture
 from .OLDTDataset import OLDTDataset, collate_fn
 from .BaseLauncher import Launcher, BaseLogger
 

@@ -4,17 +4,18 @@
 from __init__ import DATASETS_DIR, CFG_DIR
 # from posture_6d.data.dataset_format import VocFormat
 
-from gen_mixed_linemod import MixLinemod_VocFormat
-from posture_6d.data.mesh_manager import MeshManager
-from posture_6d.data.dataset_format import ClusterIONotExecutedWarning
-from posture_6d.posture import Posture
-from posture_6d.derive import PnPSolver
-import numpy as np
-from tqdm import tqdm
+# from gen_mixed_linemod import MixLinemod_VocFormat
+# from posture_6d.data.mesh_manager import MeshManager
+# from posture_6d.data.dataset_format import ClusterIONotExecutedWarning
+# from posture_6d.posture import Posture
+# from posture_6d.derive import PnPSolver
+# import numpy as np
+# from tqdm import tqdm
 
-from gen_mixed_linemod import MixLinemod_VocFormat
-from posture_6d.data.mesh_manager import MeshManager
-from posture_6d.data.viewmeta import ViewMeta
+# from gen_mixed_linemod import MixLinemod_VocFormat
+# from posture_6d.data.mesh_manager import MeshManager
+# from posture_6d.data.viewmeta import ViewMeta
+from MyLib.posture_6d.data.dataset_format import Mix_VocFormat
 import numpy as np
 from tqdm import tqdm
 import shutil
@@ -25,12 +26,94 @@ from scipy.linalg import logm
 import warnings
 from typing import TypeVar
 
-for i in range(3, 15):
-    d = f"{DATASETS_DIR}/linemod_mix/{str(i).rjust(6, '0')}"
-    vc = MixLinemod_VocFormat(d)
-    vc.save_elements_cache()
-    vc.set_elements_cachemode(True)
-    vc.copyto(f"F:\\{str(i).rjust(6, '0')}")
+from tqdm import tqdm
+import time
+
+from typing import Any, Union, Callable, TypeVar, Generic, Iterable
+
+
+# vm = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix")
+# with vm.writer.allow_overwriting():
+#     pass
+
+# vm.gen_posture_log()
+# vm.spliter_group.cur_training_spliter
+# vm.spliter_group.split_mode_list
+# vm.spliter_group.set_split_mode("posture")
+# vm.visib_fract_elements
+# vm.children
+
+# class A():
+#     def __new__(cls, *arg, **kw):
+#         print("paras:", *arg, **kw)
+#         print("A new")
+#         return super().__new__(cls)
+    
+#     def __init_subclass__(cls) -> None:
+#         print("A init_subclass")
+#         print(cls.__name__)
+#         def f(obj, *arg, **kw):
+#             print("f")
+#             cls._org_init__(obj, *arg, **kw)
+#         cls._org_init__ = cls.__init__
+#         cls.__init__ = f
+#         super().__init_subclass__()
+
+#     def __init__(self, x = 1) -> None:
+#         print("A init")
+#         print(x)
+
+    # def __getattribute__(self, __name: str) -> Any:
+    #     print(__name)
+    #     return super().__getattribute__(__name)
+    
+# class B(A):
+#     def __init__(self) -> None:
+#         print("B init")
+#         super().__init__()
+
+# class C(B):
+#     pass
+
+# a = A(2)
+ 
+from typing import Type
+T = TypeVar('T', bound="MyClass")
+
+class MyClass(Generic[T]):
+    def __init__(self, value):
+        self.value:type(self) = value
+
+class MyBaseClass(MyClass['MyBaseClass'], Generic[T]):
+    pass
+
+class MySubClass(MyBaseClass):
+    pass
+
+MyClass().value
+MyBaseClass(1).value
+MySubClass(1).value
+
+vm_test = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_test")
+vm_test = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_test")
+
+
+
+with vm_test.writer.allow_overwriting():
+    for i in range(10):
+        vm_test[i] = vm[i]
+        vm_test.record_data_type(i, True, False)
+
+# vm.labels_elements.default_image_size = (640, 480)
+# with vm.labels_elements.writer.allow_overwriting():
+#     vm.labels_elements.unzip_cache()
+
+# for i in range(3, 15):
+#     d = f"{DATASETS_DIR}/linemod_mix/{str(i).rjust(6, '0')}"
+#     vc = MixLinemod_VocFormat(d)
+#     vc.save_elements_cache()
+#     vc.set_elements_cachemode(True)
+#     vc.copyto(f"F:\\{str(i).rjust(6, '0')}")
     # vc.labels_elements.save_cache(image_size=[(640, 480) for _ in range(len(vc.labels_elements))])
     # vc.labels_elements.cache_mode = True
 

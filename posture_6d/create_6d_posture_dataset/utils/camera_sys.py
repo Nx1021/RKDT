@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def convert_depth_frame_to_pointcloud(depth_image, camera_intrinsics):
+def convert_depth_frame_to_pointcloud(depth_image, camera_intrinsics: dict):
     """
     Convert the depthmap to a 3D point cloud
     Parameters:
@@ -23,13 +23,14 @@ def convert_depth_frame_to_pointcloud(depth_image, camera_intrinsics):
     nx = np.linspace(0, width-1, width)
     ny = np.linspace(0, height-1, height)
     u, v = np.meshgrid(nx, ny)
+    fx, ppx, fy, ppy  = camera_intrinsics['intr_M'].flatten()[(0, 2, 4, 5),]
     x = (u.flatten() -
-         float(camera_intrinsics['ppx']))/float(camera_intrinsics['fx'])
+         float(ppx))/float(fx)
     y = (v.flatten() -
-         float(camera_intrinsics['ppy']))/float(camera_intrinsics['fy'])
+         float(ppy))/float(fy)
     depth_image = depth_image*float(camera_intrinsics['depth_scale'])
     z = depth_image.flatten()
-    z[z == 0] = 5.0 #不允许深度为0
+    z[z == 0] = camera_intrinsics['max_depth'] #不允许深度为0
     x = np.multiply(x, z)
     y = np.multiply(y, z)
 

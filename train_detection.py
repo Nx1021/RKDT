@@ -1,49 +1,61 @@
 from __init__ import CFG_DIR, SCRIPT_DIR, WEIGHTS_DIR
 import launcher
-import os
-import shutil
-from models import yolo8_patch 
-from utils.yaml import load_yaml, dump_yaml
-from ultralytics.yolo.utils.torch_utils import select_device
-from ultralytics.yolo.engine import trainer
-from ultralytics.yolo.engine.model import TASK_MAP
-from ultralytics import YOLO
+from launcher.setup import setup
 import torch
+import platform
+from utils.yaml import load_yaml, dump_yaml
 
 
-cfgfile = f"{CFG_DIR}/yolo_linemod_mix.yaml"
-cfg = load_yaml(cfgfile)
-dataset_cfg = load_yaml(cfg["data"])
-weights_copy_path = os.path.join(WEIGHTS_DIR, dataset_cfg["path"] + "_best.pt")
-TASK_MAP['detect'][1] = yolo8_patch.get_MyTrainer(weights_copy_path)
 
-def clear_invalid():
-    dir_ = os.path.join(SCRIPT_DIR, "runs/detect")
-    for d in os.listdir(dir_):
-        weights_dir = os.path.join(dir_, d, "weights")
-        if os.path.exists(weights_dir) and len(os.listdir(weights_dir)) > 0:
-            pass
-        else:
-            to_rm = os.path.join(dir_, d)
-            print(to_rm, " is removed")
-            shutil.rmtree(to_rm)
+# if __name__ == '__main__':
+#     cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
+#     # torch.cuda.set_device("cuda:0")
+#     for i in [2]:
+#         setup_paras = load_yaml(cfg_file)["setup"]
+
+#         sys = platform.system()
+#         if sys == "Windows":
+#             batch_size = 2
+#             # model = torch.nn.DataParallel(model)
+#         elif sys == "Linux":
+#             batch_size = 32 # * torch.cuda.device_count()
+#             # model = torch.nn.DataParallel(model)
+#         setup_paras["ldt_branches"] = {i: ""}
+#         setup_paras["batch_size"] = batch_size
+#         setup_paras["sub_data_dir"] = f"linemod_mix/{str(i).rjust(6, '0')}"
+#         setup("detection", **setup_paras)
 
 if __name__ == '__main__':
-    torch.cuda.set_device("cuda:0")
-    clear_invalid()
-    for i in [1,3]:
-        cfgfile = f"{CFG_DIR}/yolo_linemod_mix.yaml"
-        cfg = load_yaml(cfgfile)
-        dataset_cfg = load_yaml(cfg["data"])
-        dataset_cfg["path"] = "./linemod_mix/{}".format(str(i).rjust(6, '0'))
-        dump_yaml(cfg["data"], dataset_cfg)
-        weights_copy_path = os.path.join(WEIGHTS_DIR, dataset_cfg["path"] + "_best.pt")
-        TASK_MAP['detect'][1] = yolo8_patch.get_MyTrainer(weights_copy_path)
-    # Load a model
-    # model = YOLO("yolov8l.yaml")  # build a new model from scratch
-        model = YOLO(f"{SCRIPT_DIR}/weights/yolov8l.pt")  # load a pretrained model (recommended for training)
+    cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
+    # torch.cuda.set_device("cuda:0")
+    setup_paras = load_yaml(cfg_file)["setup"]
 
-        model.train(cfg = cfgfile)  # train the model
-    # metrics = model.val()  # evaluate model performance on the validation set
-    # results = model("https://ultralytics.com/images/bus.jpg")  # predict on an image
-    # path = model.export(format="onnx")  # export the model to ONNX format
+    sys = platform.system()
+    if sys == "Windows":
+        batch_size = 2
+        # model = torch.nn.DataParallel(model)
+    elif sys == "Linux":
+        batch_size = 32 # * torch.cuda.device_count()
+        # model = torch.nn.DataParallel(model)
+    setup_paras["ldt_branches"] = {}
+    setup_paras["batch_size"] = batch_size
+    setup_paras["sub_data_dir"] = f"morrison_mix/"
+    setup("detection", **setup_paras)
+        
+# if __name__ == '__main__':
+#     cfg_file = f"{CFG_DIR}/oldt_linemod_mix.yaml"
+#     # torch.cuda.set_device("cuda:0")
+#     for i in [7, 8, 9, 10, 11, 12, 13, 14]:
+#         setup_paras = load_yaml(cfg_file)["setup"]
+
+#         sys = platform.system()
+#         if sys == "Windows":
+#             batch_size = 2
+#             # model = torch.nn.DataParallel(model)
+#         elif sys == "Linux":
+#             batch_size = 32 # * torch.cuda.device_count()
+#             # model = torch.nn.DataParallel(model)
+#         setup_paras["ldt_branches"] = {i: ""}
+#         setup_paras["batch_size"] = batch_size
+#         setup_paras["sub_data_dir"] = f"linemod_mix/{str(i).rjust(6, '0')}"
+#         setup("detection", **setup_paras)

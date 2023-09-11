@@ -121,8 +121,8 @@ def findplane(cad,d):
     p0 = [0.506645455682, -0.185724560275, -1.43998120646, 1.37626378129]
     sol = None
     gray = cv2.cvtColor(cad, cv2.COLOR_BGR2GRAY)
-    aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
-    parameters = aruco.DetectorParameters_create()
+    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+    parameters = aruco.DetectorParameters()
     #lists of ids and the corners beloning to each id
     corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
     XYZ = [[],[],[]]

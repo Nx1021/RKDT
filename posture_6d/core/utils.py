@@ -137,9 +137,10 @@ class JsonIO():
             self._closed = value
 
         def open(self):
-            print("open JsonIO stream of {}".format(self.path))
+            # 
             if not self.closed:
                 return
+            print("open JsonIO stream of {}".format(self.path))
             if os.path.exists(self.path):
                 try:
                     with open(self.path, 'rb+') as f:
@@ -155,9 +156,9 @@ class JsonIO():
             self._closed = False         
 
         def close(self):
-            print("close JsonIO stream of {}".format(self.path))
             if self.closed:
                 return
+            print("close JsonIO stream of {}".format(self.path))
             self.save_buffer()
             with open(self.path, 'rb+') as f:
                 f.seek(-1, 2)
@@ -187,41 +188,70 @@ class JsonIO():
 
     @staticmethod
     def __convert_formatdict_from_json(dictionary):
-        new_dict = {}
-        for key, value in dictionary.items():
+        def cvt_key(key):
             if isinstance(key, str):
                 try:
                     key = int(key)
                 except ValueError:
                     pass
-            
+            return key
+
+        def cvt_value(value):
             if isinstance(value, list):
-                array = np.array(value)
-                if np.issubdtype(array.dtype, np.number):
-                    new_value = array
-                else:
-                    new_value = [JsonIO.__convert_formatdict_from_json(item) if isinstance(item, dict) else item for item in value]
+                try:
+                    array = np.array(value)
+                    if np.issubdtype(array.dtype, np.number):
+                        new_value = array
+                    else:
+                        raise ValueError
+                except ValueError:
+                    new_value = []
+                    for item in value:
+                        if isinstance(item, dict):
+                            item = JsonIO.__convert_formatdict_from_json(item)
+                        else:
+                            item = cvt_value(item)
+                        new_value.append(item)
             elif isinstance(value, dict):
                 new_value = JsonIO.__convert_formatdict_from_json(value)
             else:
                 new_value = value
-            new_dict[key] = new_value
+            return new_value
+
+        new_dict = {}
+        for key, value in dictionary.items():
+            new_key = cvt_key(key)
+            new_value = cvt_value(value)
+
+            new_dict[new_key] = new_value
         return new_dict
 
     @staticmethod
     def __convert_dict_to_jsonformat(dictionary):
-        new_dict = {}
-        for key, value in dictionary.items():
+        def cvt_key(key):
             if isinstance(key, str):
                 try:
                     key = int(key)
                 except ValueError:
                     pass
+            if isinstance(key, np.intc):
+                key = int(key)
+            return key
+
+        def cvt_value(value):
+            if isinstance(value, np.intc):
+                new_value = int(value)
             if isinstance(value, np.ndarray):
                 new_value = np.around(value, decimals=4).tolist()
                 new_value = JsonIO._NoIndent(new_value)
             elif isinstance(value, list):
-                new_value = [JsonIO.__convert_dict_to_jsonformat(item) if isinstance(item, dict) else item for item in value]
+                new_value = []
+                for item in value:
+                    if isinstance(item, dict):
+                        item = JsonIO.__convert_dict_to_jsonformat(item)
+                    else:
+                        item = cvt_value(item)
+                    new_value.append(item)
             elif isinstance(value, dict):
                 new_value = JsonIO.__convert_dict_to_jsonformat(value)
                 if not any([isinstance(x, JsonIO._NoIndent) for x in new_value.values()]) and\
@@ -229,7 +259,13 @@ class JsonIO():
                     new_value = JsonIO._NoIndent(new_value)
             else:
                 new_value = value
-            new_dict[key] = new_value
+            return new_value
+
+        new_dict = {}
+        for key, value in dictionary.items():
+            new_key = cvt_key(key)
+            new_value = cvt_value(value)
+            new_dict[new_key] = new_value
         return new_dict
 
     @staticmethod
