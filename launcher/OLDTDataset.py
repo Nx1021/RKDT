@@ -3,7 +3,9 @@ import torch
 from torch.utils.data import Dataset
 from models.results import ObjPosture, ImagePosture
 from models.utils import normalize_bbox
-from posture_6d.dataset_format import VocFormat
+from posture_6d.data.dataset_format import VocFormat
+from posture_6d.data.viewmeta import  ViewMeta
+from posture_6d.core.posture import Posture
 
 import numpy as np
 import os
@@ -25,31 +27,63 @@ def collate_fn(batch_data):
     return batch_data
 
 class OLDTDataset(Dataset):
-    def __init__(self, data_folder:str, set_:str):
+    def __init__(self, data_folder:str, set_:str, formattype = VocFormat):
         '''
         set must be "trian" or "val"
         '''
         self.data_folder = data_folder
-        self.vocformat = VocFormat(data_folder)
-        self.vocformat.depth_elements.closed = True
-        self.vocformat.bbox_3ds_elements.closed = True
+        self.vocformat = formattype(data_folder)
+        self.vocformat.depth_elements.close()
+        self.vocformat.bbox_3ds_elements.close()
+        self.vocformat.visib_fract_elements.close()
+        self.vocformat.depth_scale_elements.close()
+        # self.vocformat.masks_elements.close()
+        # self.vocformat.intr_elements.close()
+
         self.set = set_
         self.image_folder       = os.path.join(data_folder, 'images', set_)
         self.landmarks_folder   = os.path.join(data_folder, 'landmarks', set_)
         self.labels_folder      = os.path.join(data_folder, 'labels', set_)
         self.trans_vecs_folder  = os.path.join(data_folder, 'trans_vecs', set_)
-        if self.set == self.vocformat.KW_TRAIN:
-            self.idx_array = self.vocformat.train_idx_array
-        elif self.set == self.vocformat.KW_VAL:
-            self.idx_array = self.vocformat.val_idx_array
-        else:
-            raise ValueError("parameter set must be {} or {}".format(self.vocformat.KW_TRAIN, self.vocformat.KW_VAL))
         
         # self.data_files = len(self.idx_array)
-        self.data_files = os.listdir(self.image_folder)
+        self.data_files = self.vocformat.data_num
+
+        self.set_augment_para(1,0)
+
+    @property
+    def idx_array(self):
+        if self.set == self.vocformat.KW_TRAIN:
+            return self.vocformat.train_idx_array
+        elif self.set == self.vocformat.KW_VAL:
+            return self.vocformat.val_idx_array
+        else:
+            raise ValueError("parameter set must be {} or {}".format(self.vocformat.KW_TRAIN, self.vocformat.KW_VAL))
+
+    def set_augment_para(self, data_inflation: int, max_rotate_angle:float):
+        self.data_inflation = int(max(data_inflation, 1))
+        self.max_rotate_angle = max_rotate_angle
+
+    def augment(self, viewmeta:ViewMeta)->ViewMeta:
+        '''
+        brief
+        -----
+        augment
+        
+        return
+        -----
+        ViewMeta
+        '''
+        angle = 2*np.random.rand()*self.max_rotate_angle - self.max_rotate_angle
+        viewmeta = viewmeta.rotate(angle)
+        bv = 200 * np.random.rand() - 100
+        sv = 200 * np.random.rand() - 100
+        viewmeta = viewmeta.change_brightness(bv)
+        viewmeta = viewmeta.change_saturation(sv)
+        return viewmeta
 
     def __len__(self):
-        return len(self.idx_array)
+        return len(self.idx_array) * self.data_inflation
     
     @staticmethod
     def _box_cxcywh2xyxy(bbox):
@@ -66,52 +100,35 @@ class OLDTDataset(Dataset):
         data_i = self.idx_array[idx]
         path = os.path.join(self.data_folder, self.set, str(data_i).rjust(6, '0')+'.pkl')
 
-    def read_by_viewmeta(self, idx):
-        data_i = self.idx_array[idx]
-        viewmeta = self.vocformat.read_one(data_i)        
-        image = viewmeta.rgb
-        
-        class_id = list(viewmeta.masks.keys()) 
-        landmarks = [viewmeta.landmarks[x] for x in class_id]
-        bbox_2d = viewmeta.bbox_2d
-        bbox = np.array([bbox_2d[x] for x in class_id])
-        bbox_n = normalize_bbox(bbox, image.shape[:2][::-1])
-        trans_vecs = [viewmeta.extr_vecs[x] for x in class_id]
-
-        image_posture = ImagePosture(image)
-        for obj_i in range(len(class_id)):
-            image_posture.obj_list.append(
-                ObjPosture(landmarks[obj_i], 
-                       bbox_n[obj_i],
-                       class_id[obj_i],
-                       image_posture.image_size,
-                       trans_vecs[obj_i])
-            )
-
-        return image_posture
-
     def __getitem__(self, idx) -> ImagePosture:
-        data_i = self.idx_array[idx]
-        viewmeta = self.vocformat.read_one(data_i)        
+        if_aug = idx % self.data_inflation > 0
+        orig_idx = int(idx / self.data_inflation)
+        data_i = self.idx_array[orig_idx]
+        viewmeta = self.vocformat.read_one(data_i)   
+        viewmeta.calc_bbox2d_from_mask(viewmeta.masks)
+        if if_aug:
+            viewmeta = self.augment(viewmeta)
         # viewmeta = viewmeta.rotate(0.2)
 
-        image = viewmeta.rgb
+        image = viewmeta.color
         
-        class_id = list(viewmeta.masks.keys()) 
+        class_id = list(viewmeta.labels.keys()) 
         landmarks = [viewmeta.landmarks[x] for x in class_id]
         bbox_2d = viewmeta.bbox_2d
         bbox = np.array([bbox_2d[x] for x in class_id])
         bbox_n = normalize_bbox(bbox, image.shape[:2][::-1])
         trans_vecs = [viewmeta.extr_vecs[x] for x in class_id]
+        postures = [Posture(rvec=x[0], tvec=x[1]) for x in trans_vecs]
+        intr_M = viewmeta.intr
 
-        image_posture = ImagePosture(image)
+        image_posture = ImagePosture(image, intr_M=intr_M)
         for obj_i in range(len(class_id)):
             image_posture.obj_list.append(
                 ObjPosture(landmarks[obj_i], 
                        bbox_n[obj_i],
                        class_id[obj_i],
                        image_posture.image_size,
-                       trans_vecs[obj_i])
+                       postures[obj_i])
             )
 
         return image_posture

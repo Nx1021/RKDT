@@ -1,21 +1,32 @@
 0:
   lr_func: warmup
-  lr:      0.00012
+  lr:      0.00005
   cfg:
     use_variable_tokennum: False
-20:
+40:
   lr_func: cosine
-  lr:      0.00012
+  lr:      0.00005
   cfg:
     use_variable_tokennum: False
-300:
+400:
   lr_func: warmup
-  lr:      0.00015
+  lr:      0.00005
   cfg:
-    use_variable_tokennum: True
-310:
+    use_variable_tokennum: False
+440:
   lr_func: cosine
-  lr:      0.00015
+  lr:      0.00005
   cfg:
-    use_variable_tokennum: True
-600:
+    use_variable_tokennum: False
+800:
+
+#   lr_func: warmup
+#   lr:      0.00015
+#   cfg:
+#     use_variable_tokennum: True
+# 310:
+#   lr_func: cosine
+#   lr:      0.00015
+#   cfg:
+#     use_variable_tokennum: True
+# 600:

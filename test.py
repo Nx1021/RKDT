@@ -1,82 +1,206 @@
-import numpy as np
-import sys
+# 在还没有指定TypeVar类型，其类型为bound指定的类型时： Generic、参数正确类型输入、属性注释缺一不可
+# 在子类指定了Generic的类型后，其类型被绑定，子类的子类无法再修改已经绑定的TypeVar
+# 如果子类未绑定，则可以在子类的子类再指定
 from __init__ import DATASETS_DIR, CFG_DIR
-from posture_6d.dataset_format import VocFormat, LinemodFormat, _LinemodFormat_sub1, Elements
-from posture_6d.mesh_manager import MeshManager
-from post_processer.pnpsolver import create_model_manager
+# from posture_6d.data.dataset_format import VocFormat
+
+# from gen_mixed_linemod import MixLinemod_VocFormat
+# from posture_6d.data.mesh_manager import MeshManager
+# from posture_6d.data.dataset_format import ClusterIONotExecutedWarning
+# from posture_6d.posture import Posture
+# from posture_6d.derive import PnPSolver
+# import numpy as np
+# from tqdm import tqdm
+
+# from gen_mixed_linemod import MixLinemod_VocFormat
+# from posture_6d.data.mesh_manager import MeshManager
+# from posture_6d.data.viewmeta import ViewMeta
+from MyLib.posture_6d.data.dataset_format import Mix_VocFormat
+import numpy as np
 from tqdm import tqdm
+import shutil
 import matplotlib.pyplot as plt
+import torch
+from pympler import asizeof
+from scipy.linalg import logm
+import warnings
+from typing import TypeVar
+
+from tqdm import tqdm
 import time
-# from launcher.OLDTDataset import OLDTDataset, collate_fn
-# from torch.utils.data import DataLoader
-import cv2
-import pickle
 
-mm = MeshManager("E:\shared\code\OLDT\datasets\linemod\models", {
-    0 : "obj_000001.ply",
-    1 : "obj_000002.ply",
-    2 : "obj_000003.ply",
-    3 : "obj_000004.ply",
-    4 : "obj_000005.ply",
-    5 : "obj_000006.ply",
-    6 : "obj_000007.ply",
-    7 : "obj_000008.ply",
-    8 : "obj_000009.ply",
-    9 : "obj_000010.ply",
-    10: "obj_000011.ply",
-    11: "obj_000012.ply",
-    12: "obj_000013.ply",
-    13: "obj_000014.ply",
-    14: "obj_000015.ply",
-}, load_all= True)
-meshmetas = mm.get_meta_dict()
-
-data_num = 0
+from typing import Any, Union, Callable, TypeVar, Generic, Iterable
 
 
-lm_vf = VocFormat(f"{DATASETS_DIR}/linemod/{str(0).rjust(6, '0')}")
-for viewmeta in tqdm(lm_vf.read_from_disk()):
-    viewmeta.show()
-    plt.show()
+# vm = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix")
+# with vm.writer.allow_overwriting():
+#     pass
 
-for class_id in range(0, 15):
-    lm_lf = LinemodFormat(f"{DATASETS_DIR}/linemod_orig/{str(class_id+1).rjust(6, '0')}")    
-    lm_vf = VocFormat(f"{DATASETS_DIR}/linemod/{str(class_id).rjust(6, '0')}", lm_lf.data_num)
-    with lm_vf.start_to_write(True):   
-        for viewmeta in tqdm(lm_lf.read_from_disk()):
-            viewmeta.modify_class_id([(class_id+1, class_id)])
-            viewmeta.visib_fract = {class_id: 1.0}
-            viewmeta.calc_by_base(meshmetas)
-            lm_vf.write_to_disk(viewmeta)
-# vf2.masks_elements.close()
+# vm.gen_posture_log()
+# vm.spliter_group.cur_training_spliter
+# vm.spliter_group.split_mode_list
+# vm.spliter_group.set_split_mode("posture")
+# vm.visib_fract_elements
+# vm.children
 
-npme = Elements(vf2, "masks_np", np.load, None, '.npy')
-
-# for data_i, masks in tqdm(npme):
-#     sub_set = vf2.decide_set(data_i)
-#     m_ = npme.read(data_i)[0]
-#     masks = {1: masks[0]}
-#     sub_set = vf2.decide_set(data_i)
-#     vf2.masks_elements.write(data_i, masks, sub_set)
-#     vf2.masks_elements.read(data_i, sub_set)
-
-for data_i, viewmeta in tqdm(enumerate(vf2.read_from_disk())):
-    # vf2.masks_elements.read(data_i)
-    # sub_set = vf2.decide_set(data_i)
-    # viewmeta.masks = {1: npme.read(data_i, sub_set)[0]}
-    print(data_i)
-    # dict_ = viewmeta.serialize()
-    # sub_set = vf2.decide_set(data_i)
-    # pme.write(data_i, dict_["masks"], appdir=sub_set)
+# class A():
+#     def __new__(cls, *arg, **kw):
+#         print("paras:", *arg, **kw)
+#         print("A new")
+#         return super().__new__(cls)
     
+#     def __init_subclass__(cls) -> None:
+#         print("A init_subclass")
+#         print(cls.__name__)
+#         def f(obj, *arg, **kw):
+#             print("f")
+#             cls._org_init__(obj, *arg, **kw)
+#         cls._org_init__ = cls.__init__
+#         cls.__init__ = f
+#         super().__init_subclass__()
 
-for data_i, viewmeta in tqdm(enumerate(vf2.read_from_disk())):
-    vf2.serialized_element.write(data_i, viewmeta)
-    # viewmeta.calc_by_base(meshmetas, True)
-    # exchange_xy(viewmeta.landmarks)
-    # exchange_xy(viewmeta.bbox_3d)
-    # viewmeta.show()
+#     def __init__(self, x = 1) -> None:
+#         print("A init")
+#         print(x)
+
+    # def __getattribute__(self, __name: str) -> Any:
+    #     print(__name)
+    #     return super().__getattribute__(__name)
     
-    # vf2.write_to_disk(viewmeta)
+# class B(A):
+#     def __init__(self) -> None:
+#         print("B init")
+#         super().__init__()
 
-# from .grasp_coord import Gripper
+# class C(B):
+#     pass
+
+# a = A(2)
+ 
+from typing import Type
+T = TypeVar('T', bound="MyClass")
+
+class MyClass(Generic[T]):
+    def __init__(self, value):
+        self.value:type(self) = value
+
+class MyBaseClass(MyClass['MyBaseClass'], Generic[T]):
+    pass
+
+class MySubClass(MyBaseClass):
+    pass
+
+MyClass().value
+MyBaseClass(1).value
+MySubClass(1).value
+
+vm_test = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_test")
+vm_test = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_test")
+
+
+
+with vm_test.writer.allow_overwriting():
+    for i in range(10):
+        vm_test[i] = vm[i]
+        vm_test.record_data_type(i, True, False)
+
+# vm.labels_elements.default_image_size = (640, 480)
+# with vm.labels_elements.writer.allow_overwriting():
+#     vm.labels_elements.unzip_cache()
+
+# for i in range(3, 15):
+#     d = f"{DATASETS_DIR}/linemod_mix/{str(i).rjust(6, '0')}"
+#     vc = MixLinemod_VocFormat(d)
+#     vc.save_elements_cache()
+#     vc.set_elements_cachemode(True)
+#     vc.copyto(f"F:\\{str(i).rjust(6, '0')}")
+    # vc.labels_elements.save_cache(image_size=[(640, 480) for _ in range(len(vc.labels_elements))])
+    # vc.labels_elements.cache_mode = True
+
+    # # vc.bbox_3ds_elements.save_cache()
+    # vc.bbox_3ds_elements.cache_mode = True
+
+    # # vc.depth_scale_elements.save_cache()
+    # vc.depth_scale_elements.cache_mode = True
+
+    # # vc.intr_elements.save_cache()
+    # vc.intr_elements.cache_mode = True
+
+    # # vc.landmarks_elements.save_cache()
+    # vc.landmarks_elements.cache_mode = True
+
+    # # vc.extr_vecs_elements.save_cache()
+    # vc.extr_vecs_elements.cache_mode = True
+
+    # # vc.visib_fract_elements.save_cache()
+    # vc.visib_fract_elements.cache_mode = True
+
+
+# SERVER_DATASET_DIR = "/home/nerc-ningxiao/datasets/linemod_mix/000000"
+# d_to = f"{SERVER_DATASET_DIR}/labels"
+# d = f"{DATASETS_DIR}/linemod_mix/000000/labels"
+# try:
+#     shutil.rmtree(d_to)
+# except:
+#     pass
+# shutil.copytree(d, d_to)
+
+# mm = MeshManager(f"{DATASETS_DIR}/linemod/models")
+# pnp = PnPSolver(r"E:\shared\code\OLDT\datasets\linemod\models\default_K.txt")
+# for i in range(1, 15):
+#     d = f"{DATASETS_DIR}/linemod_mix/{str(i).rjust(6, '0')}"
+#     vc = MixLinemod_VocFormat(d)
+    
+#     for v in vc:
+#         v:ViewMeta = v
+#         for k in v.extr_vecs:
+#             rvec, tvec = v.extr_vecs[k]
+#             ldmk = v.landmarks[k] #[24, 2]
+#             ldmk_3d = mm.get_ldmk_3d(k) # [24, 3]
+#             new_rvec, new_tvec = pnp.solvepnp(ldmk, ldmk_3d)            
+#             reproj = pnp.calc_reproj(ldmk_3d, new_rvec, new_tvec)
+#             print(np.max(reproj - ldmk))
+
+#         v.plot()
+#         plt.show()
+
+# mm = MeshManager(f"{DATASETS_DIR}/linemod/models")
+# pnp = PnPSolver(r"E:\shared\code\OLDT\datasets\linemod\models\default_K.txt")
+# for i in range(1, 15):
+#     d = f"{DATASETS_DIR}/linemod_mix/{str(i).rjust(6, '0')}"
+#     vc = MixLinemod_VocFormat(d)
+#     vc.close_all()
+#     vc.allow_overwrite = True
+#     label_elements = vc.labels_elements
+#     extr_vecs_elements = vc.extr_vecs_elements
+#     landmarks_elements = vc.landmarks_elements
+
+#     label_elements.open()
+#     extr_vecs_elements.open()
+#     landmarks_elements.open()
+#     extr_vecs_elements.set_writable()
+#     label_elements.set_writable()
+
+#     for data_i in tqdm(landmarks_elements.keys()):
+#         label_dict = {}
+#         extr_dict = {}
+
+#         ldmk_dict = landmarks_elements[data_i]
+
+#         for k in ldmk_dict.keys():
+#             ldmk = ldmk_dict[k]
+#             ldmk_3d = mm.get_ldmk_3d(k)
+#             rvec, tvec = pnp.solvepnp(ldmk, ldmk_3d)   
+#             extr_dict[k] = np.array([np.squeeze(rvec), np.squeeze(tvec)])
+
+#             points = mm.get_model_pcd(k)
+#             proj:np.ndarray = pnp.calc_reproj(points, rvec, tvec) #[N, 2]
+#             bbox = np.array(
+#                 [np.min(proj[:, 0]), np.min(proj[:, 1]), np.max(proj[:, 0]), np.max(proj[:, 1])]
+#             ) # [xmin, ymin, xmax, ymax]
+#             # normalize
+#             label_dict[k] = bbox
+#         appdir, appname = landmarks_elements.auto_path(data_i, return_app=True)
+#         label_elements.write(data_i, label_dict, appdir=appdir, appname=appname, image_size=(640, 480))
+#         extr_vecs_elements.write(data_i, extr_dict, appdir=appdir, appname=appname)
+#         # label_elements[data_i] = label_dict

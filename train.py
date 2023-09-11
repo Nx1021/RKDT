@@ -26,7 +26,10 @@ def clear_log():
     weights_list = [os.path.splitext(f)[0][:14] for f in weights_list]
     weights_timestamp_list = list(filter(lambda x: x.isdigit(), weights_list))
 
-    logs_list = os.listdir(log_dir)
+    try:
+        logs_list = os.listdir(log_dir)
+    except FileNotFoundError:
+        return
 
     to_remove = []
     for logname in logs_list:
@@ -75,7 +78,7 @@ if __name__ == "__main__":
 
 
     if sys == "Windows":
-        batch_size = 2
+        batch_size = 16
         # model = torch.nn.DataParallel(model)
     elif sys == "Linux":
         batch_size = 16 # * torch.cuda.device_count()
@@ -83,7 +86,7 @@ if __name__ == "__main__":
     else:
         raise SystemError
     trainer = Trainer(model, train_dataset, val_dataset, loss, batch_size,
-                      flowfile= flow,
+                      flow_file= flow,
                       distribute=False,
                       start_epoch = start_epoch
                       )
@@ -95,7 +98,7 @@ if __name__ == "__main__":
         "start_epoch": start_epoch,
         "batch_size": batch_size, 
         "load_from": {load_brach_i: load_from},
-        "remark": "class loss has weight, no pn loss P_threshold = 0.4"                      
+        "remark": "linemod"                      
                               })
     trainer.logger.log(cfg)
     trainer.logger.log(flow)

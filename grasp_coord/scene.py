@@ -1,7 +1,7 @@
 from .gripper import MyThreeFingerGripper
 from .object_pcd import ObjectPcd, create_ObjectPcd_from_file
 
-from posture_6d.posture import Posture
+from posture_6d.core.posture import Posture
 import numpy as np
 import open3d as o3d
 import copy
@@ -9,7 +9,7 @@ import time
 
 from models.results import ImagePosture
 from utils.match_with_threshold import perform_matching
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 from scipy.spatial import distance
 
 
@@ -41,7 +41,7 @@ class Scene:
         self.gripper = MyThreeFingerGripper()
         self.object_list:list[ObjectPcd] = []
         self.scene_center = np.array([400,0,0])
-        self.cfg = yaml_load(cfg)
+        self.cfg = load_yaml(cfg)
         # self.GCS = Posture(rvec = np.array(0,0,0), tvec = np.array(400,0,0)) #抓取坐标系
         
     def set_gripper(self, gripper):

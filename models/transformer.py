@@ -1,12 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-"""
-LandmarkBranch Transformer class.
-
-Copy-paste from torch.nn.Transformer with modifications:
-    * positional encodings are passed in MHattention
-    * extra LN at the end of encoder is removed
-    * decoder returns a stack of activations from all decoding layers
-"""
 import copy
 from typing import Optional, List
 
@@ -17,7 +8,7 @@ from torch import nn, Tensor
 import numpy as np
 import matplotlib.pyplot as plt
 
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 
 class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
@@ -367,8 +358,10 @@ class LandmarkBranch(nn.Module):
         num_classes = self.cfg["landmark_num"]
         self.num_queries = self.cfg["decoder_num_queries"]
         return_intermediate_dec = self.cfg["calc_intermediate"]
+        normalize_before = self.cfg["normalize_before"] 
         self.transformer = Transformer(256, activation="gelu", 
-                                       return_intermediate_dec=return_intermediate_dec) ###TODO###
+                                       return_intermediate_dec=return_intermediate_dec, 
+                                       dropout=0.1, normalize_before=normalize_before) ###TODO###
         hidden_dim = self.transformer.d_model
         
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1) 
@@ -389,9 +382,12 @@ class LandmarkBranch(nn.Module):
         pos = self.position_embedding(roi_feature, masks)
         hs = self.transformer(self.input_proj(roi_feature), masks, self.query_embed.weight, pos)[0]
 
-        outputs_class = self.class_embed(hs).softmax(-1)
-        outputs_coord = self.pos_embed(hs)
+        outputs_class = self.class_embed(hs).softmax(-1)    #[outputnum, batch, decoder_num, class_num + 1]
+        outputs_coord = self.pos_embed(hs)                  #[outputnum, batch, decoder_num, 2]
 
+        outputs_class = torch.transpose(outputs_class, 0, 1) #[batch, outputnum, decoder_num, class_num + 1]
+        outputs_coord = torch.transpose(outputs_coord, 0, 1) #[batch, outputnum, decoder_num, 2]
+        
         return outputs_coord, outputs_class
 
     # @torch.jit.unused

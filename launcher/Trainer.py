@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, ConstantLR
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
@@ -14,12 +14,12 @@ from torch.optim.lr_scheduler import LambdaLR
 
 import numpy as np
 from models.OLDT import OLDT
-from models.loss import LandmarkLossRecorder
-from models.results import ImagePosture
+from models.loss import LandmarkLossRecorder, LandmarkLoss
+from models.results import ImagePosture, GtResult, PredResult, MatchedRoi
 from .OLDTDataset import transpose_data
 from .OLDTDataset import collate_fn
 from .BaseLauncher import BaseLogger, Launcher
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 import cv2
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -43,7 +43,7 @@ class TrainFlow():
     def __init__(self, trainer:"Trainer", flowfile) -> None:
         self.trainer = trainer
         self.epoch = 0
-        self.flow:dict = yaml_load(flowfile, False)
+        self.flow:dict = load_yaml(flowfile, False)
         self.stage_segment = list(self.flow.keys())
         if self.stage_segment[0] != 0:
             raise ValueError("the first stage must start at epoch 0!")
@@ -54,15 +54,18 @@ class TrainFlow():
         return sum([self.epoch >= x for x in self.stage_segment]) - 1
 
     def get_lr_func(self, lr_name, totol_step, initial_lr):
-        totol_step = totol_step * int(np.round(len(self.trainer.train_dataset) / self.trainer.batch_size))
+        # totol_step = totol_step * int(np.round(len(self.trainer.train_dataset) / self.trainer.batch_size))
         for param_group in self.trainer.optimizer.param_groups:
             param_group['initial_lr'] = initial_lr
+            param_group['lr'] = initial_lr
         if lr_name == "warmup":
             return LambdaLR(self.trainer.optimizer, 
                             lr_lambda=lambda step: min(step / totol_step, 1.0))
         if lr_name == "cosine":
             return CosineAnnealingLR(self.trainer.optimizer, 
                                                         totol_step)
+        if lr_name == "constant":
+            return ConstantLR(self.trainer.optimizer, 1.0, 1)
     
     def enter_new_stage(self):
         stage_info = self.flow[self.stage_segment[self.cur_stage]]
@@ -83,8 +86,8 @@ class TrainFlow():
             raise StopIteration      
         if self.epoch in self.stage_segment:
             self.enter_new_stage()    
-        # if self.scheduler is not None:
-        #     self.scheduler.step()             
+        if self.scheduler is not None:
+            self.scheduler.step()             
         self.epoch += 1 
         return self.epoch
 
@@ -114,7 +117,7 @@ class Trainer(Launcher):
                  val_dataset,
                  criterion,
                  batch_size,
-                 flowfile = "",
+                 flow_file = "",
                  distribute = False,
                  test=False,
                  start_epoch = 0):
@@ -123,7 +126,7 @@ class Trainer(Launcher):
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
 
-        self.flow = TrainFlow(self, flowfile)
+        self.flow = TrainFlow(self, flow_file)
         self.distribute = distribute
         self.test = test
 
@@ -136,7 +139,7 @@ class Trainer(Launcher):
         self.model = self.model.to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters())  # 初始化优化器
-        self.criterion = criterion
+        self.criterion:LandmarkLoss = criterion
 
         self.best_val_loss = float('inf')  # 初始化最佳验证损失为正无穷大
 
@@ -148,7 +151,7 @@ class Trainer(Launcher):
         self.cur_epoch = 0
         self.start_epoch = start_epoch
 
-        self.freeze_modules = [self.inner_model.landmark_branches[0].pos_embed]
+        self.freeze_modules = [x.pos_embed for x in self.inner_model.landmark_branches.values()]
 
     @property
     def skip(self):
@@ -163,11 +166,25 @@ class Trainer(Launcher):
             return self.model
 
     def pre_process(self, batch:list[ImagePosture]):
-        images, keypoints, labels, bboxes_n, trans_vecs = transpose_data([x.split() for x in batch])
-        keypoints = self._to_device(keypoints)
-        labels = self._to_device(labels)
+        images, landmarks, class_ids, bboxes_n, trans_vecs = transpose_data([x.split() for x in batch])
+        class_ids = self._to_device(class_ids)        
+        landmarks = self._to_device(landmarks)
         bboxes_n = self._to_device(bboxes_n)
-        return images, keypoints, labels, bboxes_n
+        trans_vecs = self._to_device(trans_vecs)
+        intr_Ms = [torch.Tensor(np.tile(np.expand_dims(x.intr_M, 0), (len(y),1,1))).to(class_ids[0].device) for x, y in zip(batch, landmarks)]
+        gt_result = GtResult(
+            gt_class_ids= class_ids,
+            gt_landmarks= landmarks,
+            gt_bboxes_n= bboxes_n,
+            gt_trans_vecs= trans_vecs,
+            intr_M= intr_Ms)
+        gt_batch_idx = []
+        for i in range(len(class_ids)):
+            gt_batch_idx.append(torch.full((len(class_ids[i]),), i, dtype=torch.int32))
+        gt_batch_idx = self._to_device(gt_batch_idx)
+        gt_result.gt_batch_idx = gt_batch_idx
+        gt_result[0].squeeze()
+        return images, gt_result
 
 
     def _to_device(self, tensor_list:list[torch.Tensor]):
@@ -193,23 +210,23 @@ class Trainer(Launcher):
         progress = tqdm(dataloader, desc=desc, leave=True)
         for image_posture in progress:
             if not self.skip:
-                images, gt_landmarks, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
-                if self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
+                images, gt_result = self.pre_process(image_posture)
+                if self.check_has_target(gt_result.gt_class_ids, self.inner_model.landmark_branch_classes):
                     # 前向传播
-                    detection_results = self.model(images)
-                    loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results, ldmk_loss_mngr)
+                    detection_results:dict[int, PredResult] = self.model(images)
+                    loss:torch.Tensor = self.criterion(gt_result, detection_results, ldmk_loss_mngr)
                     if torch.isnan(loss).item():
                         print("loss nan, break!")
                         self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp)
                         sys.exit()
                     # 反向传播和优化
                     self.optimizer.zero_grad()
-                    if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor):
+                    if backward and ldmk_loss_mngr.buffer.detect_num > 0 and isinstance(loss, torch.Tensor) and loss.grad_fn is not None:
                         loss.backward()
             
             if backward:
                 self.optimizer.step()
-                self.flow.scheduler.step()
+                # self.flow.scheduler.step()
 
             # 更新进度条信息
             progress.set_postfix({'Loss': "{:>8.4f}".format(ldmk_loss_mngr.loss()), "Lr": "{:>2.7f}".format(self.optimizer.param_groups[0]["lr"])})
@@ -265,3 +282,29 @@ class Trainer(Launcher):
         if self.distribute:
             dist.destroy_process_group()
 
+    # def _compare(self):
+    #     print("start to compare... time:{}".format(self.start_timestamp))
+    #     self.cur_epoch = 0
+    #     train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+    #     val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+
+    #     for module in self.freeze_modules:
+    #         module.train(False)
+    #     for image_posture in train_dataloader:
+    #         break
+    #     # image_posture = next(train_dataloader)
+    #     images, gt_landmarks, gt_labels, gt_bboxes_n = self.pre_process(image_posture)
+    #     self.inner_model.train()
+    #     if self.check_has_target(gt_labels, self.inner_model.landmark_branch_classes):
+            
+    #         self.inner_model.set_mode("train")    
+    #         # 前向传播
+    #         detection_results = self.model(images)
+    #         train_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
+            
+    #         self.inner_model.set_mode("val")
+    #         detection_results = self.model(images)
+    #         val_loss:torch.Tensor = self.criterion(gt_labels, gt_landmarks, gt_bboxes_n, detection_results)
+
+    #         print("train_loss", train_loss, "val_loss", val_loss)
+            

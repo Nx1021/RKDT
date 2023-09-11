@@ -1,29 +1,62 @@
 import datetime
 import os
 import pickle
-from typing import Generator, Callable, Iterable
+from typing import Generator, Callable, Iterable, Union
 
 import cv2
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torchvision.ops import generalized_box_iou
 from scipy.optimize import linear_sum_assignment
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from models.OLDT import OLDT
 from models.results import LandmarkDetectionResult, ImagePosture, compare_image_posture
-from post_processer.PostProcesser import PostProcesser
-from post_processer.error_calculate import ErrorCalculator, ErrorResult, match_roi
-from post_processer.pnpsolver import PnPSolver
-from .BasePredictor import BasePredictor
+from post_processer.PostProcesser import PostProcesser, \
+    create_pnpsolver, create_model_manager
+
+from posture_6d.derive import PnPSolver
+from posture_6d.metric import MetricCalculator, MetricResult
+from posture_6d.core.posture import Posture
 from .OLDTDataset import OLDTDataset, collate_fn
 from .BaseLauncher import Launcher, BaseLogger
 
-from utils.yaml import yaml_load
+from utils.yaml import load_yaml
 
 
+def match_roi(pred:ImagePosture, gt:ImagePosture) -> list[tuple[int, Posture, Posture]]:
+    '''
+    matched: list[tuple[class_id, pred_Posture, gt_Posture]]
+    '''
+    pred_image, pred_landmarks, pred_class_ids, pred_bboxes, pred_postures  = pred.split(get_trans_vecs=False)
+    gt_image, gt_landmarks, gt_class_ids, gt_bboxes, gt_postures            = gt.split(get_trans_vecs=False)    
+    ### 匹配，类别必须一致，bbox用giou评估
+    M = len(gt_class_ids)
+    N = len(pred_class_ids)
+    if N == 0 or M == 0:
+        return []
+    # bbox
+    gt_bboxes_tensor = torch.Tensor(np.array(gt_bboxes))
+    pred_bboxes_tensor = torch.stack(pred_bboxes).to(gt_bboxes_tensor.device)
+    cost_matrix_bbox = generalized_box_iou(pred_bboxes_tensor, gt_bboxes_tensor).numpy()
+    row_ind, col_ind = linear_sum_assignment(cost_matrix_bbox, maximize=True)
+
+    cost_matrix_id = np.zeros((N, M), dtype=np.float32)  # 创建一个整数类型的全零矩阵
+    for i in range(N):
+        for j in range(M):
+            if pred_class_ids[i] == gt_class_ids[j]:
+                cost_matrix_id[i, j] = 2  # 不同元素的cost为1
+    ###
+    matched:list[tuple] = []
+    for ri, ci in zip(row_ind, col_ind):
+        if pred_class_ids[ri] == gt_class_ids[ci] and \
+            pred_postures[ri] is not None and\
+            gt_postures[ci] is not None:
+            matched.append((gt_class_ids[ci], pred_postures[ri], gt_postures[ci]))
+    return matched
 
 def is_image(arr):
     try:
@@ -164,20 +197,23 @@ class IntermediateManager:
 
         return self._load_object(class_name, index, load_pkl_func)
 
-class OLDTPredictor(BasePredictor, Launcher):
-    def __init__(self, model, cfg, log_remark, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = ""):
-        Launcher.__init__(self, model, batch_size, log_remark)
-        BasePredictor.__init__(self, model, batch_size)
+class OLDTPredictor(Launcher):
+    def __init__(self, model, train_dataset:OLDTDataset, val_dataset:OLDTDataset, cfg_file, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = "", log_remark = ""):
+        super().__init__(model, batch_size, log_remark)
 
         # Enable GPU if available
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model:OLDT = self.model.to(device)
         self.model.set_mode("predict")
 
-        self.pnpsolver = PnPSolver(cfg)
-        out_bbox_threshold = yaml_load(cfg)["out_bbox_threshold"]
-        self.postprocesser = PostProcesser(self.pnpsolver, out_bbox_threshold)
-        self.error_calculator = ErrorCalculator(self.pnpsolver, model.nc)
+        self.train_dataset  = train_dataset
+        self.val_dataset    = val_dataset
+
+        pnpsolver = create_pnpsolver(cfg_file)
+        mesh_manager = create_model_manager(cfg_file)
+        out_bbox_threshold = load_yaml(cfg_file)["out_bbox_threshold"]
+        self.postprocesser = PostProcesser(pnpsolver, mesh_manager, out_bbox_threshold)
+        self.error_calculator = MetricCalculator(pnpsolver, mesh_manager)
 
         self.if_postprocess = if_postprocess or if_calc_error # 如果要计算损失，必须先执行后处理
         self.if_calc_error = if_calc_error
@@ -192,15 +228,14 @@ class OLDTPredictor(BasePredictor, Launcher):
         self.gt_dir = "gt"
         self.predictions_dir = "list_" + LandmarkDetectionResult.__name__
         self.processed_dir = ImagePosture.__name__
-        
-        self.frametimer.set_batch_size(self.batch_size)
 
         self.postprocess_mode = "v" # or 'v'
 
         self.logger = BaseLogger(self.log_dir)
-        self.logger.log(cfg)
+        self.logger.log(cfg_file)
 
-    def _preprocess(self, inputs) -> list[cv2.Mat]:
+    @Launcher.timing(-1)
+    def preprocess(self, inputs:Union[list[ImagePosture], np.ndarray, Iterable[np.ndarray]]) -> list[cv2.Mat]:
         '''
         对输入进行处理，可以接收的输入：
         1、经过Dataloader加载的CustomDataset对象的输出:list[ImagePosture]
@@ -232,39 +267,38 @@ class OLDTPredictor(BasePredictor, Launcher):
         else:
             raise ValueError("输入类型不符合要求")
 
-    def _postprocess(self, inputs) ->list[ImagePosture]:
-        image_list:list[np.ndarray] = inputs[0]
-        predictions:list[list[LandmarkDetectionResult]] = inputs[1]
-        # self.postprocesser.process(image_list, predictions, 'v')
+    @Launcher.timing(1)
+    def inference(self, inputs:Iterable[np.ndarray]):
+        results = self.model(inputs)
+        return results
+
+    @Launcher.timing(1)
+    def postprocess(self, 
+                    image_list:list[np.ndarray], 
+                    predictions:list[list[LandmarkDetectionResult]]) ->list[ImagePosture]:
         return self.postprocesser.process(image_list, predictions, self.postprocess_mode )
 
-    def _calc_error(self, gt:list[ImagePosture], pred:list[ImagePosture]):
+    @Launcher.timing(-1)
+    def calc_error(self, pred: Iterable[ImagePosture], gt: Iterable[ImagePosture])->list[list[tuple[MetricResult]]]:
         ### 匹配真值和预测的roi
-        error_result:list[list[tuple[ErrorResult]]] = []
-        for gt_imgpstr, pred_imgpstr in zip(gt, pred):
-            matched = match_roi(gt_imgpstr, pred_imgpstr)
+        error_result:list[list[tuple[MetricResult]]] = []
+        for pred_imgpstr, gt_imgpstr in zip(pred, gt):
+            matched = match_roi(pred_imgpstr, gt_imgpstr)
             image_error_result = []
             for m in matched:
-                one_error_result = self.error_calculator.calc_one_error(m[0], m[1], m[2], ErrorCalculator.ALL)
+
+                one_error_result = self.error_calculator.calc_one_error(m[0], m[1], m[2], MetricCalculator.ALL)
                 image_error_result.append(one_error_result)
             error_result.append(image_error_result)
         return error_result
-
-    def preprocess(self, image) -> list[cv2.Mat]:
-        return super().preprocess(image)
-
-    def postprocess(self, inputs) ->list[ImagePosture]:
-        return super().postprocess(inputs)
-
-    def calc_error(self, gt: list, postprocessed: list)->list[list[tuple[ErrorResult]]]:
-        return super().calc_error(gt, postprocessed)
     
-    def predict_from_dataset(self, dataset):
-        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn)
+    def predict_from_dataset(self, dataset, plot_outlier = False):
+        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
         
         with torch.no_grad():
             num_batches = len(data_loader)
-            for batch in tqdm(data_loader, total=num_batches, leave=True):
+            iters:Iterable[list[ImagePosture]] = tqdm(data_loader, total=num_batches, leave=True)
+            for batch in iters:
                 # Preprocessing
                 inputs = self.preprocess(batch)
                 if self.save_imtermediate:
@@ -272,29 +306,47 @@ class OLDTPredictor(BasePredictor, Launcher):
                         self.intermediate_manager.save_pkl(self.gt_dir, obj)
 
                 # Model inference
+                self.model.if_gather = True
                 predictions:list[list[LandmarkDetectionResult]] = self.inference(inputs)
                 if self.save_imtermediate:
                     for obj in predictions:
                         self.intermediate_manager.save_pkl(self.predictions_dir, obj)
 
+                ###
+                # for i in range(len(batch)):
+                #     ip:ImagePosture = batch[i]
+                #     predictions[i][0].bbox_n = torch.Tensor(ip.obj_list[0].bbox_n).to("cuda")
+                ###
+
                 # Postprocessing
                 if self.if_postprocess:
-                    processed:list[ImagePosture] = self.postprocess((inputs, predictions))
+                    # print([x.obj_list[0].tvec for x in batch if isinstance(x, ImagePosture)])
+                    processed:list[ImagePosture] = self.postprocess(inputs, predictions)
                     if self.save_imtermediate:
                         for obj in processed:
                             self.intermediate_manager.save_pkl(self.processed_dir, obj)
 
                 # error
                 if self.if_calc_error:
-                    self.calc_error(batch, processed)
+                    error_result = self.calc_error(processed, batch)
+                    if plot_outlier:
+                        self.plot_outlier(error_result, batch, processed)
         with self.logger.capture_output("process record"):
-            self.frametimer.print()
+            self.frame_timer.print()
             self.error_calculator.print_result()
 
-    def plot_outlier(self, error_result:list[list[tuple[ErrorResult]]], 
+    def predict_val(self, plot_outlier = False):
+        self.clear()
+        self.predict_from_dataset(self.val_dataset, plot_outlier)
+
+    def predict_train(self, plot_outlier = False):
+        self.clear()
+        self.predict_from_dataset(self.train_dataset, plot_outlier)
+
+    def plot_outlier(self, error_result:list[list[tuple[MetricResult]]], 
                      gt_list:list[ImagePosture],
                      pred_list:list[ImagePosture], 
-                     metrics = ErrorCalculator.REPROJ):
+                     metrics = MetricCalculator.REPROJ):
         def save_figure(file_path, image):
             plt.gcf()
             file_path += ".svg"
@@ -306,15 +358,15 @@ class OLDTPredictor(BasePredictor, Launcher):
                 target_metrics = [list(filter(lambda y: y.type == metrics, x))[0] for x in er] #one type error for one image
             except IndexError:
                 continue
-            passed = all([x.passed for x in target_metrics])
+            passed = any([x.passed for x in target_metrics])
             if not passed and len(target_metrics) > 0:
-                # compare_image_posture(gt, pred)
-                # text = ""
-                # for x in target_metrics:
-                #     text += str(x.error) + "\n"
-                # plt.text(0, 1, text, ha='left', va='top', transform=plt.gca().transAxes)
-                # self.intermediate_manager._save_object("error_outlier", None, save_figure)
-                self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
+                compare_image_posture(gt, pred)
+                text = ""
+                for x in target_metrics:
+                    text += str(x.error) + "\n"
+                plt.text(0, 1, text, ha='left', va='top', transform=plt.gca().transAxes)
+                self.intermediate_manager._save_object("error_outlier", None, save_figure)
+                # self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
 
     def postprocess_from_intermediate(self, plot_outlier = False):
         predictions_generator:Generator[list[LandmarkDetectionResult]] = \
@@ -325,11 +377,11 @@ class OLDTPredictor(BasePredictor, Launcher):
         for prediction, gt in tqdm(zip(predictions_generator, gt_generator), total=total_num, leave=True):
             image = gt[0].image
             processed:list[ImagePosture] = self.postprocess(([image], prediction))
-            error_result:list[list[tuple[ErrorResult]]] = self.calc_error(gt, processed)
+            error_result:list[list[tuple[MetricResult]]] = self.calc_error(processed, gt)
             if plot_outlier:
                 self.plot_outlier(error_result, gt, processed)
         with self.logger.capture_output("process record"):
-            self.frametimer.print()
+            self.frame_timer.print()
             self.error_calculator.print_result()
         print("done")
 
@@ -346,5 +398,5 @@ class OLDTPredictor(BasePredictor, Launcher):
         return processed_predictions
 
     def clear(self):
-        self.frametimer.reset()
+        self.frame_timer.reset()
         self.error_calculator.clear()
