@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from open3d import geometry, utility, io
+import sys
 import os
 import glob
 import shutil
@@ -14,18 +15,19 @@ import pickle
 import cv2
 import time
 from tqdm import tqdm
+import types
 import warnings
 
 from abc import ABC, abstractmethod
-from typing import Any, Union, Callable, TypeVar, Generic, Iterable
+from typing import Any, Union, Callable, TypeVar, Generic, Iterable, Generator
+from functools import partial
 
-from . import Posture, JsonIO, JSONDecodeError, extract_doc
+from . import Posture, JsonIO, JSONDecodeError, Table, extract_doc, search_in_dict, int_str_cocvt
 from .viewmeta import ViewMeta, serialize_image_container, deserialize_image_container
 from .mesh_manager import MeshMeta
 
-DCT  = TypeVar('DCT',  bound="_DataCluster") # type of the value of data cluster
+DCT  = TypeVar('DCT',  bound="_DataCluster") # type of the cluster
 DSNT = TypeVar('DSNT', bound='DatasetNode') # dataset node type
-NDT  = TypeVar("NDT", bound="Node")
 VDCT = TypeVar('VDCT') # type of the value of data cluster
 VDST = TypeVar('VDST') # type of the value of dataset
 from numpy import ndarray
@@ -51,9 +53,13 @@ class WriteController(ABC):
     '''
     WRITING_MARK = '.writing'
 
+    LOG_READ = -1
     LOG_APPEND = 0
     LOG_REMOVE = 1
     LOG_CHANGE = 2
+    LOG_MOVE   = 3
+    LOG_OPERATION = 4
+    LOG_KN = [LOG_APPEND, LOG_REMOVE, LOG_CHANGE, LOG_MOVE, LOG_OPERATION]
     class __Writer():
         def __init__(self, writecontroller:"WriteController") -> None:
             self.writecontroller = writecontroller
@@ -84,7 +90,7 @@ class WriteController(ABC):
         return self.__writer
 
     @abstractmethod
-    def get_writing_mark_file(self):
+    def get_writing_mark_file(self) -> str:
         pass
 
     def start_writing(self, overwrite_allowed = False):
@@ -98,7 +104,8 @@ class WriteController(ABC):
 
     def stop_writing(self):
         if self.is_writing:
-            os.remove(self.get_writing_mark_file())
+            if os.path.exists(self.get_writing_mark_file()):
+                os.remove(self.get_writing_mark_file())
             self.is_writing = False
             return True
         else:
@@ -107,55 +114,53 @@ class WriteController(ABC):
     def mark_exist(self):
         return os.path.exists(self.get_writing_mark_file())
 
+    def remove_mark(self):
+        if self.mark_exist():
+            os.remove(self.get_writing_mark_file())
+
     def load_from_mark_file(self):
         file_path = self.get_writing_mark_file()
         if os.path.exists(file_path):
-            result_dict = {}
+            result = []
             with open(file_path, 'r') as file:
                 for line in file:
                     # 使用strip()函数移除行末尾的换行符，并使用split()函数分割列
                     columns = line.strip().split(', ')
-                    assert len(columns) == 2, f"the format of {file_path} is wrong"
-                    key, value_str = columns
+                    assert len(columns) == 3, f"the format of {file_path} is wrong"
+                    log_type, key, value_str = columns
                     # 尝试将第二列的值转换为整数
-                    value = int(value_str)
-                    assert value in [self.LOG_APPEND, self.LOG_REMOVE, self.LOG_CHANGE], f"the format of {file_path} is wrong"
-                    try:
-                        key = str(key)
-                    except ValueError:
-                        pass
-                    result_dict[key] = value
-            return result_dict
+                    log_type = int(log_type)
+                    assert log_type in self.LOG_KN, f"the format of {file_path} is wrong"
+                    try: key = int(key)
+                    except ValueError: pass
+                    if value_str == 'None':
+                        value = None
+                    else:
+                        try: value = int(value_str)
+                        except: value = value_str
+                    result.append([log_type, key, value])
+            return result
         else:
             return None
 
-    def log_to_mark_file(self, key, value):
-        if key is None:
+    def log_to_mark_file(self, log_type, data_i, value=None):
+        ## TODO
+        if data_i is None or value is None:
             return 
-        assert isinstance(key, (str, int)), f"key must be str or int, not {type(key)}"
-        assert isinstance(value, int), f"value must be int, not {type(value)}"
-        assert value in [self.LOG_APPEND, self.LOG_REMOVE, self.LOG_CHANGE], f"value must be in {self.LOG_APPEND, self.LOG_REMOVE, self.LOG_CHANGE}"
+        assert log_type in self.LOG_KN, f"log_type must be in {self.LOG_KN}"
+        assert isinstance(data_i, int), f"data_i must be int"
+
         file_path = self.get_writing_mark_file()
         with open(file_path, 'a') as file:
-            line = f"{key}, {value}\n"
+            line = f"{log_type}, {data_i}, {type(value)}\n"
             file.write(line)
-
-    # @abstractmethod
-    def _rollback_one(self, key, value):
-        raise NotImplementedError
-
-    def rollback(self):
-        result_dict = self.load_from_mark_file()
-        if result_dict:
-            if any([v != self.LOG_APPEND for v in result_dict.values()]):
-                # any value is not LOG_APPEND, can't rollback
-                raise ValueError(f"can't rollback {self.get_writing_mark_file()}, because there are some irreversible changing")
-            else:
-                for k, v in result_dict.items():
-                    self._rollback_one(k, v)
 
 #### Warning Types ####
 class ClusterDataIOError(Exception):
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+
+class ElementsAmbiguousError(ValueError):
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
 
@@ -180,7 +185,7 @@ class InstanceRegistry(ABC):
     _dataset_registry = {}
     _registry:dict = None
 
-    def __init_subclass__(cls, **kw) -> None:
+    def __init_subclass__(cls, **kwargs) -> None:
         if cls.__name__ == "_DataCluster" or ("_DataCluster" in globals() and issubclass(cls, _DataCluster)):
             cls._registry = cls._cluster_registry
         elif cls.__name__ == "DatasetNode" or ("DatasetNode" in globals() and issubclass(cls, DatasetNode)):
@@ -199,9 +204,9 @@ class InstanceRegistry(ABC):
         cls.__init__ = decorated_init
         return super().__init_subclass__()
 
-    def __new__(cls, *args, **kw):
+    def __new__(cls, *args, **kwargs):
         instance = super(InstanceRegistry, cls).__new__(cls)
-        instance._init_identity_paramenter(*args, **kw)
+        instance._init_identity_paramenter(*args, **kwargs)
         identity_string = instance.identity_string()
         if identity_string in cls._registry:
             return cls._registry[identity_string]
@@ -223,7 +228,7 @@ class InstanceRegistry(ABC):
 
     @classmethod
     @abstractmethod
-    def gen_identity_string(cls, *args, **kw):
+    def gen_identity_string(cls, *args, **kwargs):
         pass
 
     @staticmethod
@@ -231,9 +236,70 @@ class InstanceRegistry(ABC):
     def parse_identity_string(identity_string):
         pass
 
+class _IOMeta(Generic[DCT, VDCT]):
+    '''
+    the position parameter of 'record', '_call' , '__call__' must be the same
+    '''
+    IO_TYPE = WriteController.LOG_READ
+    def __init__(self, cluster:DCT) -> None:
+        super().__init__()
+        self.cluster:DCT = cluster
+        self.warning_info:str = "no description"
 
-#### _DataCluster #####
-class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
+        self._kwargs = {}
+        self.__once = False
+
+    def record(self, **kwargs):
+        pass
+
+    def check_key(self, key, **kwargs) -> bool:
+        return True
+    
+    def check_value(self, value, **kwargs) -> bool:
+        return True
+
+class _ReadMeta(_IOMeta[DCT, VDCT], ABC):
+    @abstractmethod
+    def _call(self, key, **kwargs: Any) -> VDCT:
+        pass
+
+    def __call__(self, key, *args, force = False, **kwargs) -> VDCT:
+        rlt = self.cluster._read_decorator(self)(key, *args, force = force, **kwargs)
+        return rlt
+    
+    def record(self, key, *args, **kwargs):
+        pass
+
+class _WriteMeta(_IOMeta[DCT, VDCT], ABC):
+    '''
+    abstractmethod
+    --
+    * _call: the function to call when write
+    * is_overwriting: check if the data is overwriting
+
+    recommend to implement
+    --
+    * check_key: check if the key is valid
+    * check_value: check if the value is valid
+    '''
+    @abstractmethod
+    def _call(self, key, value, **kwargs: Any):
+        pass
+    
+    @abstractmethod
+    def is_overwriting(self, key, value, **kwargs):
+        pass
+
+    def __call__(self, key, value, *args, force = False, **kwargs) -> Any:
+        rlt = self.cluster._write_decorator(self)(key, value, *args, force = force, **kwargs)
+        return rlt    
+    
+    def record(self, key, value, **kwargs):
+        pass
+
+#### _DataCluster ####
+
+class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT, DCT]):
     '''
     This is a private class representing a data cluster used for managing datasets with a specific format.
 
@@ -243,7 +309,7 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
     * self.closed: bool, Control the shielding of reading and writing, 
         if it is true, the instance will not write, and the read will get None
     * register: bool, whether to register to dataset_node
-    * _incomplete: bool, whether the data is incomplete
+    * _unfinished: bool, whether the data is unfinished
     * _closed: bool, Indicates whether the cluster is closed or open.
     * _readonly: bool, Indicates whether the cluster is read-only or write-enabled.
     * changes_unsaved: bool, Indicates if any changes have been made to the cluster.
@@ -308,20 +374,104 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
     - __repr__: return the representation of the cluster
     - register_to_format: register the cluster to dataset_node
     '''
+    class _Force():
+        def __init__(self, obj, force = False, writing = False) -> None:
+            self.obj:_DataCluster = obj
+            self.orig_closed = None
+            self.orig_readonly = None
+            self.orig_overwrite_allowed = None
+            self.force = force
+            self.writing = writing
+
+        def __enter__(self):
+            if self.force:
+                self.orig_closed = self.obj.is_closed()
+                self.orig_readonly = self.obj.is_readonly()
+                self.orig_overwrite_allowed = self.obj.overwrite_allowed
+                self.obj.open()
+                if self.writing:
+                    self.obj.set_writable()
+                    self.obj.set_overwrite_allowed(True)
+            return self
+        
+        def __exit__(self, exc_type, exc_value, traceback):
+            if exc_type is not None:
+                raise exc_type(exc_value).with_traceback(traceback)
+            else:
+                if self.force:
+                    if self.orig_closed:
+                        self.obj.close()
+                    if self.orig_readonly:
+                        self.obj.set_readonly()
+                    self.obj.set_overwrite_allowed(self.orig_overwrite_allowed)
+                return True
+
+    _DCT = TypeVar('_DCT', bound="_DataCluster")
+    _VDCT = TypeVar('_VDCT')
+
+    class _read(_ReadMeta[_DCT, _VDCT]):
+        def check_key(self, key, **kwargs) -> bool:
+            return key in self.cluster.keys()
+
+    class _write(_WriteMeta[_DCT, _VDCT]):
+        IO_TYPE = WriteController.LOG_APPEND
+
+        def is_overwriting(self, data_i, value, **kwargs):
+            return data_i in self.cluster.keys()
+        
+    class _remove(_WriteMeta[_DCT, _VDCT]):
+        IO_TYPE = WriteController.LOG_REMOVE
+
+        def check_key(self, key, **kwargs) -> bool:
+            return key in self.cluster.keys()
+
+        def is_overwriting(self, data_i, value, **kwargs):
+            return True
+            
+        def __call__(self, key, *args, force=False, **kwargs) -> Any:
+            return super().__call__(key, None, force=force, **kwargs)
+    
+    class _move(_WriteMeta[_DCT, _VDCT]):
+        IO_TYPE = WriteController.LOG_MOVE
+
+        def check_key(self, key, **kwargs) -> bool:
+            return key in self.cluster.keys()
+        
+        def check_value(self, value, **kwargs) -> bool:
+            return value not in self.cluster.keys()
+
+        def is_overwriting(self, data_i, value, **kwargs):
+            return value in self.cluster.keys()
+        
+        def __call__(self, src, dst, *args, force=False, **kwargs) -> Any:
+            return super().__call__(src, dst, force=force, **kwargs)
+
+    class _load_in(_WriteMeta[_DCT, _VDCT]):
+        IO_TYPE = WriteController.LOG_APPEND
+        
+        def __call__(self, src, dst, *args, force=False, **kwargs) -> Any:
+            return super().__call__(src, dst, *args, force=force, **kwargs)
+
+        def check_value(self, dst, **kwargs) -> bool:
+            return dst not in self.cluster.keys()
+        
+        def is_overwriting(self, src, dst, **kwargs):
+            return dst in self.cluster.keys()
+        
     def __init__(self, dataset_node:DSNT, sub_dir: str, register=True, name = "", *args, **kwargs) -> None:
         '''
         Initialize the data cluster with the provided dataset_node, sub_dir, and registration flag.
         '''
         WriteController.__init__(self)    
         InstanceRegistry.__init__(self)
-        self._init_identity_paramenter(dataset_node, sub_dir, register, name, *args, **kwargs)
+        # self._init_identity_paramenter(dataset_node, sub_dir, register, name, *args, **kwargs)
         self.dataset_node:DSNT = dataset_node
         self.sub_dir = os.path.normpath(sub_dir) 
         self.name = name       
         self.directory = os.path.normpath(os.path.join(self.dataset_node.directory, self.sub_dir))  # Directory path for the cluster.        
         self.register = register
-        self._incomplete = self.mark_exist()
-        self._incomplete_operation = self.dataset_node._incomplete_operation
+        self._unfinished = self.mark_exist()
+        self._unfinished_operation = self.dataset_node._unfinished_operation
         self._error_to_load = False
         self._changed = False  # Indicates if any changes have been made to the cluster. 
         self._data_i_upper = 0      
@@ -330,19 +480,24 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
         self.__readonly = True  # Indicates whether the cluster is read-only or write-enabled.
         self.__overwrite_allowed = False
 
-        self.__cluster_read_func:Callable =  self._read_decorator(self.__class__._read)
-        self.__cluster_write_func:Callable = self._write_decorator(self.__class__._write)
-        self.__cluster_clear_func:Callable = self._write_decorator(self.__class__._clear) 
-
         self._init_attr(*args, **kwargs)  # Initializes additional attributes specified by subclasses.
      
         if os.path.exists(self.directory) and not self._error_to_load:
             self.open()  # Opens the cluster for operation.
         else:
             self.close()
-  
-        self.register_to_dataset()
     
+        self.process_unfinished()   
+        self.register_to_dataset()
+
+    def _init_attr(self, *args, **kwargs):
+        '''Method to initialize additional attributes specified by subclasses.'''
+        self.read:_ReadMeta[DCT, VDCT]          = self._read(self)
+        self.write:_WriteMeta[DCT, VDCT]        = self._write(self)
+        self.remove:_WriteMeta[DCT, VDCT]       = self._remove(self)
+        self.move:_WriteMeta[DCT, VDCT]         = self._move(self)
+        self.load_in:_WriteMeta[DCT, VDCT]      = self._load_in(self)   
+
     ### implement InstanceRegistry ###
     def _init_identity_paramenter(self, dataset_node:DSNT, sub_dir: str, register=True, name = "", *args, **kwargs):
         self.dataset_node = dataset_node
@@ -351,7 +506,7 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
         self.directory = os.path.normpath(os.path.join(self.dataset_node.directory, self.sub_dir))
 
     @classmethod
-    def gen_identity_string(cls, dataset_node:"DatasetNode", sub_dir, name, *arg, **kw):
+    def gen_identity_string(cls, dataset_node:"DatasetNode", sub_dir, name, *args, **kwargs):
         return f"{cls.__name__}({dataset_node.__class__.__name__}, {dataset_node.directory}, {sub_dir}, {name})"
 
     @staticmethod
@@ -367,6 +522,12 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
 
     def identity_string(self):
         return self.gen_identity_string(self.dataset_node, self.sub_dir, self.name)
+
+    def key_identity_string(self):
+        if self.name != "":
+            return self.sub_dir + ":" + self.name
+        else:
+            return self.sub_dir
     ###
 
     ### implement WriteController ###
@@ -376,6 +537,39 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
             return path + self.WRITING_MARK
         else:
             return os.path.join(path, self.WRITING_MARK)
+
+    def _start_writing(self):
+        pass
+
+    def _stop_writing(self):
+        self._changed = False  # Resets the updated flag to false.
+        # self.__closed = True  # Marks the cluster as closed.
+
+    def start_writing(self, overwrite_allowed = False):
+        '''
+        rewrite the method of WriteController
+        '''
+        if super().start_writing(overwrite_allowed):
+            self.open()
+            self.set_writable()
+            self._start_writing()
+            if not self.overwrite_allowed:
+                self.set_overwrite_allowed(overwrite_allowed)
+            return True
+        else:
+            return False
+
+    def stop_writing(self):
+        '''
+        rewrite the method of WriteController
+        '''
+        if not self.is_writing:
+            return False
+        else:
+            self.set_overwrite_allowed(False)
+            self._stop_writing()
+            # self._update_cluster_all()
+            return super().stop_writing()
     ### 
 
     @property
@@ -401,6 +595,10 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
         self._changed = bool(value)
         self.dataset_node.updated = True
 
+    @property
+    def continuous(self):
+        return self.cluster_data_num == self.cluster_data_i_upper
+
     @abstractmethod
     def __len__(self):
         '''Returns the number of data in the cluster.'''
@@ -419,40 +617,35 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
         pass
 
     @abstractmethod
-    def _read(self, data_i, *arg, **kwargs) -> VDCT:
+    def get_file_path(self, data_i, **kwargs):
         pass
 
-    @abstractmethod
-    def _write(self, data_i, value:VDCT, *arg, **kwargs):
-        pass
-
-    @abstractmethod
-    def _clear(self, *arg, **kwargs):
-        pass
-
-    @abstractmethod
-    def _copyto(self, dst: str, *args, **kwargs):
-        pass
-
-    @abstractmethod
-    def _merge_one(src, k, *args, **kwargs):
-        pass
-
-    def _init_attr(self, *args, **kwargs):
-        '''Method to initialize additional attributes specified by subclasses.'''
-        pass
-
-    def _update_cluster_inc(self, data_i, *args, **kwargs):
+    def _update_cluster_inc(self, iometa:_IOMeta, data_i, value, **kwargs):
         '''
         update the state of the cluster after writing
         '''
         pass
 
-    def _update_cluster_all(self, *args, **kwargs):
+    def _update_cluster_all(self, **kwargs):
         pass
    
-    def __getitem__(self, data_i) -> VDCT:
-        return self.read(data_i)
+    def __getitem__(self, data_i:Union[int, slice]):
+        if isinstance(data_i, slice):
+            # 处理切片操作
+            start, stop, step = data_i.start, data_i.stop, data_i.step
+            if start is None:
+                start = 0
+            if step is None:
+                step = 1
+            def g():
+                for i in range(start, stop, step):
+                    yield self.read(i)
+            return g()
+        elif isinstance(data_i, int):
+            # 处理单个索引操作
+            return self.read(data_i)
+        else:
+            raise TypeError("Unsupported data_i type")
     
     def __setitem__(self, data_i, value:VDCT):
         return self.write(data_i, value)
@@ -460,56 +653,37 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
     def __iter__(self) -> Iterable[VDCT]:
         return self.values()
 
-    def choose_incomplete_operation(obj):
+    def choose_unfinished_operation(obj):
+        '''
+            0. skip
+            1. clear the unfinished data
+            2. try to rollback the unfinished data
+            3. exit"))
+        '''
         if isinstance(obj, _DataCluster):
             tip_0 = "skip"
         elif isinstance(obj, DatasetFormat):
             tip_0 = "decide one by one"
         choice = int(input(f"please choose an operation to continue:\n\
                     0. {tip_0}\n\
-                    1. clear the incomplete data\n\
-                    2. try to rollback the incomplete data\n\
+                    1. clear the unfinished data\n\
+                    2. try to rollback the unfinished data\n\
                     3. exit\n"))
         if choice not in [0, 1, 2, 3]:
             raise ValueError(f"invalid choice {choice}")
         return choice
 
-    def _open(self):
-        '''Method to open the cluster for operation.'''    
-        return True
-
-    def _close(self):
-        return True
-
-    def _start_writing(self):
-        pass
-
-    def _stop_writing(self):
-        self._changed = False  # Resets the updated flag to false.
-        self.__closed = True  # Marks the cluster as closed.
-
     def check_key(self, key) -> bool:
         return True
 
-    def process_incomplete(self):
-        if self._incomplete:
-            if self._incomplete_operation == 0:
-                self._incomplete_operation = self.choose_incomplete_operation()
-            if self._incomplete_operation == 0:
-                return False
-            if self._incomplete_operation == 1:
-                self.set_readonly(False)  # Sets the cluster as write-enabled.
-                self.clear(ignore_warning=True)  # Clears any incomplete data if present.
-                self._incomplete = False
-                self.set_readonly(True)  # Restores the read-only flag.
-                return True
-            elif self._incomplete_operation == 2:
-                raise NotImplementedError
-            elif self._incomplete_operation == 3:
-                raise NotImplementedError
-            else:
-                raise ValueError(f"invalid operation {self._incomplete_operation}")
+    ### IO mode ###
+    def _open(self):
+        '''Method to open the cluster for operation.''' 
+        return True
 
+    def _close(self):
+        return True    
+    
     def open(self):
         if self.__closed == True:
             self.__closed = not self._open()
@@ -520,15 +694,15 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
             self.set_readonly()
             self.__closed = self._close()
 
-    def is_close(self, with_warning = False):
+    def is_closed(self, with_warning = False):
         '''Method to check if the cluster is closed.'''
         if with_warning and self.__closed:
             warnings.warn(f"{self.__class__.__name__}:{self.sub_dir} is closed, any I/O operation will not be executed.",
                             ClusterIONotExecutedWarning)
         return self.__closed
 
-    def is_open(self):
-        return not self.is_close()
+    def is_opened(self):
+        return not self.is_closed()
 
     def set_readonly(self, readonly=True):
         '''Method to set the cluster as read-only or write-enabled.'''
@@ -556,9 +730,10 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
 
     def is_overwrite_allowed(self):
         return self.__overwrite_allowed
+    ########################
 
-    @staticmethod
-    def _read_decorator(func):
+    ### IO operation ###
+    def _read_decorator(self, iometa:_ReadMeta):
         '''
         brief
         -----
@@ -569,19 +744,35 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
         -----
         func: Callable, the decorated function
         '''
-        def wrapper(self: "_DataCluster", data_i, *args, force = False, **kwargs):
-            if not force:
-                if self.is_close(with_warning=True):
+        func = iometa._call
+        warning_info:str = iometa.warning_info
+        def wrapper(data_i, *args, force = False, **kwargs):
+            nonlocal self, warning_info
+            with self._Force(self, force, False): 
+                read_error = False
+                if self.is_closed(with_warning=True):
                     return None
-            try:
-                rlt = func(self, data_i, *args, **kwargs)  # Calls the original function.
-            except ClusterDataIOError:
-                rlt = None
+                elif not iometa.check_key(data_i, **kwargs):
+                    warning_info = f"key:{data_i} is not valid"
+                    read_error = True
+                
+                try:
+                    rlt = func(data_i, *args, **kwargs)  # Calls the original function.
+                except ClusterDataIOError as e:
+                    rlt = None
+                    if str(e) == "skip":
+                        pass
+                    else:
+                        read_error = True
+                
+                if read_error:
+                    warnings.warn(f"{self.__class__.__name__}:{self.sub_dir} \
+                                read {data_i} failed:\
+                                    {warning_info}", ClusterIONotExecutedWarning)
             return rlt
         return wrapper
 
-    @staticmethod
-    def _write_decorator(func):
+    def _write_decorator(self, iometa:_WriteMeta):
         '''
         brief
         -----
@@ -593,137 +784,148 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT]):
         -----
         func: Callable, the decorated function
         '''
-        def wrapper(self: "_DataCluster", data_i = None, value = None, *args, force = False, **kwargs):
-            if force:
-                orig_closed = self.__closed
-                orig_readonly = self.__readonly
-                self.open()
-                self.set_writable()
+        func = iometa._call
+        log_type:int = iometa.IO_TYPE
+        warning_info:str = iometa.warning_info
 
-            overwrited = False
+        def wrapper(data_i, value = None, *args, force = False, **kwargs):
+            nonlocal self, log_type, warning_info
+            with self._Force(self, force): 
+                write_error = False
+                overwrited = False
 
-            if self.is_close(with_warning=True) or self.is_readonly(with_warning=True):
-                return None
-            if data_i in self.keys():
-                if not self.overwrite_allowed and not force:
-                    warnings.warn(f"{self.__class__.__name__}:{self.sub_dir} \
-                                is not allowed to overwitre, any write operation will not be executed.",
-                                    ClusterIONotExecutedWarning)
+                if self.is_closed(with_warning=True) or self.is_readonly(with_warning=True):
                     return None
-                overwrited = True                    
-            
-            try:
-                if not self.is_writing:
-                    self.start_writing()
-                rlt = func(self, data_i, value, *args, **kwargs)  # Calls the original function.
-            except ClusterDataIOError:
-                rlt = None
-            else:
-                self.changed_since_opening = True  # Marks the cluster as updated after writing operations.
-                if data_i is None:
-                    self._update_cluster_all(*args, **kwargs)
-                else:
-                    self._update_cluster_inc(data_i, *args, **kwargs)
-                
-                if overwrited:
-                    self.log_to_mark_file(data_i, self.LOG_CHANGE)
-                else:
-                    self.log_to_mark_file(data_i, self.LOG_APPEND)
+                elif not iometa.check_key(data_i, **kwargs):
+                    warning_info = f"key:{data_i} is not valid"
+                    write_error = True
+                elif not iometa.check_value(value, **kwargs):
+                    warning_info = f"value:{value} is not valid"
+                    write_error = True              
+                elif iometa.is_overwriting(data_i, value, **kwargs):
+                    if not self.overwrite_allowed and not force:
+                        warnings.warn(f"{self.__class__.__name__}:{self.sub_dir} \
+                                    is not allowed to overwitre, any write operation will not be executed.",
+                                        ClusterIONotExecutedWarning)
+                        write_error = True
+                        return None
+                    overwrited = True 
 
-            if force:
-                if orig_closed:
-                    self.close()
-                if orig_readonly:
-                    self.set_readonly()
+                if not write_error:                
+                    try:
+                        if not self.is_writing:
+                            self.start_writing()
+                        rlt = func(data_i, value, *args, **kwargs)  # Calls the original function.
+                    except ClusterDataIOError as e:
+                        rlt = None
+                        if str(e) == "skip":
+                            pass
+                        else:
+                            write_error = True     
+                    else:
+                        self.changed_since_opening = True  # Marks the cluster as updated after writing operations.
+                        if overwrited and log_type == self.LOG_APPEND:
+                            log_type = self.LOG_CHANGE
+                        self._update_cluster_inc(iometa, data_i, value, *args, **kwargs)
+                        self.log_to_mark_file(log_type, data_i, value)
+                
+                if write_error:
+                    warnings.warn(f"{self.__class__.__name__}:{self.sub_dir} \
+                        write {data_i}, {value} failed:\
+                        {warning_info}", ClusterIONotExecutedWarning)
+
             return rlt
         return wrapper
+    #####################
 
+    # complex io #
     def clear(self, *, force = False, ignore_warning = False):
         '''
         Method to clear any data in the cluster. Subclasses may implement this method.
         * it is dargerous
         '''
         if not ignore_warning:
-            y = input("All files in {} will be deleted, please enter 'y' to confirm".format(self.directory))
+            y = input("All files in {} will be removed, please enter 'y' to confirm".format(self.directory))
         else:
             y = 'y'
         if y == 'y':
-            self.__cluster_clear_func(self, force = force)
+            with self._Force(self, force, True): 
+                for data_i in tqdm(list(self.keys()), desc=f"clear {self.sub_dir}"):
+                    self.remove(data_i)
             return True
         else:
             return False
 
-    def read(self, data_i, *args, force = False, **kwargs)->VDCT:
-        '''
-        Method to read data from the cluster. Subclasses must implement this method.
-        '''
-        return self.__cluster_read_func(self, data_i, *args, force=force, **kwargs)
+    def make_continuous(self, *args, **kwargs):
+        if self.continuous:
+            return
+        for new_i, data_i in tqdm(enumerate(self.keys()), desc=f"make {self.sub_dir} continuous"):
+            if data_i != new_i:
+                self.move(data_i, new_i)
 
-    def write(self, data_i, value:VDCT, *args, force = False, **kwargs):
-        '''
-        Method to write data to the cluster. Subclasses must implement this method.
-
-        parameter
-        ----
-        * data_i: Any, the key of the data
-        * value: DCT, the value of the data
-        * force: bool, whether to force write, it's not recommended to use force=True if you want to write a lot of data
-        '''
-        assert self.check_key(data_i)
-        return self.__cluster_write_func(self, data_i, value, *args, force = force, **kwargs)
-
-    def copyto(self, dst: str, cover:bool, *args, **kwargs):
-        '''
-        copy the cluster to dst
-        '''
-        if os.path.exists(dst):
-            if cover:
-                warnings.warn(f"{dst} exists, it will be deleted", ClusterParaWarning)
-                shutil.rmtree(dst)
-            else:
-                raise ValueError(f"{dst} exists, it will not be deleted, please set cover=True")
-        self._copyto(dst, *args, **kwargs)
-
-    def merge(self, src:"_DataCluster", *args, **kwargs):
-        assert self.is_open() and self.is_writable(), f"{self.__class__.__name__}:{self.sub_dir} is not writable"
+    def merge_from(self, src:"_DataCluster", *args, **kwargs):
         assert type(src) == type(self), f"can't merge {type(src)} to {type(self)}"
-        for k in tqdm(src.keys(), desc=f"merge {src.sub_dir} to {self.sub_dir}", total=len(src)):
-            self._merge_one(src, k, *args, **kwargs)
+        assert self.is_opened() and self.is_writable(), f"{self.__class__.__name__}:{self.sub_dir} is not writable"
+        assert src.is_opened(), f"{src.__class__.__name__}:{src.sub_dir} is not opened"
+        for data_i in tqdm(src.keys(), desc=f"merge {src.sub_dir} to {self.sub_dir}", total=len(src)):
+            self.load_in(src.get_file_path(data_i), self.cluster_data_i_upper, *args, **kwargs)
 
-    def start_writing(self, overwrite_allowed = False):
-        '''
-        rewrite the method of WriteController
-        '''
-        if super().start_writing(overwrite_allowed):
-            self.open()
-            self.set_writable()
-            self._start_writing()
-            if not self.overwrite_allowed:
-                self.set_overwrite_allowed(overwrite_allowed)
-            return True
-        else:
-            return False
+    @abstractmethod
+    def copyto(self, dst:str, *args, **kwargs):
+        pass
 
-    def stop_writing(self):
-        '''
-        rewrite the method of WriteController
-        '''
-        if not self.is_writing:
-            return False
-        else:
-            self.set_overwrite_allowed(False)
-            self._stop_writing()
-            self._update_cluster_all()
-            return super().stop_writing()
+    ###############
 
     def __repr__(self):
         return f"{self.identity_string()} at {hex(id(self))}"
 
     def register_to_dataset(self):
         if self.register:
-            self.dataset_node.cluster_map[self.identity_string()] = self
+            self.dataset_node.cluster_map.add_cluster(self)
 
-class JsonDict(_DataCluster[DSNT, VDCT], dict):
+    def unregister_from_dataset(self):
+        if self.identity_string() in self.dataset_node.cluster_map:
+            self.dataset_node.cluster_map.remove_cluster(self)
+
+    def process_unfinished(self):
+        ### TODO
+        pass
+        if self._unfinished:
+            if self._unfinished_operation == 0:
+                self._unfinished_operation = self.choose_unfinished_operation()
+            if self._unfinished_operation == 0:
+                return False
+            self._update_cluster_all()
+            if self._unfinished_operation == 1:
+                self.clear(force=True, ignore_warning=True)
+                self._unfinished = False
+                self.remove_mark()
+                self._update_cluster_all()
+                return True
+            elif self._unfinished_operation == 2:
+                # try roll back
+                log = self.load_from_mark_file()
+                with self._Force(self, True, True):
+                    for log_i, data_i, _ in log:
+                        if log_i == self.LOG_APPEND:
+                            if data_i in self.keys():
+                                self.remove(data_i)
+                                print(f"try to rollback, {data_i} in {self.identity_string()} is removed.")
+                        else:
+                            raise ValueError("can not rollback")
+                self.remove_mark()
+                return True
+            elif self._unfinished_operation == 3:
+                # reinit
+                self.remove_mark()
+                self._update_cluster_all()
+            else:
+                raise ValueError(f"invalid operation {self._unfinished_operation}")
+        if self._unfinished_operation == 3:
+            # reinit
+            self._update_cluster_all()
+
+class JsonDict(_DataCluster[DSNT, VDCT, "JsonDict"], dict):
     '''
     dict for base json
     ----
@@ -751,6 +953,12 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
         dict.__init__(self)
         super().__init__(dataset_node, sub_dir, register, name, *args, **kwargs)
 
+    def _init_attr(self, *args, **kwargs):
+        _DataCluster._init_attr(self, *args, **kwargs)
+        self.reload()
+        self.__save_mode = self.SAVE_AFTER_CLOSE
+        self.stream = JsonIO.Stream(self.directory)
+
     @property
     def save_mode(self):
         return self.__save_mode
@@ -761,7 +969,7 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
         if self.is_writing and mode != self.SAVE_STREAMLY:
             warnings.warn("can't change save_mode from SAVE_STREAMLY to the others while writing streamly", 
                           ClusterParaWarning)
-        if self.__save_mode == self.SAVE_AFTER_CLOSE and mode != self.SAVE_AFTER_CLOSE and self.is_open():
+        if self.__save_mode == self.SAVE_AFTER_CLOSE and mode != self.SAVE_AFTER_CLOSE and self.is_opened():
             self.save()
         self.__save_mode = mode
 
@@ -785,33 +993,56 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
         super().items()
         return dict.items(self)
     
-    def _read(self, data_i, *arg, **kwargs):
-        super()._read(data_i, *arg, **kwargs)
+    def _read(self, data_i, **kwargs):
+        super()._read(data_i, **kwargs)
         try:
             return dict.__getitem__(self, data_i)
         except KeyError:
             raise ClusterDataIOError(f"key {data_i} does not exist")
 
-    def _write(self, data_i, value, *arg, **kwargs):
-        super()._write(data_i, value, *arg, **kwargs)
+    def _write(self, data_i, value, **kwargs):
+        super()._write(data_i, value, **kwargs)
 
         if self.save_mode == self.SAVE_IMMIDIATELY:
-            rlt = dict.__setitem__(self, data_i, value)
+            dict.__setitem__(self, data_i, value)
             self.save()
         elif self.save_mode == self.SAVE_AFTER_CLOSE:
-            rlt = dict.__setitem__(self, data_i, value)
+            dict.__setitem__(self, data_i, value)
         elif self.save_mode == self.SAVE_STREAMLY:
             set_value = self._Placeholder()
             if not self.is_writing:
                 self.start_writing() # auto start writing if save_mode is SAVE_STREAMLY
             self.stream.write({data_i: value})
-            rlt = dict.__setitem__(self, data_i, set_value)
-        return rlt
+            dict.__setitem__(self, data_i, set_value)
+        else:
+            raise ValueError(f"invalid save_mode {self.save_mode}")
+        return self.LOG_APPEND
 
-    def _clear(self, *arg, **kwargs):
+    def _remove(self, data_i, *args, **kwargs):
+        super()._remove(data_i, *args, **kwargs)
+        if self.save_mode == self.SAVE_IMMIDIATELY:
+            dict.__delitem__(self, data_i)
+            self.save()
+        elif self.save_mode == self.SAVE_AFTER_CLOSE:
+            dict.__delitem__(self, data_i)
+        elif self.save_mode == self.SAVE_STREAMLY:
+            raise RuntimeError("can't remove while save_mode is SAVE_STREAMLY")
+        return self.LOG_REMOVE
+
+    def _clear(self, *args, **kwargs):
         with open(self.directory, 'w'):
             pass
         dict.clear(self)
+
+    def _make_continuous(self, *args, **kwargs):
+        assert self.save_mode != self.SAVE_STREAMLY, "can't make_continuous while save_mode is SAVE_STREAMLY"
+        super()._make_continuous(*args, **kwargs)
+        new_dict = {}
+        for i, v in enumerate(self.values()):
+            new_dict[i] = v
+        self.clear(force=True, ignore_warning=True)
+        self.update(new_dict)
+        self.save()
 
     def _copyto(self, dst: str, *args, **kwargs):
         super()._copyto(dst, *args, **kwargs)
@@ -819,6 +1050,7 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
         shutil.copy(self.directory, dst)
 
     def _merge_one(self, src: "JsonDict", k, *args, **kwargs):
+        ### TODO
         v = src[k]
         if isinstance(k, int):
             self[self.cluster_data_i_upper] = v
@@ -834,11 +1066,6 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
             raise TypeError(f"unsupported type: {type(k)} in src")
         self.log_to_mark_file(self.cluster_data_i_upper - 1, self.LOG_APPEND)
 
-    def _init_attr(self, *args, **kwargs):
-        _DataCluster._init_attr(self, *args, **kwargs)
-        self.reload()
-        self.__save_mode = self.SAVE_AFTER_CLOSE
-        self.stream = JsonIO.Stream(self.directory)
 
     def __iter__(self) -> Iterator:
         return _DataCluster.__iter__(self)
@@ -854,7 +1081,7 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
             self.save()
         super()._stop_writing()
 
-    def update(self, _m:Union[dict, Iterable[tuple]] = None, **kw):
+    def update(self, _m:Union[dict, Iterable[tuple]] = None, **kwargs):
         if _m is None:
             warnings.warn(f"It's not recommended to use update() for {self.__class__.__name__} \
                 for it will call {self._update_cluster_all.__name__} and spend more time. \
@@ -862,12 +1089,12 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
                 use {self.__setitem__.__name__} or {self.write.__name__} or {self.__setitem__.__name__} instead", ClusterNotRecommendWarning)
         elif isinstance(_m, dict):
             for k, v in _m.items():
-                assert self.checkkey(k), f"key {k} is not allowed"
+                assert self.check_key(k), f"key {k} is not allowed"
                 self[k] = v
         elif isinstance(_m, Iterable):
             assert all([len(x) == 2 for x in _m])
             for k, v in _m:
-                assert self.checkkey(k), f"key {k} is not allowed"
+                assert self.check_key(k), f"key {k} is not allowed"
                 self[k] = v
         else:
             raise TypeError(f"unsupported type: {type(_m)}")
@@ -886,11 +1113,12 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
             value = {}
         dict.update(self, value)
 
-    @_DataCluster._write_decorator
-    def sort(self, *arg, **kwargs):
+    def sort(self, *args, **kwargs):
         '''
         sort by keys
         '''
+        raise NotImplementedError
+        ### TODO
         if self.is_writing:
             warnings.warn(f"It's no effect to call {self.sort.__name__} while writing", ClusterNotRecommendWarning)
             return 
@@ -925,7 +1153,7 @@ class JsonDict(_DataCluster[DSNT, VDCT], dict):
     def save(self):
         JsonIO.dump_json(self.directory, self)
 
-class Elements(_DataCluster[DSNT, VDCT]):
+class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
     '''
     elements manager
     ----
@@ -957,6 +1185,333 @@ class Elements(_DataCluster[DSNT, VDCT]):
 
     WRITING_MARK = ".elmsw" # the mark file of writing process, Elements streamly writing
 
+    DIR_MAP_FILE = "data_i_dir_map.elmm"
+    APPNAMES_MAP_FILE = "data_i_appnames.elmm"
+    DATA_INFO_MAP_FILE = "data_info_map.elmm"
+    CACHE_FILE = "cache.elmcache"
+
+    class DataInfoDict(dict[str, Union[str, list, bool]]):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.update({
+                "dir": None,
+                "appnames": [],
+                "file_exist": [],
+                "cache": None
+            })            
+            self.update(*args, **kwargs)
+        
+        # dir
+        @property
+        def dir(self)->str:
+            return self["dir"]
+        
+        @dir.setter
+        def dir(self, value):
+            assert isinstance(value, str), f"dir must be str, not {type(value)}"
+            self["dir"] = value
+
+        # appnames
+        @property
+        def appnames(self) -> tuple[str]:
+            return tuple(self["appnames"])
+
+        @appnames.setter
+        def appnames(self, value:Iterable[str]):
+            assert isinstance(value, Iterable), f"appnames must be list, not {type(value)}"
+            assert all([isinstance(x, str) for x in value]), f"appnames must be list[str], not {type(value)}"
+            self["appnames"].clear()
+            self["appnames"].extend(value)
+
+        @property
+        def file_exist(self):
+            return tuple(self["file_exist"])
+
+        @file_exist.setter
+        def file_exist(self, value:Iterable[bool]):
+            assert isinstance(value, Iterable), f"file_exist must be list, not {type(value)}"
+            assert all([isinstance(x, bool) for x in value]), f"file_exist must be list[bool], not {type(value)}"
+            assert len(value) == len(self["appnames"]), f"file_exist must have the same length as appnames"
+            self["file_exist"].clear()
+            self["file_exist"].extend(value)
+
+        @property
+        def has_notfound(self):
+            return any([not e for e in self["file_exist"]])
+
+        # has_cache
+
+        # has_file
+        @property
+        def has_file(self) -> bool:
+            return any(self["file_exist"])
+
+        # cache
+        @property
+        def cache(self):
+            return self.get_cache()
+
+        @property
+        def has_cache(self):
+            return self.cache is not None
+
+        @property
+        def empty(self):
+            return not (self.has_file or self.has_cache)
+
+        def add_file(self, appname):
+            if appname not in self.appnames:
+                self["appnames"].append(appname)
+                self["file_exist"].append(True)
+
+        def remove_file(self, appname):
+            if appname in self.appnames:
+                idx = self.appnames.index(appname)
+                self["file_exist"][idx] = False
+
+        def get_file_exist(self, appname):
+            if appname in self.appnames:
+                idx = self.appnames.index(appname)
+                return self.file_exist[idx]
+            else:
+                return False
+
+        def get_cache(self):
+            return self["cache"]
+            
+        def set_cache(self, cache):
+            self["cache"] = cache
+            
+        def erase_cache(self):
+            self["cache"] = None
+
+        def clear_notfound(self, idx):
+            new_appnames = []
+            for i, e in enumerate(self["file_exist"]):
+                if e:
+                    new_appnames.append(self["appnames"][i])
+            self.appnames = new_appnames
+            self["file_exist"] = [True] * len(self.appnames)
+
+        def sort(self):
+            new_appnames = []
+            new_file_exist = []
+            for i in sorted(self.appnames):
+                idx = self.appnames.index(i)
+                new_appnames.append(i)
+                new_file_exist.append(self["file_exist"][idx])
+            self["appnames"] = new_appnames
+            self["file_exist"] = new_file_exist
+        
+        def refresh_has_file(self, elem:"Elements", data_i:int):
+            for idx, appname in enumerate(self.appnames):
+                self["file_exist"][idx] = elem.has_file_of(data_i, self.dir, appname)
+
+    class DataInfoMap(dict[int, DataInfoDict]):
+        def __init__(self, elmm:"Elements", *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.elements = elmm
+            self.directory = self.elements.directory
+            self.path = os.path.join(self.elements.directory, self.elements.DATA_INFO_MAP_FILE)
+        
+        def add_info(self, data_i, subdir, appnames:list[str] = None):
+            appnames = [] if appnames is None else appnames
+            if data_i not in self.keys():
+                self[data_i] = Elements.DataInfoDict()
+                self[data_i].dir = subdir
+                self[data_i].appnames = appnames
+                self[data_i].file_exist = [True] * len(appnames)
+
+        def remove_info(self, data_i):
+            if data_i in self.keys():
+                self.pop(data_i)
+
+        def add_appname(self, data_i, appname):
+            self[data_i].add_file(appname)
+
+        def rebuild(self, ignore_notfound = False):
+            paths = glob.glob(os.path.join(self.directory, "**/*" + self.elements.suffix), recursive=True)
+            for path in paths:
+                data_i, subdir, appname = Elements.parse_path(self.directory, path)
+                self.add_info(data_i, subdir)
+                self.add_appname(data_i, appname)
+            for data_i, info in dict(self).items():
+                info.refresh_has_file(self.elements, data_i)
+                if info.empty:
+                    self.pop(data_i)
+                if info.has_notfound:
+                    if ignore_notfound:
+                        info.clear_notfound()
+                    else:
+                        notfound_names = [n for n, e in zip(info.appnames, info.file_exist) if e == False]
+                        raise ValueError(f"notfound data_i: {data_i}: {notfound_names}")
+            # sort by data_i
+            new_dict = dict(sorted(self.items(), key=lambda x:x[0]))
+            self.clear()
+            self.update(new_dict)
+
+        @staticmethod
+        def load(elmm:"Elements"):
+            path = os.path.join(elmm.directory, elmm.DATA_INFO_MAP_FILE)
+            if os.path.exists(path):
+                data_info_dict:dict = deserialize_object(path)
+                data_info_map = Elements.DataInfoMap(elmm, {int(k): Elements.DataInfoDict(v) for k, v in data_info_dict.items()})
+            else:
+                data_info_map = Elements.DataInfoMap(elmm)
+                data_info_map.rebuild()
+                data_info_map.save()
+
+            return data_info_map
+
+        def save(self):
+            to_save_dict = {item[0]: dict(item[1]) for item in self.items()}
+            if self.elements.is_opened():
+                serialize_object(self.path, to_save_dict)
+
+        # def __setitem__(self, __key: int, __value) -> None:
+        #     raise NotImplementedError
+
+    _DCT = TypeVar('_DCT', bound="Elements")
+    _VDCT = TypeVar('_VDCT')
+    class _read(_DataCluster._read[_DCT, _VDCT]):
+        def _read_from_cache(self, data_i, **kwargs):
+            if data_i in self.cluster.data_info_map:
+                value = self.cluster.data_info_map[data_i].get_cache()
+                return value
+            else:
+                return None
+        
+        def _read_from_file(self, data_i, **kwargs):
+            subdir, appnames = self.cluster.auto_path(data_i, return_app=True)
+            paths = [self.cluster.format_path(data_i, subdir, appname) for appname in appnames]
+            single_values = [self.cluster.read_func(path, **kwargs) for path in paths]
+            value = self.cluster.construct_value_func(appnames, single_values)
+            return value
+
+        def _call(self, data_i, **kwargs: Any):
+            def _read_with_priority(func1, func2):
+                value = func1(data_i, **kwargs)
+                if value is None:
+                    value = func2(data_i, **kwargs)
+                if value is None:
+                    raise ClusterDataIOError(f"can't find {data_i}")
+                return value
+
+            cache_priority = self.cluster.cache_priority
+
+            if cache_priority:
+                value = _read_with_priority(self._read_from_cache, self._read_from_file)
+            else:
+                value = _read_with_priority(self._read_from_file, self._read_from_cache)
+            return value
+
+    class _write(_DataCluster._write[_DCT, _VDCT]):
+        def check_key(self, data_i, **kwargs) -> bool:
+            value = isinstance(data_i, int) and data_i >= 0 
+            return value and super().check_key(data_i, **kwargs)
+
+        def _call(self, data_i, value:VDCT, subdir = "", **kwargs: Any):
+            path = self.cluster.format_path(data_i, subdir=subdir)
+            dir_ = os.path.split(path)[0]
+            os.makedirs(dir_, exist_ok=True)
+            appnames, single_values = self.cluster.parse_appnames_func(value)
+            for n, v in zip(appnames, single_values):
+                path = self.cluster.format_path(data_i, subdir, n)
+                if value is not None:
+                    self.cluster.write_func(path, v, **kwargs)
+            
+            self.cluster._data_info_map.add_info(data_i, subdir, appnames)
+
+        def __call__(self, data_i, value:VDCT, subdir = "", *args, force=False, **kwargs) -> Any:
+            return super().__call__(data_i, value, subdir, *args, force=force, **kwargs)
+
+    class _remove(_DataCluster._remove[_DCT, _VDCT]):
+        def _call(self, data_i, value, **kwargs: Any):
+            paths = self.cluster.auto_path(data_i, return_app=False, allow_mutil_appendname=True)
+            for path in paths:
+                if os.path.exists(path):
+                    os.remove(path)
+            # record
+            self.cluster._data_info_map.remove_info(data_i)
+
+    class _move(_DataCluster._move[_DCT, _VDCT]):
+        def check_key(self, key, **kwargs) -> bool:
+            rlt = isinstance(key, int) and key >= 0
+            rlt = rlt and super().check_key(key, **kwargs)
+            return rlt
+
+        def check_value(self, value, **kwargs) -> bool:
+            rlt = isinstance(value, int) and value >= 0
+            rlt = rlt and super().check_value(value, **kwargs)
+            return rlt
+
+        def _call(self, src:int, dst:int, *args, **kwargs):
+            src_dir, src_appnames = self.cluster.auto_path(src, return_app=True, allow_mutil_appendname=True)
+            for name in src_appnames:
+                src_path = self.cluster.format_path(src, src_dir, name)
+                dst_path = self.cluster.format_path(dst, src_dir, name)
+                shutil.move(src_path, dst_path)
+            info = self.cluster._data_info_map.pop(src)
+            self.cluster._data_info_map.update({dst: info})
+            
+    class _load_in(_DataCluster._load_in[_DCT, _VDCT]):
+        def check_key(self, src:list[str], **kwargs) -> bool:
+            rlt = isinstance(src, Iterable)
+            rlt = rlt and all([isinstance(x, str) for x in src])
+            rlt = rlt and super().check_key(src, **kwargs)
+
+        def check_value(self, dst:int, **kwargs) -> bool:
+            rlt = isinstance(dst, int) and dst >= 0
+            rlt = rlt and super().check_value(dst, **kwargs)
+            return rlt
+        
+        def _call(self, src:list[str], dst:int, subdir = "", **kwargs: Any):
+            src_appnames = []
+            for sp in src:
+                name = os.path.split(sp)[1] 
+                main_name = os.path.splitext(name)[0]
+                src_appnames.append(main_name.split('_')[-1])
+            dst_paths = []
+            for appname in src_appnames:
+                dst_paths.append(self.cluster.format_path(dst, subdir, appname))
+            for sp, dp in zip(src, dst_paths):
+                shutil.copy(sp, dp)
+            self.cluster._data_info_map.add_info(dst, subdir, src_appnames)
+
+        def __call__(self, data_i, value:VDCT, subdir = "", *args, force=False, **kwargs) -> Any:
+            return super().__call__(data_i, value, subdir, *args, force=force, **kwargs)
+            
+    class _change_dir(_WriteMeta[_DCT, _VDCT]):
+        IO_TYPE = WriteController.LOG_OPERATION
+
+        def is_overwriting(self, data_i, value, **kwargs):
+            return False
+        
+        def check_key(self, key, **kwargs) -> bool:
+            rlt = isinstance(key, int) and key >= 0
+            rlt = rlt and key in self.cluster.keys()
+            rlt = rlt and super().check_key(key, **kwargs)
+            return rlt
+
+        def check_value(self, value:str, **kwargs) -> bool:
+            rlt = isinstance(value, str)
+            rlt = rlt and super().check_value(value, **kwargs)
+            return rlt
+
+        def _call(self, data_i:int, dst_dir:str, **kwargs: Any):
+            dir_, appnames = self.cluster.auto_path(data_i, return_app=True)
+            for appname in appnames:
+                src_path = self.cluster.format_path(data_i, dir_, appname)
+                dst_path = self.cluster.format_path(data_i, dst_dir, appname)
+                os.makedirs(os.path.split(dst_path)[0], exist_ok=True)
+                shutil.move(src_path, dst_path)
+            # record
+            info = self.cluster._data_info_map[data_i]
+            info.dir = dst_dir
+        
+        def __call__(self, data_i:int, dst_dir:str, *args, force=False, **kwargs) -> Any:
+            return super().__call__(data_i, dst_dir, *args, force=force, **kwargs)
+        
     def __init__(self, 
                 dataset_node:DSNT,
                 sub_dir,
@@ -968,141 +1523,10 @@ class Elements(_DataCluster[DSNT, VDCT]):
                 filllen = 6, 
                 fillchar = '0', *,
                 alternative_suffix:list[str] = []) -> None:
+        # _cvt_old_element_map(dataset_node, sub_dir, suffix)
         super().__init__(dataset_node, sub_dir, register, name, 
                          read_func, write_func, suffix, filllen, fillchar, alternative_suffix = alternative_suffix)
-
-    @property
-    def data_i_dir_map(self):
-        if len(self._data_i_dir_map) == 0:
-            self._update_cluster_all()
-        return self._data_i_dir_map
-    
-    @property
-    def data_i_appendnames(self):
-        if len(self._data_i_appendnames) == 0:
-            self._update_cluster_all()
-        return self._data_i_appendnames
-
-    @property
-    def cache_used(self):
-        return self.__cache_used
-    
-    @cache_used.setter
-    def cache_used(self, value:bool):
-        if not self.has_cache and value:
-            warnings.warn(f"no cache file, can not set. call {self.save_cache.__name__} first", ClusterParaWarning)
-        elif not self.has_source and not value:
-            warnings.warn(f"no source file, can not set. try {self.unzip_cache.__name__} first", ClusterParaWarning)
-        else:
-            if value == True:
-                self.load_cache()
-            self.__cache_used = bool(value)
-
-    @property
-    def has_cache(self):
-        cache_path = os.path.join(self.directory, self.__cache_name)
-        return os.path.exists(cache_path)
-
-    @property
-    def has_source(self):
-        try:
-            file_path = self.auto_path(0)
-            return True
-        except ClusterDataIOError:
-            return False
-
-    def __len__(self):
-        '''
-        Count the total number of files in the directory
-        '''
-        super().__len__()
-        # count = 0
-        # for root, dirs, files in os.walk(self.directory):
-        #     count += len(glob.glob(os.path.join(root, f'*{self.suffix}')))
-        return len(self.data_i_dir_map)
-
-    def keys(self):
-        '''
-        brief
-        -----
-        return a generator of data_i
-        * Elements is not a dict, so it can't be used as a dict.
-        '''
-        super().keys()
-        def data_i_generator():
-            for i in self.data_i_dir_map.keys():
-                yield i
-        return data_i_generator()
-    
-    def values(self):
-        super().values()
-        def value_generator():
-            for i in self.data_i_dir_map.keys():
-                yield self.read(i)
-        return value_generator()
-    
-    def items(self):
-        super().items()
-        def items_generator():
-            for i in self.data_i_dir_map.keys():
-                yield i, self.read(i)
-        return items_generator()
-
-    def _read(self, data_i, appdir = "", appname = "", *arg, **kwargs)->VDCT:
-        super()._read(data_i, *arg, **kwargs)
-        if not self.cache_used:
-            path = self.format_path(data_i, appdir=appdir, appname=appname)
-            if not os.path.exists(path):
-                path = self.auto_path(data_i)
-            if os.path.exists(path):
-                return self.read_func(path, *arg, **kwargs)
-            else:
-                raise ClusterDataIOError(f"can't find {path}")
-        else:
-            if data_i in self.__cache:
-                return self.__cache[data_i]
-            else:
-                raise ClusterDataIOError(f"can't find {path}")
-        
-    def _write(self, data_i, value:VDCT, appdir = "", appname = "", *arg, **kwargs):
-        super()._write(data_i, value, *arg, **kwargs)
-        if not self.cache_used:
-            path = self.format_path(data_i, appdir=appdir, appname=appname)
-            dir_ = os.path.split(path)[0]
-            os.makedirs(dir_, exist_ok=True)
-            if value is not None:
-                self.write_func(path, value, *arg, **kwargs)
-        else:
-            warnings.warn("can't write when 'cache_used' is True", ClusterIONotExecutedWarning)
-
-    def _clear(self, *arg, **kwargs):
-        super()._clear(*arg, **kwargs)
-        shutil.rmtree(self.directory)
-        os.makedirs(self.directory)
-
-    def _copyto(self, dst: str, *args, **kwargs):
-        super()._copyto(dst, *args, **kwargs)
-        if not self.cache_used:
-            shutil.copytree(self.directory, dst)
-        else:
-            os.makedirs(dst, exist_ok=True)
-            shutil.copy(os.path.join(self.directory, self.__data_i_dir_map_name), 
-                        os.path.join(dst, self.__data_i_dir_map_name))
-            shutil.copy(os.path.join(self.directory, self.__data_i_appendnames_name),
-                        os.path.join(dst, self.__data_i_appendnames_name))
-            shutil.copy(os.path.join(self.directory, self.__cache_name),
-                        os.path.join(dst, self.__cache_name))
-
-    def _merge_one(self, src: "Elements", data_i:int, *args, **kwargs):
-        appdir, append_names = src.auto_path(data_i, return_app=True, allow_mutil_appendname=True)
-        for name in append_names:
-            src_path = src.format_path(data_i, appdir=appdir, appname=name)
-            new_data_i = self.cluster_data_i_upper
-            new_path = self.format_path(new_data_i, appdir=appdir, appname=name)
-            shutil.copy(src_path, new_path)
-            self._update_cluster_inc(new_data_i, appdir=appdir, appname=name)
-            self.log_to_mark_file(new_data_i, self.LOG_APPEND)
-        self.save_maps()
+        # self-check
 
     def _init_attr(self, read_func, write_func, suffix, filllen, fillchar, alternative_suffix = [], *args, **kwargs):
         def _check_dot(suffix:str):
@@ -1115,9 +1539,9 @@ class Elements(_DataCluster[DSNT, VDCT]):
         assert isinstance(filllen, int), f"filllen must be int, not {type(filllen)}"
         assert isinstance(fillchar, str), f"fillchar must be str, not {type(fillchar)}"
         assert isinstance(alternative_suffix, (list, tuple)), f"alternative_suffix must be list or tuple, not {type(alternative_suffix)}"
-        self.__data_i_dir_map_name = "data_i_dir_map.elmm"
-        self.__data_i_appendnames_name = "data_i_appendnames.elmm"
-        self.__cache_name = "cache.elmcache"
+        # self.DIR_MAP_NAME = "data_i_dir_map.elmm"
+        # self.APPNAMES_MAP_NAME = "data_i_appnames.elmm"
+        # self.CACHE_NAME = "cache.elmcache"
 
         self.filllen    = filllen
         self.fillchar   = fillchar
@@ -1128,50 +1552,93 @@ class Elements(_DataCluster[DSNT, VDCT]):
 
         self.read_func  = read_func
         self.write_func = write_func
+
+        self.read: Elements._read[DCT, VDCT]                 = self.read
+        self.write:Elements._write[DCT, VDCT]                = self.write
+        self.remove:Elements._write[DCT, VDCT]               = self.remove
+        self.move:Elements._write[DCT, VDCT]                 = self.move
+        self.load_in:Elements._write[DCT, VDCT]              = self.load_in
+        self.change_dir:Elements._write["Elements", VDCT]    = self._change_dir(self)
         
-        self._data_i_dir_map = {}
-        self._data_i_appendnames = {}
+        self._data_info_map = self.DataInfoMap.load(self)
 
-        self.__cache_used = False
-        self.__cache = {}
+        self.cache_priority = True
 
-        self.load_maps()
-        if not self.has_source:
-            if self.load_cache():
-                self.cache_used = True
+    @property
+    def data_info_map(self):
+        return types.MappingProxyType(self._data_info_map)
 
-    def _update_cluster_inc(self, data_i, appdir = "", appname = "", *arg, **kwargs):
-        self._data_i_dir_map[data_i] = appdir
-        self._data_i_appendnames.setdefault(data_i, []).append(appname)
+    def has_file_of(self, data_i, subdir, appname):
+        return os.path.exists(self.format_path(data_i, subdir=subdir, appname=appname))
+
+    def __len__(self):
+        '''
+        Count the total number of files in the directory
+        '''
+        super().__len__()
+        return len(self.data_info_map)
+
+    def keys(self):
+        '''
+        brief
+        -----
+        return a generator of data_i
+        * Elements is not a dict, so it can't be used as a dict.
+        '''
+        super().keys()
+        return self.data_info_map.keys()
+    
+    def values(self):
+        super().values()
+        def value_generator():
+            for i in self.data_info_map.keys():
+                yield self.read(i)
+        return value_generator()
+    
+    def items(self):
+        super().items()
+        def items_generator():
+            for i in self.data_info_map.keys():
+                yield i, self.read(i)
+        return items_generator()
+     
+    def get_file_path(self, data_i, *args, **kwargs):
+        return self.auto_path(data_i)
+
+    def copyto(self, dst: str, *args, **kwargs):
+        if not self.cache_priority:
+            shutil.copytree(self.directory, dst)
+        else:
+            os.makedirs(dst, exist_ok=True)
+            shutil.copy(os.path.join(self.directory, self.DATA_INFO_MAP_FILE),
+                        os.path.join(dst, self.DATA_INFO_MAP_FILE))
+            for data_i, info in self._data_info_map.items():
+                if not info.has_cache:
+                    for appname in info.appnames:
+                        src_path = self.format_path(data_i, info.dir, appname)
+                        dst_path = self.format_path(data_i, info.dir, appname, dst)
+                        os.makedirs(os.path.split(dst_path)[0], exist_ok=True)
+                        shutil.copy(src_path, dst_path)
+
+    def _update_cluster_inc(self, iometa:_IOMeta, data_i, value, subdir = "", *args, **kwargs):
+        pass
 
     def _update_cluster_all(self, *args, **kwargs):
-        # if len(self) > 2000:
-        #     print(f'init {self.directory} data_i_dir_map, this may take a while...')        
-        self._data_i_dir_map.clear()
-        self._data_i_appendnames.clear()
-        paths = glob.glob(os.path.join(self.directory, "**/*" + self.suffix), recursive=True)
-        for path in paths:
-            data_i, appdir, appname = self.parse_path(path)
-            self._update_cluster_inc(data_i, appdir=appdir, appname=appname)
-        # sort by data_i
-        self._data_i_dir_map = dict(sorted(self._data_i_dir_map.items(), key=lambda x:x[0]))
-        self._data_i_appendnames = dict(sorted(self._data_i_appendnames.items(), key=lambda x:x[0]))
-
-        self.save_maps()
+        self._data_info_map.rebuild()
+        self._data_info_map.save()
 
     def __getitem__(self, idx):
-        return self.read(data_i=idx)
+        return self.read(idx)
         
     def __setitem__(self, idx, value):
-        if idx in self.data_i_dir_map:
-            appdir, appname = self.auto_path(idx, return_app=True)
-            self.write(idx, value, appdir=appdir, appname = appname)
+        if idx in self.data_info_map:
+            subdir, appnames = self.auto_path(idx, return_app=True, allow_mutil_appendname=False)
+            self.write(idx, value, subdir=subdir, appname = appnames[0])
         else:
             raise KeyError(f'idx {idx} not in {self.directory}, if you want to add new data, \
-                           please use method:write to specify the appdir and appname')
+                           please use method:write to specify the subdir and appname')
 
     def __iter__(self):
-        self.data_i_dir_map
         return self.values()
     
     def _open(self):
@@ -1182,105 +1649,93 @@ class Elements(_DataCluster[DSNT, VDCT]):
         return open_allowed
 
     def _stop_writing(self):
+        pass
+        # if self.changed_since_opening:
+        #     # if not self.check_storage():
+        #     self._update_cluster_all()  
         if self.changed_since_opening:
-            # if not self.check_storage():
-            self._update_cluster_all()     
-            self.save_maps()
+            self.save_data_info_map()
         return super()._stop_writing()
 
-    def read(self, data_i, appdir = "", appname = "", *arg, force = False, **kwarg):
-        '''
-        parameter
-        ----
-        * data_i: int, the index of the data
-        * appdir: str, the sub directory of the root directory
-        * appname: str, the string to be added to the file name(before the suffix)
-        '''
-        return super().read(data_i, appdir = appdir, appname = appname, *arg, force = force, **kwarg)
-
-    def write(self, data_i, element:VDCT, appdir = "", appname = "", *arg, force = False, **kwarg):
-        '''
-        parameter
-        ----
-        * data_i: int, the index of the data
-        * element: the element to be written
-        * appdir: str, the sub directory of the root directory
-        * appname: str, the string to be added to the file name(before the suffix)
-        '''
-        return super().write(data_i, element, appdir = appdir, appname = appname, *arg, force=force, **kwarg)
+    def process_unfinished(self):
+        if super().process_unfinished():
+            self.save_data_info_map() # TODO
 
     def format_base_name(self, data_i):
         return "{}".format(str(data_i).rjust(self.filllen, "0"))
 
-    def format_path(self, data_i, appdir = "", appname = "", **kw):
+    def format_path(self, data_i, subdir = "", appname = "", directory=None, **kwargs):
         '''
         format the path of data_i
         '''
         if appname and appname[0] != '_':
             appname = '_' + appname # add '_' before appname
-        return os.path.join(self.directory, appdir, 
+        directory = self.directory if directory is None else directory
+        return os.path.join(directory, subdir, 
                             "{}{}{}".format(
                                 self.format_base_name(data_i), 
                                 appname, 
                                 self.suffix))
 
-    def parse_path(self, path:str):
+    @staticmethod
+    def parse_path(directory, path:str):
         '''
-        parse the path to get data_i, appdir, appname, it is the reverse operation of format_path
+        parse the path to get data_i, subdir, appname, it is the reverse operation of format_path
         '''
-        appdir, file = os.path.split(os.path.relpath(path, self.directory))
+        subdir, file = os.path.split(os.path.relpath(path, directory))
         filename = os.path.splitext(file)[0]
         split_filename = filename.split('_')
         mainname = split_filename[0]
         try:
             appname  = "_".join(split_filename[1:])
         except IndexError:
-            appname  = ""
+            appname = ""
         data_i = int(mainname)
-        return data_i, appdir, appname
+        return data_i, subdir, appname
 
-    def auto_path(self, data_i, return_app = False, allow_mutil_appendname = False):
+    def parse_appnames_func(self, value):
+        return [""], [value]
+    
+    def construct_value_func(self, appnames:list[str], values:list) -> VDCT:
+        return values[0]
+
+    def auto_path(self, data_i, _subdir = None, _appname=None, return_app = False, allow_mutil_appendname = True) -> Union[list[str], tuple[str, list[str]]]:
         '''
         auto find the path of data_i. \n
-        * if data_i has multiple appendnames, raise IndexError
+        * if data_i has multiple appnames, raise IndexError
 
-        if return_app is True, return appdir, appname, else return path
+        if return_app is True, return subdir, appname, else return path
 
         if allow_mutil_appendname is True, the type of appname will be list[str], else str; 
         and the type of path will be list[str], else str
         '''
-        def format_one(data_i, appdir, appname):
-            path = self.format_path(data_i, appdir=appdir, appname=appname)
-            if os.path.exists(path):
-                return path
-            else:
-                raise ClusterDataIOError(f'idx {data_i} has no file in {self.directory}')     
+        if data_i in self.data_info_map:
+            subdir      = self.data_info_map[data_i].dir
+            appnames    = self.data_info_map[data_i].appnames
+        else:
+            raise ClusterDataIOError(f'idx {data_i} not in {self.directory}')
         
-        if data_i in self.data_i_dir_map and data_i in self.data_i_appendnames:
-            appdir = self.data_i_dir_map[data_i]
-            appendnames = self.data_i_appendnames[data_i]
-            if allow_mutil_appendname:
-                appname:list[str] = appendnames
+        if _subdir is not None and subdir != _subdir:
+            raise ClusterDataIOError(f"can't find {data_i} in {_subdir}")
+        if _appname is not None:
+            if _appname not in appnames:
+                raise ClusterDataIOError(f"can't find {data_i} in {_subdir} with appname {_appname}")
             else:
-                if len(appendnames) == 1:
-                    appname:str = appendnames[0]
-                else:
-                    raise ClusterDataIOError(f'idx {data_i} has more than one appendname: {appendnames}, its path is ambiguous. \
-                                    You must specify the appname by using method:read(data_i, appname=...)')
+                appnames = (_appname, )
         else:
-            appdir = ""
-            appname = ""
+            if not allow_mutil_appendname and len(appnames) > 1:
+                raise ElementsAmbiguousError(f'idx {data_i} has more than one appendname: {appnames}, its path is ambiguous. ')
+
         if not return_app:
-            if isinstance(appname, list):
-                path_list = []
-                for n in appname:
-                    path = format_one(data_i, appdir, n)
-                    path_list.append(path)
-                return path_list
-            else:
-                return format_one(data_i, appdir, appname)
+            path_list = []
+            for n in appnames:
+                path = self.format_path(data_i, subdir=subdir, appname=n)
+                if not os.path.exists(path):
+                    raise ValueError(f"can't find {data_i} in {subdir} with appname {n}")
+                path_list.append(path)
+            return path_list
         else:
-            return appdir, appname
+            return subdir, appnames
 
     def check_storage(self):
         paths = glob.glob(os.path.join(self.directory, "**/*" + self.suffix), recursive=True)
@@ -1295,78 +1750,62 @@ class Elements(_DataCluster[DSNT, VDCT]):
             return True
         else:
             return False
-
-    def save_maps(self):
-        if not len(self._data_i_dir_map) > 0:
-            warnings.warn("len(self._data_i_dir_map) == 0, nothing to save", ClusterNotRecommendWarning)
-            return
-        for name, map in zip((self.__data_i_dir_map_name, self.__data_i_appendnames_name), 
-                             (self._data_i_dir_map, self._data_i_appendnames)):
-            path = os.path.join(self.directory, os.path.splitext(name)[0] + ".npy")
-            path_elmm = os.path.join(self.directory, name)
-            np.save(path, map)
-            try:
-                os.remove(path_elmm)
-            except FileNotFoundError:
-                pass
-            os.rename(path, path_elmm)
-
-    def load_maps(self):
-        data_i_dir_map_path         = os.path.join(self.directory, self.__data_i_dir_map_name)
-        data_i_appendnames_path     = os.path.join(self.directory, self.__data_i_appendnames_name)
-        if os.path.exists(data_i_dir_map_path) and os.path.exists(data_i_appendnames_path):
-            self._data_i_dir_map        = np.load(data_i_dir_map_path, allow_pickle=True).item()
-            self._data_i_appendnames    = np.load(data_i_appendnames_path, allow_pickle=True).item()
-            return True
-        else:
-            self._update_cluster_all()
     
-    def __parse_cache_kw(self, **kw):
-        assert all([isinstance(v, list) for v in kw.values()])
-        assert all([len(v) == len(self) for v in kw.values()])
-        kw_keys = list(kw.keys())
-        kw_values = list(kw.values())
+    def clear_files_with_cache(self):
+        for data_i, info in self.data_info_map.items():
+            if info.has_cache:
+                for appname in info.appnames:
+                    if not info.has_file:
+                        self.write(data_i, info.get_cache(appname), info.dir, appname)
+
+    def __parse_cache_kw(self, **kwargs):
+        assert all([isinstance(v, list) for v in kwargs.values()])
+        assert all([len(v) == len(self) for v in kwargs.values()])
+        kw_keys = list(kwargs.keys())
+        kw_values = list(kwargs.values())
         return kw_keys, kw_values
 
-    def save_cache(self, **kw):
-        self.__cache.clear()
-        data_i_list = list(self.keys())
-        kw_keys, kw_values = self.__parse_cache_kw(**kw)
-        for data_i in tqdm(data_i_list, desc="save cache for {}".format(self.directory)):
-            read_kw = {k:v[data_i] for k, v in zip(kw_keys, kw_values)}
-            elem = self.read(data_i, **read_kw)
-            self.__cache[data_i] = elem
-        serialize_object(os.path.join(self.directory, self.__cache_name), self.__cache)
+    def cache_to_data_info_map(self, save = True, **kwargs):
+        if self.is_closed():
+            warnings.warn("can't cache to data_info_map, because it is close or readonly", ClusterNotRecommendWarning)
+            return
+        if not len(self.data_info_map) > 0:
+            warnings.warn("len(self._data_info) == 0, nothing to save", ClusterNotRecommendWarning)
+            return
+        self.cache_priority = False
+        kw_keys, kw_values = self.__parse_cache_kw(**kwargs)
+        for data_i, data_info in tqdm(self.data_info_map.items(), desc="save cache for {}".format(self.directory)):
+            for appname in data_info.appnames:
+                if data_info.get_file_exist(appname):
+                    read_kw = {k:v[data_i] for k, v in zip(kw_keys, kw_values)}
+                    elem = self.read(data_i, **read_kw)
+                    self._data_info_map[data_i].set_cache(elem)
+        self.cache_priority = True    
 
-    def load_cache(self):
-        cache_path = os.path.join(self.directory, self.__cache_name)
-        if os.path.exists(cache_path):
-            self.__cache = deserialize_object(cache_path)
-            return True
-        else:
-            return False
-        
-    def unzip_cache(self, force = False, **kw):
+        if save:
+            self.save_data_info_map()
+
+    def unzip_cache(self, force = False, **kwargs):
         '''
         unzip the cache to a dict
         '''
-        assert os.path.exists(os.path.join(self.directory, self.__data_i_dir_map_name))
-        assert os.path.exists(os.path.join(self.directory, self.__data_i_appendnames_name))
-        assert os.path.exists(os.path.join(self.directory, self.__cache_name))
-        kw_keys, kw_values = self.__parse_cache_kw(**kw)
-        if len(self.__cache) == 0:
-            self.load_cache()
-        progress = tqdm(zip(self._data_i_dir_map.keys(), self._data_i_appendnames.keys(), self.__cache.keys()), 
+        assert os.path.exists(os.path.join(self.directory, self.DIR_MAP_FILE))
+        kw_keys, kw_values = self.__parse_cache_kw(**kwargs)
+        if len(self._data_info_map) == 0:
+            return
+        progress = tqdm(self.data_info_map.items(), 
                         desc="unzip cache for {}".format(self.directory),
-                        total=len(self.data_i_dir_map))
-        for kd, ka, kc in progress:
-            assert kd == ka == kc
-            data_i = kd
-            value = self.__cache[kd]
-            appdir = self.data_i_dir_map[data_i]
-            appname = self.data_i_appendnames[data_i][0]
+                        total=len(self.data_info_map))
+        for data_i, info in progress:
             write_kw = {k:v[data_i] for k, v in zip(kw_keys, kw_values)}
-            self.write(kd, value, appdir, appname, force=force, **write_kw)
+            ## TODO
+            # for appname, cache in info.cache_items():
+            #     if cache is None:
+            #         continue
+            #     self.write(data_i, cache, info.dir, appname, force=force, **write_kw)
+  
+    def save_data_info_map(self, **kwargs):
+        self._data_info_map.save()
 
 class SingleFile(Generic[VDCT]):
     def __init__(self, sub_path:str, read_func:Callable, write_func:Callable) -> None:
@@ -1392,13 +1831,77 @@ class SingleFile(Generic[VDCT]):
     def write(self, data):
         self.write_func(self.path, data)
 
-class FileCluster(_DataCluster[DSNT, VDCT]):
+    @staticmethod
+    def new_json_singlefile(sub_path:str):
+        return SingleFile(sub_path, JsonIO.load_json, JsonIO.dump_json)
+    
+    @staticmethod
+    def new_pickle_singlefile(sub_path:str):
+        return SingleFile(sub_path, deserialize_object, serialize_object)
+    
+    @staticmethod
+    def new_npy_singlefile(sub_path:str):
+        return SingleFile(sub_path, partial(np.load, allow_pickle=True), partial(np.save, allow_pickle=True))
+    
+    @staticmethod
+    def new_txt_singlefile(sub_path:str):
+        def read_txt(path):
+            with open(path, 'r') as f:
+                return f.readlines()
+            
+        def write_txt(path, data):
+            with open(path, 'w') as f:
+                f.writelines(data)
+        return SingleFile(sub_path, read_txt, write_txt)
+
+class FileCluster(_DataCluster[DSNT, VDCT, "FileCluster"]):
     '''
     a cluster of multiple files, they may have different suffixes and i/o operations
     but they must be read/write together
     '''
     SingleFile = SingleFile
 
+
+    class _read(_DataCluster._read["FileCluster", VDCT], Generic[VDCT]):
+        def _call(self, data_i, **kwargs: Any) -> VDCT:
+            file_path = self.cluster.filter_data_i(data_i)
+            return self.cluster.fileobjs_dict[file_path].read()
+
+    class _write(_DataCluster._write["FileCluster", VDCT], Generic[VDCT]):
+        def is_overwriting(self, data_i, value, subdir = "", **kwargs):
+            return False
+
+        def _call(self, data_i, value:VDCT):
+            file_path = self.cluster.filter_data_i(data_i)
+            self.cluster.fileobjs_dict[file_path].write(value)
+
+    class _remove(_DataCluster._remove["FileCluster", VDCT], Generic[VDCT]):
+        def _call(self, data_i, **kwargs: Any):
+            path = self.cluster.filter_data_i(data_i)
+            self.cluster.remove_file(data_i)
+            os.remove(path)
+
+    class _move(_DataCluster._move["FileCluster", VDCT], Generic[VDCT]):
+        def _call(self, key, value, **kwargs: Any):
+            raise NotImplementedError("FileCluster doesn't support move operation")
+
+        def __call__(self, src:int, dst:int, *args, force=False, **kwargs):
+            raise NotImplementedError("FileCluster doesn't support move operation")
+
+    class _load_in(_DataCluster._load_in["FileCluster", VDCT], Generic[VDCT]):
+        def check_key(self, src:str, **kwargs) -> bool:
+            rlt = isinstance(src, str)
+            rlt = rlt and super().check_key(src, **kwargs)
+
+        def check_value(self, dst:int, **kwargs) -> bool:
+            rlt = isinstance(dst, int) and dst >= 0
+            rlt = rlt and super().check_value(dst, **kwargs)
+            return rlt
+        
+        def _call(self, src_path:str, dst:int, **kwargs: Any):
+            dst_path = self.cluster.fileobjs_dict[self.cluster.filter_data_i(dst)].path
+            shutil.copy(src_path, dst_path)
+            
     def __init__(self, dataset_node: DSNT, sub_dir, register = True, name = "", singlefile_list:list[SingleFile] = []) -> None:
         super().__init__(dataset_node, sub_dir, register, name, singlefile_list)
         os.makedirs(self.directory, exist_ok=True)
@@ -1426,24 +1929,13 @@ class FileCluster(_DataCluster[DSNT, VDCT]):
         super().items()
         return self.keys(), self.values()
 
-    def _read(self, data_i, *arg, **kwargs):
-        super()._read(data_i, *arg, **kwargs)
-        file_path = self.filter_data_i(data_i)
-        return self.fileobjs_dict[file_path].read()
-    
-    def _write(self, data_i, value, *arg, **kwargs):
-        super()._write(data_i, value, *arg, **kwargs)
-        file_path = self.filter_data_i(data_i)
-        return self.fileobjs_dict[file_path].write(value)
+    def get_file_path(self, data_i, *args, **kwargs):
+        return self.fileobjs_dict[data_i].path
 
-    def _clear(self, *arg, **kwargs):
-        super()._clear(*arg, **kwargs)
-        for fp in self.fileobjs_dict.keys():
-            if os.path.exists(fp):
-                os.remove(fp)
+    def _make_continuous(self, *args, **kwargs):
+        pass
 
-    def _copyto(self, dst: str, cover = False, *args, **kwargs):
-        super()._copyto(dst, *args, **kwargs)
+    def copyto(self, dst: str, cover = False, *args, **kwargs):
         os.makedirs(dst, exist_ok=True)
         for f in self.fileobjs_dict.values():
             dst_path = os.path.join(dst, f.sub_path)
@@ -1454,35 +1946,30 @@ class FileCluster(_DataCluster[DSNT, VDCT]):
                     raise FileExistsError(f"{dst_path} already exists, please set cover=True")
             shutil.copy(f.path, dst_path)
 
-    def _merge_one(self, src: "FileCluster", key:str, merge_funcs=[], *args, **kwargs):
-        if key in self.fileobjs_dict:
-            this_i = list(self.fileobjs_dict.keys()).index(key)
-            func = merge_funcs[this_i]
-            src_data = src.read(key)
-            this_data = self.read(this_i)
-            new_data = func(this_data, src_data)
-            self.write(this_i, new_data)
-        else:
-            new_dir = os.path.join(self.directory, self.sub_dir)
-            new_path = os.path.join(new_dir, src.fileobjs_dict[key].sub_path)
-            os.makedirs(new_dir, exist_ok=True)
-            shutil.copy(src.fileobjs_dict[key].path, new_path)
-            self.update_file(
-                SingleFile(
-                    src.fileobjs_dict[key].sub_path, 
-                    src.fileobjs_dict[key].read_func, 
-                    src.fileobjs_dict[key].write_func))
+    # def _merge_one(self, src: "FileCluster", key:str, merge_funcs=[], *args, **kwargs):
+    #     ### TODO
+    #     if key in self.fileobjs_dict:
+    #         this_i = list(self.fileobjs_dict.keys()).index(key)
+    #         func = merge_funcs[this_i]
+    #         src_data = src.read(key)
+    #         this_data = self.read(this_i)
+    #         new_data = func(this_data, src_data)
+    #         self.write(this_i, new_data)
+    #     else:
+    #         new_dir = os.path.join(self.directory, self.sub_dir)
+    #         new_path = os.path.join(new_dir, src.fileobjs_dict[key].sub_path)
+    #         os.makedirs(new_dir, exist_ok=True)
+    #         shutil.copy(src.fileobjs_dict[key].path, new_path)
+    #         self.update_file(
+    #             SingleFile(
+    #                 src.fileobjs_dict[key].sub_path, 
+    #                 src.fileobjs_dict[key].read_func, 
+    #                 src.fileobjs_dict[key].write_func))
             
-            self.log_to_mark_file(key, self.LOG_APPEND)
+    #         self.log_to_mark_file(key, self.LOG_APPEND)
 
-    def merge(self, src: "FileCluster", merge_funcs:Union[list, Callable]=[], *args, **kwargs):
-        # assert all([selfkey == srckey for selfkey, srckey in zip(self.keys(), src.keys())]), "the keys of two FileCluster must be the same"
-        if isinstance(merge_funcs, Callable):
-            merge_funcs = [merge_funcs for _ in range(len(self.fileobjs_dict))]
-        elif isinstance(merge_funcs, (list, tuple)):
-            assert len(merge_funcs) == len(self.fileobjs_dict), f"the length of merge_funcs must be {len(self.fileobjs_dict)}"
-            assert all([isinstance(f, Callable) for f in merge_funcs]), "all merge_funcs must be Callable"
-        super().merge(src, merge_funcs = merge_funcs, *args, **kwargs)
+    def merge_from(self, src: "FileCluster", merge_funcs:Union[list, Callable]=[], *args, **kwargs):
+        raise NotImplementedError("FileCluster doesn't support merge operation")
 
     def _init_attr(self, singlefile:list[SingleFile], *args, **kwargs):
         super()._init_attr(singlefile, **kwargs)
@@ -1494,17 +1981,11 @@ class FileCluster(_DataCluster[DSNT, VDCT]):
     def filter_data_i(self, data_i, return_index = False):
         def process_func(key, string):
             return key == get_mainname(string)
-        target_int = search_in_dict(self.fileobjs_dict, data_i, return_index = True, process_func = process_func)
+        target_int = int_str_cocvt(self.fileobjs_dict, data_i, return_index = True, process_func = process_func)
         if not return_index:
             return list(self.fileobjs_dict.keys())[target_int]
         else:
             return target_int
-
-    def copyto(self, dst: str, cover = False, *args, **kwargs):
-        '''
-        copy the whole directory to dst
-        '''
-        self._copyto(dst, cover, *args, **kwargs)
 
     def read_all(self):
         return [f.read() for f in self.values()]
@@ -1555,50 +2036,24 @@ class IntArrayDictElement(Elements[DSNT, dict[int, np.ndarray]]):
         array = np.stack(array)
         return array
 
-    def _read_format(self, array:np.ndarray, **kw):
+    def _read_format(self, array:np.ndarray, **kwargs):
         return array
 
-    def _write_format(self, array:np.ndarray, **kw):
+    def _write_format(self, array:np.ndarray, **kwargs):
         return array
 
-    def _read_func(self, path, **kw):
+    def _read_func(self, path, **kwargs):
         raw_array = np.loadtxt(path, dtype=np.float32)
         if len(raw_array.shape) == 1:
             raw_array = np.expand_dims(raw_array, 0)
-        raw_array = self._read_format(raw_array, **kw)
+        raw_array = self._read_format(raw_array, **kwargs)
         intarraydict = self._to_dict(raw_array)
         return intarraydict
 
-    def _write_func(self, path, intarraydict:dict[int, np.ndarray], **kw):
+    def _write_func(self, path, intarraydict:dict[int, np.ndarray], **kwargs):
         raw_array = self._from_dict(intarraydict)
-        raw_array = self._write_format(raw_array, **kw)
+        raw_array = self._write_format(raw_array, **kwargs)
         np.savetxt(path, raw_array, fmt=self.array_fmt, delimiter='\t')
-
-### Data Node ###
-class Node():
-    def __init__(self:NDT, parent:"Node" = None):
-        assert isinstance(parent, Node) or parent is None
-        self.parent:NDT = None
-        self.children:list[NDT] = []
-        self.move_node(parent)
-
-    def add_child(self, child_node:"Node"):
-        assert isinstance(child_node, Node), f"child_node must be Node, not {type(child_node)}"
-        child_node.parent = self
-        self.children.append(child_node)
-
-    def remove_child(self, child_node:"Node"):
-        assert isinstance(child_node, Node), f"child_node must be Node, not {type(child_node)}"
-        if child_node in self.children:
-            child_node.parent = None
-            self.children.remove(child_node)
-
-    def move_node(self, new_parent:"Node"):
-        assert isinstance(new_parent, Node) or new_parent is None, f"new_parent must be Node, not {type(new_parent)}"
-        if self.parent is not None:
-            self.parent.remove_child(self)
-        if new_parent is not None:
-            new_parent.add_child(self)
 
 class _ClusterMap(dict[str, DCT]):
     def __init__(self, dataset_node:"DatasetNode", *args, **kwargs) -> None:
@@ -1633,59 +2088,115 @@ class _ClusterMap(dict[str, DCT]):
     #     # return super().__getitem__(__key)
 
     def search(self, __key: Any, return_index = False):
-        return search_in_dict(self, __key, return_index, process_func=self._search_func) ### TODO
+        return search_in_dict(self, __key, process_func=self._search_func) ### TODO
     
     def add_cluster(self, cluster:DCT):
         cluster.dataset_node = self.dataset_node
-        cluster.register_to_dataset()
+        self[cluster.identity_string()] = cluster
+        self.dataset_node.data_overview_table.add_column(cluster.key_identity_string(), exist_ok=True)
+
+    def remove_cluster(self, cluster:DCT):
+        if cluster.dataset_node == self.dataset_node:
+            del self[cluster.identity_string()]
+            self.dataset_node.data_overview_table.remove_column(cluster.key_identity_string(), not_exist_ok=True)
 
     def get_keywords(self):
         keywords = []
-        for indetity_string in self.keys():
-            _,_,_,sub_dir, name = _DataCluster.parse_identity_string(indetity_string)
-            if name != "":
-                keywords.append(name)
-            else:
-                keywords.append(sub_dir)
+        for cluster in self.values():
+            keywords.append(cluster.key_identity_string())
         return keywords
 
     @staticmethod
-    def _search_func(key, indetity_string:str):
+    def _search_func(indetity_string:str):
         _,_,_,sub_dir, name = _DataCluster.parse_identity_string(indetity_string)
         if name != "":
-            return key == name
+            return name
         else:
-            return key == sub_dir
+            return sub_dir
 
-class DatasetNode(Node, InstanceRegistry, Generic[DCT]):
+class DatasetNode(InstanceRegistry, WriteController, ABC, Generic[DCT, VDST]):
     '''
     DatasetNode, only gather the clusters. 
     have no i/o operations
     '''
-    def __init__(self, directory, parent = None, _init_clusters = True) -> None:
+    WRITING_MARK = ".dfsw" # the mark file of writing process, dataset format streamly writing
+    
+    def __init__(self, directory, parent:"DatasetNode" = None) -> None:
+
+        InstanceRegistry.__init__(self)
+        WriteController.__init__(self)
+        ABC.__init__(self)
+
+        self.__inited = False # if the dataset has been inited   
+        self.__init_node(parent)
+        self.init_dataset_attr()
+        self.__init_clusters()
+        self.__inited = True # if the dataset has been inited
+
+    ### init ###
+    def __init_node(self, parent):
+        self.parent:DatasetNode = parent
+        self.children:list[DatasetNode] = []
+        self.move_node(parent)
+
+    def init_dataset_attr(self):
         def is_directory_inside(base_dir, target_dir):
             base_dir:str = os.path.abspath(base_dir)
             target_dir:str = os.path.abspath(target_dir)
             return target_dir.startswith(base_dir)
-        Node.__init__(self, parent)
-        InstanceRegistry.__init__(self)
-        self.__inited = False # if the dataset has been inited
+        
+        os.makedirs(self.directory, exist_ok=True)
+        self._data_num = 0
+        self._data_i_upper = 0    
         self._updated = False
-        self._incomplete_operation = 0
-        self._init_identity_paramenter(directory, parent, _init_clusters)
+        self._unfinished_operation = 0
         if self.parent is not None:
             assert is_directory_inside(self.parent.directory, self.directory), f"{self.directory} is not inside {self.parent.directory}"
             self.sub_dir:str = os.path.relpath(self.directory, self.parent.directory)
         else:
             self.sub_dir:str = self.directory
+        self.data_overview_table = Table[int, str, bool](default_value_type=bool, row_name_type=int, col_name_type=str)
         self.cluster_map = _ClusterMap[DCT](self)
-        if _init_clusters:
-            self._init_clusters()
+        
 
-        self.__inited = True # if the dataset has been inited
+    def __init_clusters(self):
+        unfinished = self.mark_exist()
+        if unfinished:
+            y:int = _DataCluster.choose_unfinished_operation(self)
+            self._unfinished_operation = y        
+
+        self._init_clusters()
+        self.update_dataset()        
+
+        self.load_overview()        
+        if unfinished:
+            self.process_unfinished()
+            os.remove(self.get_writing_mark_file())
+
+    ############
+
+    ### node ###
+    def add_child(self, child_node:"DatasetNode"):
+        assert isinstance(child_node, DatasetNode), f"child_node must be Node, not {type(child_node)}"
+        child_node.parent = self
+        self.children.append(child_node)
+
+    def remove_child(self, child_node:"DatasetNode"):
+        assert isinstance(child_node, DatasetNode), f"child_node must be Node, not {type(child_node)}"
+        if child_node in self.children:
+            child_node.parent = None
+            self.children.remove(child_node)
+
+    def move_node(self, new_parent:"DatasetNode"):
+        assert isinstance(new_parent, DatasetNode) or new_parent is None, f"new_parent must be DatasetNode, not {type(new_parent)}"
+        if self.parent is not None:
+            self.parent.remove_child(self)
+        if new_parent is not None:
+            new_parent.add_child(self)
+    ############
 
     ### implement InstanceRegistry
-    def _init_identity_paramenter(self, directory, parent = None, _init_clusters = True):
+    def _init_identity_paramenter(self, directory, *args, **kwargs):
         self.directory:str = os.path.normpath(directory)
 
     def identity_string(self):
@@ -1696,10 +2207,11 @@ class DatasetNode(Node, InstanceRegistry, Generic[DCT]):
         return identity_string.split(':')
 
     @classmethod
-    def gen_identity_string(cls, directory, *arg, **kw):
+    def gen_identity_string(cls, directory, *args, **kwargs):
         return f"{cls.__name__}:{directory}"
-    ###
+    ###############################
 
+    ### cluster ###
     def _init_clusters(self):
         pass    
 
@@ -1734,12 +2246,12 @@ class DatasetNode(Node, InstanceRegistry, Generic[DCT]):
 
     @property
     def opened_clusters(self):
-        clusters = [x for x in self.clusters if not x.is_close()]
+        clusters = [x for x in self.clusters if not x.is_closed()]
         return clusters
 
     @property
     def opened_data_clusters(self):
-        clusters = [x for x in self.data_clusters if not x.is_close()]
+        clusters = [x for x in self.data_clusters if not x.is_closed()]
         return clusters
 
     @property
@@ -1763,16 +2275,13 @@ class DatasetNode(Node, InstanceRegistry, Generic[DCT]):
         '''
         return {k:v for k, v in self.cluster_map.items() if isinstance(v, FileCluster)}
 
-    def update_dataset(self):
-        pass
-
-    def save_elements_cache(self):
+    def save_elements_data_info_map(self):
         for elem in self.elements_map.values():
-            elem.save_cache()
+            elem.save_data_info_map()
 
-    def set_elements_cachemode(self, mode:bool):
+    def set_elements_cache_priority(self, mode:bool):
         for elem in self.elements_map.values():
-            elem.cache_used = bool(mode)
+            elem.cache_priority = bool(mode)
         
     def close_all(self, value = True):
         for obj in self.clusters:
@@ -1800,24 +2309,271 @@ class DatasetNode(Node, InstanceRegistry, Generic[DCT]):
         '''
         paths = {}
         for elem in self.elements_map.values():
-            paths[elem.sub_dir] = elem.auto_path(data_i)
+            paths[elem.sub_dir] = elem.auto_path(data_i, allow_mutil_appendname=False)[0]
         return paths
     
-    def get_all_clusters(self, _type:Union[type, tuple[type]] = None):
-        cluster_map = _ClusterMap(self)
+    def get_all_clusters(self, _type:Union[type, tuple[type]] = None, only_opened = False) -> _ClusterMap[DCT]:
+        cluster_map = _ClusterMap[_DataCluster](self)
         cluster_map.update(self.cluster_map)
+
+        for k, v in list(cluster_map.items()):
+            if _type is not None:
+                if not isinstance(v, _type):
+                    cluster_map.pop(k)
+            if only_opened:
+                if v.is_closed():
+                    cluster_map.pop(k)
+
         for child in self.children:
-            cluster_map.update(child.get_all_clusters())
+            cluster_map.update(child.get_all_clusters(_type, only_opened))
 
         return cluster_map
 
-    def copyto(self, dst:str, cover = False):
-        progress = tqdm(self.opened_clusters)
+    def copyto(self, dst:str, asroot = True, cover = False):
+        if not asroot:
+            progress = tqdm(self.opened_clusters)
+        else:
+            progress = tqdm(self.get_all_clusters(only_opened=True).values())
+
         for c in progress:
             progress.set_postfix({'copying': "{}:{}".format(c.__class__.__name__, c.directory)})            
             c.copyto(os.path.join(dst, c.sub_dir), cover=cover)
+    ##########
 
-class DatasetFormat(DatasetNode[DCT], WriteController, ABC, Generic[DCT, VDST]):
+    ### IO ###
+    @property
+    def data_num(self):
+        return self._data_num
+    
+    @property
+    def data_i_upper(self):
+        return self._data_i_upper
+        # return max([x.cluster_data_i_upper for x in self.opened_clusters])
+
+    @abstractmethod
+    def read_one(self, data_i, **kwargs) -> VDST:
+        pass
+
+    def _write_jsondict(self, data_i, data):
+        pass
+
+    def _write_elements(self, data_i, data, subdir="", appname=""):
+        pass
+
+    def _write_files(self, data_i, data):
+        pass
+
+    def _update_dataset(self, data_i = None):
+        nums = [len(x) for x in self.opened_data_clusters]
+        num = np.unique(nums)
+        if len(num) > 1:
+            raise ValueError("Unknown error, the numbers of different datas are not equal")
+        elif len(num) == 1:
+            self._data_num = int(num)
+        else:
+            self._data_num = 0
+        try:
+            self._data_i_upper = max([x.cluster_data_i_upper for x in self.opened_data_clusters])
+        except ValueError:
+            self._data_i_upper = 0
+        if self._data_i_upper != self.data_num:
+            warnings.warn(f"the data_i_upper of dataset:{self.directory} is not equal to the data_num, \
+                          it means the the data_i is not continuous, this may cause some errors", ClusterParaWarning)
+        if data_i is not None:
+            self.calc_overview(data_i)
+
+    def write_one(self, data_i, data:VDST, **kwargs):
+        assert self.is_writing or all([not x.write_streamly for x in self.jsondict_map.values()]), \
+            "write_one cannot be used when any jsondict's stream_dumping_json is True. \
+                considering use write_to_disk instead"
+        self._write_jsondict(data_i, data)
+        self._write_elements(data_i, data)
+        self._write_files(data_i, data)
+
+        self.update_dataset(data_i)
+
+        # self.log_to_mark_file(self.LOG_APPEND, data_i) ### TODO
+
+    def remove_one(self, data_i, *args, **kwargs):
+        for cluster in self.opened_clusters:
+            cluster.remove(data_i, not_exist_ok=True, *args, **kwargs)
+        self.update_dataset(data_i)
+
+    def update_dataset(self, data_i = None, f = False):
+        if self.updated or f:
+            self._update_dataset(data_i)
+            self.updated = False
+
+    def process_unfinished(self):
+        pass
+
+    def read_from_disk(self, with_data_i = False):
+        '''
+        brief
+        ----
+        *generator
+        Since the amount of data may be large, return one by one
+        '''
+        if not with_data_i:
+            for i in self.data_overview_table.row_names:
+                yield self.read_one(i)
+        else:
+            for i in self.data_overview_table.row_names:
+                yield i, self.read_one(i)
+
+    def write_to_disk(self, data:VDST, data_i = -1):
+        '''
+        brief
+        -----
+        write elements immediately, write basejsoninfo to cache, 
+        they will be dumped when exiting the context of self.writer
+        
+        NOTE
+        -----
+        For DatasetFormat, the write mode has only 'append'. 
+        If you need to modify, please call 'DatasetFormat.clear' to clear all data, and then write again.
+        '''
+        if not self.is_writing:
+            print("please call 'self.start_writing' first, here is the usage example:")
+            print(extract_doc(DatasetFormat.__doc__, "example"))
+            raise ValueError("please call 'self.start_writing' first")
+        if data_i == -1:
+            # self._updata_data_num()        
+            data_i = self.data_i_upper
+        
+        self.write_one(data_i, data)
+
+    def start_writing(self, overwrite_allowed = False):
+        if super().start_writing(overwrite_allowed):
+            print(f"start to write to {self.directory}")
+            self.close_all(False)
+            self.set_all_readonly(False)
+            self.set_all_overwrite_allowed(overwrite_allowed)
+        else:
+            return False
+
+    def stop_writing(self):
+        if not self.is_writing:
+            return False
+        else:
+            for jd in self.jsondict_map.values():
+                jd.stop_writing()              
+            self.set_all_overwrite_allowed(False)
+            # self.close_all()
+            self.save_overview()
+            super().stop_writing()
+            return True
+
+    def clear(self, ignore_warning = False, force = False):
+        '''
+        brief
+        -----
+        clear all data, defalut to ask before executing
+        '''
+        if not ignore_warning:
+            y = input("All files in {} will be removed, please enter 'y' to confirm".format(self.directory))
+        else:
+            y = 'y'
+        if y == 'y':
+            if force:
+                self.close_all(False)
+                self.set_all_readonly(False)
+                cluster_to_clear = self.clusters
+            else:
+                cluster_to_clear = self.opened_clusters
+
+            for cluster in cluster_to_clear:
+                cluster.clear(ignore_warning=True)
+
+        self.set_all_readonly(True)
+
+    def values(self):
+        return self.read_from_disk()
+    
+    def keys(self):
+        for i in self.data_overview_table.row_names:
+            yield i
+
+    def items(self):
+        return self.read_from_disk(True)
+
+    def __setattr__(self, name, value):
+        ### 同名变量赋值时，自动将原有对象解除注册
+        if name in self.__dict__:
+            obj = self.__getattribute__(name)
+            if isinstance(obj, DatasetNode):
+                assert isinstance(value, DatasetNode), f"the type of {name} must be DatasetNode, not {type(value)}"
+                if obj.parent == self:
+                    obj.move_node(None)
+            elif isinstance(obj, _DataCluster):
+                assert isinstance(value, _DataCluster), f"the type of {name} must be _DataCluster, not {type(value)}"
+                if obj.dataset_node == self:
+                    obj.unregister_from_dataset()
+        super().__setattr__(name, value)
+
+    def __getitem__(self, data_i:Union[int, slice]) -> Union[Generator[VDST, Any, None], VDST]:
+        if isinstance(data_i, slice):
+            # 处理切片操作
+            start, stop, step = data_i.start, data_i.stop, data_i.step
+            if start is None:
+                start = 0
+            if step is None:
+                step = 1
+            stop = min(stop, self.data_i_upper)
+            def g():
+                for i in range(start, stop, step):
+                    yield self.read_one(i)
+            return g()
+        elif isinstance(data_i, int):
+            # 处理单个索引操作
+            return self.read_one(data_i)
+        else:
+            raise TypeError("Unsupported data_i type")
+
+    def __setitem__(self, data_i:int, value):
+        self.write_one(data_i, value)
+
+    def __len__(self):
+        return self.data_num
+
+    def __iter__(self):
+        return self.read_from_disk()
+    
+    def load_overview(self):
+        overview_path = os.path.join(self.directory, self.__class__.__name__ + "-" + DatasetFormat.OVERVIEW)
+        if os.path.exists(overview_path):
+            self.data_overview_table = Table[int, str, bool].from_json(overview_path)
+        else:
+            self.init_overview()
+            self.save_overview()
+        return self.data_overview_table
+
+    def init_overview(self):
+        if len(self.data_clusters) > 0:
+            rows = [x for x in range(self.data_i_upper)]
+            cols = [x.key_identity_string() for x in self.data_clusters]
+            self.data_overview_table = Table(rows, cols, bool, row_name_type=int, col_name_type=str)
+            for data_i in tqdm(self.data_overview_table.data, desc="initializing data frame"):
+                self.calc_overview(data_i)
+
+    def save_overview(self):
+        if not self.data_overview_table.empty:
+            overview_path = os.path.join(self.directory, self.__class__.__name__ + "-" + DatasetFormat.OVERVIEW)
+            self.data_overview_table.save(overview_path)
+
+    def calc_overview(self, data_i):
+        self.data_overview_table.add_row(data_i, exist_ok=True)        
+        for cluster in self.data_clusters:
+            self.data_overview_table[data_i, cluster.key_identity_string()] = data_i in cluster.keys()
+
+    def clear_invalid_data_i(self):
+        raise NotImplementedError
+
+    def get_writing_mark_file(self):
+        return os.path.join(self.directory, self.WRITING_MARK)
+    ##########
+
+class DatasetFormat(DatasetNode[DCT, VDST]):
     """
     # Dataset Format
     -----
@@ -1831,7 +2587,7 @@ class DatasetFormat(DatasetNode[DCT], WriteController, ABC, Generic[DCT, VDST]):
     * inited : bool, if the dataset has been inited
     * updated : bool, if the dataset has been updated, it can bes set.
     * directory : str, the root directory of the dataset
-    * incomplete : bool, the last writing process of the dataset has not been completed
+    * unfinished : bool, the last writing process of the dataset has not been completed
     * clusters : list[_DataCluster], all clusters of the dataset
     * opened_clusters : list[_DataCluster], all opened clusters of the dataset
     * jsondict_map : dict[str, JsonDict], the map of jsondict
@@ -1904,281 +2660,57 @@ class DatasetFormat(DatasetNode[DCT], WriteController, ABC, Generic[DCT, VDST]):
     '''
 
     """
-    DATAFRAME = "data_frame.csv"
+    OVERVIEW = "overview.json"
     DEFAULT_SPLIT_TYPE = ["default"]
     SPLIT_DIR = "ImageSets"
 
     KW_TRAIN = "train"
     KW_VAL = "val" 
 
-    WRITING_MARK = ".dfsw" # the mark file of writing process, dataset format streamly writing
-
-    def __init__(self, directory, split_rate = 0.75, clear_incomplete = False, parent = None) -> None:
-        DatasetNode.__init__(self, directory, parent, _init_clusters = False)        
-        WriteController.__init__(self)
-        ABC.__init__(self)
+    def __init__(self, directory, split_rate = 0.75, parent = None) -> None:
+        super().__init__(directory, parent)
 
         self.split_default_rate = split_rate
-        self._data_num = 0
-        self._data_i_upper = 0     
 
-        print(f"initializing dataset: {self.__class__.__name__} at {self.directory} ...")
-        os.makedirs(self.directory, exist_ok=True)
-
+    def init_dataset_attr(self):
+        super().init_dataset_attr()
         self.spliter_group = SpliterGroup(os.path.join(self.directory, self.SPLIT_DIR), 
-                                          self.DEFAULT_SPLIT_TYPE, 
-                                          self)
-
-        incomplete = self.mark_exist()
-        if incomplete and not clear_incomplete:
-            y:int = _DataCluster.choose_incomplete_operation(self)
-            self._incomplete_operation = y        
-
-        self._init_clusters()
-        self.update_dataset()
-
-        self.load_data_frame()        
-        if incomplete:
-            os.remove(self.get_writing_mark_file())
-    
-    @property
-    def data_num(self):
-        return self._data_num
-    
-    @property
-    def data_i_upper(self):
-        return self._data_i_upper
-        # return max([x.cluster_data_i_upper for x in self.opened_clusters])
+                                    self.DEFAULT_SPLIT_TYPE,
+                                    self)
 
     @property
     def train_idx_array(self):
-        return self.spliter_group.cur_training_spliter[self.KW_TRAIN]
+        return self.spliter_group.cur_training_spliter.get_idx_list(self.KW_TRAIN)
     
     @property
     def val_idx_array(self):
-        return self.spliter_group.cur_training_spliter[self.KW_VAL]
+        return self.spliter_group.cur_training_spliter.get_idx_list(self.KW_VAL)
 
     @property
     def default_train_idx_array(self):
-        return self.spliter_group.get_split_array_of(self.DEFAULT_SPLIT_TYPE[0], self.KW_TRAIN)
+        return self.spliter_group[0].get_idx_list(self.KW_TRAIN, 0)
     
     @property
     def default_val_idx_array(self):
-        return self.spliter_group.get_split_array_of(self.DEFAULT_SPLIT_TYPE[0], self.KW_VAL)
+        return self.spliter_group[0].get_idx_list(self.KW_VAL, 0)
 
-    @abstractmethod
-    def read_one(self, data_i, *arg, **kwargs) -> VDST:
-        pass
-
-    def _write_jsondict(self, data_i, data):
-        pass
-
-    def _write_elements(self, data_i, data):
-        pass
-
-    def _write_files(self, data_i, data):
-        pass
-
-    def _update_dataset(self, data_i = None):
-        nums = [len(x) for x in self.opened_data_clusters]
-        num = np.unique(nums)
-        if len(num) > 1:
-            raise ValueError("Unknown error, the numbers of different datas are not equal")
-        elif len(num) == 1:
-            self._data_num = int(num)
-        else:
-            self._data_num = 0
-        try:
-            self._data_i_upper = max([x.cluster_data_i_upper for x in self.opened_data_clusters])
-        except ValueError:
-            self._data_i_upper = 0
-        if self._data_i_upper != self.data_num:
-            warnings.warn(f"the data_i_upper of dataset:{self.directory} is not equal to the data_num, \
-                          it means the the data_i is not continuous, this may cause some errors", ClusterParaWarning)
-        # if self.data_i_upper - 1 >= 0 and hasattr(self, "data_frame"):
-        #     self.add_to_data_frame(self.data_i_upper - 1)
-
-    def write_one(self, data_i, data:VDST, *arg, **kwargs):
-        assert self.is_writing or all([not x.write_streamly for x in self.jsondict_map.values()]), \
-            "write_one cannot be used when any jsondict's stream_dumping_json is True. \
-                considering use write_to_disk instead"
-        self._write_jsondict(data_i, data)
-        self._write_elements(data_i, data)
-        self._write_files(data_i, data)
-
-        self.update_dataset(data_i)
-
-        self.log_to_mark_file(data_i, self.LOG_APPEND) ### TODO
-
-    def update_dataset(self, data_i = None, f = False):
-        if self.updated or f:
-            self._update_dataset(data_i)
-            self.updated = False
-
-    def read_from_disk(self, with_data_i = False):
-        '''
-        brief
-        ----
-        *generator
-        Since the amount of data may be large, return one by one
-        '''
-        if not with_data_i:
-            for i in self.data_frame.index:
-                yield self.read_one(i)
-        else:
-            for i in self.data_frame.index:
-                yield i, self.read_one(i)
-
-    def write_to_disk(self, data:VDST, data_i = -1):
-        '''
-        brief
-        -----
-        write elements immediately, write basejsoninfo to cache, 
-        they will be dumped when exiting the context of self.writer
-        
-        NOTE
-        -----
-        For DatasetFormat, the write mode has only 'append'. 
-        If you need to modify, please call 'DatasetFormat.clear' to clear all data, and then write again.
-        '''
-        if not self.is_writing:
-            print("please call 'self.start_writing' first, here is the usage example:")
-            print(extract_doc(DatasetFormat.__doc__, "example"))
-            raise ValueError("please call 'self.start_writing' first")
-        if data_i == -1:
-            # self._updata_data_num()        
-            data_i = self.data_i_upper
-        
-        self.write_one(data_i, data)
-
-    def start_writing(self, overwrite_allowed = False):
-        if super().start_writing(overwrite_allowed):
-            print(f"start to write to {self.directory}")
-            self.close_all(False)
-            self.set_all_readonly(False)
-            self.set_all_overwrite_allowed(overwrite_allowed)
-        else:
-            return False
+    def process_unfinished(self):
+        logs = self.load_from_mark_file()
+        if self._unfinished_operation == 2:
+            ### process spliter
+            for log, idx, value in logs:
+                if log == self.LOG_APPEND:
+                    self.spliter_group.remove_one(idx)
+                else:
+                    raise ValueError("cannot rollback")
+            self.spliter_group.save()
 
     def stop_writing(self):
         if not self.is_writing:
             return False
         else:
-            for jd in self.jsondict_map.values():
-                jd.stop_writing()              
-            self.set_all_overwrite_allowed(False)
-            self.close_all()
-            self.save_data_frame()
             self.spliter_group.save()
-            super().stop_writing()
-            return True
-
-    def clear(self, ignore_warning = False, force = False):
-        '''
-        brief
-        -----
-        clear all data, defalut to ask before executing
-        '''
-        if not ignore_warning:
-            y = input("All files in {} will be deleted, please enter 'y' to confirm".format(self.directory))
-        else:
-            y = 'y'
-        if y == 'y':
-            if force:
-                self.close_all(False)
-                self.set_all_readonly(False)
-                cluster_to_clear = self.clusters
-            else:
-                cluster_to_clear = self.opened_clusters
-
-            for cluster in cluster_to_clear:
-                cluster.clear(ignore_warning=True)
-
-        self.set_all_readonly(True)
-
-    def values(self):
-        return self.read_from_disk()
-    
-    def keys(self):
-        for i in self.data_frame.index:
-            yield i
-
-    def items(self):
-        return self.read_from_disk(True)
-
-    def __getitem__(self, data_i:Union[int, slice]):
-        if isinstance(data_i, slice):
-            # 处理切片操作
-            start, stop, step = data_i.start, data_i.stop, data_i.step
-            if start is None:
-                start = 0
-            if step is None:
-                step = 1
-            def g():
-                for i in range(start, stop, step):
-                    yield self.read_one(i)
-            return g()
-        elif isinstance(data_i, int):
-            # 处理单个索引操作
-            return self.read_one(data_i)
-        else:
-            raise TypeError("Unsupported data_i type")
-
-    def __setitem__(self, data_i:int, value):
-        self.write_one(data_i, value)
-
-    def __len__(self):
-        return self.data_num
-
-    def __iter__(self):
-        return self.read_from_disk()
-    
-    def load_data_frame(self):
-        data_frame_path = os.path.join(self.directory, self.__class__.__name__ + "-" + DatasetFormat.DATAFRAME)
-        if os.path.exists(data_frame_path):
-            self.data_frame = pd.read_csv(data_frame_path)
-            # index_names = self.data_frame.iloc[:,0]
-            # self.data_frame = self.data_frame.drop(self.data_frame.columns[0], axis = 1)
-            # self.data_frame.index = index_names
-        else:
-            # self.init_data_frame()
-            # self.data_frame.loc[-1, -1] = 'Left-Top'
-            self.save_data_frame()
-        return self.data_frame
-
-    def init_data_frame(self):
-        data = np.zeros((self.data_i_upper, len(self.data_clusters)), np.bool_)
-        cols = [x.sub_dir for x in self.data_clusters]
-        self.data_frame = pd.DataFrame(data, columns=cols)
-
-        if self.data_num != self.data_i_upper:
-            for data_i in tqdm(self.data_frame.index, desc="initializing data frame"):
-                self.calc_data_frame(data_i)
-        else:
-            self.data_frame.loc[:] = True
-
-    def save_data_frame(self):
-        self.init_data_frame()
-        if not self.data_frame.empty:
-            data_frame_path = os.path.join(self.directory, self.__class__.__name__ + "-" + DatasetFormat.DATAFRAME)
-            self.data_frame.to_csv(data_frame_path, index=False)
-
-    def calc_data_frame(self, data_i):
-        for cluster in self.data_clusters:
-            self.data_frame.loc[data_i, cluster.sub_dir] = data_i in cluster.keys()
-
-    def clear_invalid_data_i(self):
-        raise NotImplementedError
-
-    def add_to_data_frame(self, data_i:int):
-        if data_i in self.data_frame.index:
-            self.calc_data_frame(data_i)
-        else:
-            self.data_frame.loc[data_i] = [False for _ in range(len(self.data_frame.columns))]
-            self.calc_data_frame(data_i)
-
-    def get_writing_mark_file(self):
-        return os.path.join(self.directory, self.WRITING_MARK)
+            return super().stop_writing()
 
 #### Posture ####
 class PostureDatasetFormat(DatasetFormat[_DataCluster, ViewMeta]):
@@ -2188,12 +2720,11 @@ class PostureDatasetFormat(DatasetFormat[_DataCluster, ViewMeta]):
         self.landmarks_elements  = IntArrayDictElement(self, "landmarks", (-1, 2), array_fmt="%8.8f")
         self.extr_vecs_elements  = IntArrayDictElement(self, "trans_vecs", (2, 3), array_fmt="%8.8f")
 
-    def read_one(self, data_i, appdir="", appname="", *arg, **kwargs):
-        super().read_one(data_i, appdir, appname, *arg, **kwargs)
-        labels_dict:dict[int, np.ndarray] = self.labels_elements.read(data_i, appdir=appdir)
-        extr_vecs_dict:dict[int, np.ndarray] = self.extr_vecs_elements.read(data_i, appdir=appdir)
-        bbox_3d_dict:dict[int, np.ndarray] = self.bbox_3ds_elements.read(data_i, appdir=appdir)
-        landmarks_dict:dict[int, np.ndarray] = self.landmarks_elements.read(data_i, appdir=appdir)
+    def read_one(self, data_i, **kwargs):
+        labels_dict:dict[int, np.ndarray] = self.labels_elements.read(data_i)
+        extr_vecs_dict:dict[int, np.ndarray] = self.extr_vecs_elements.read(data_i)
+        bbox_3d_dict:dict[int, np.ndarray] = self.bbox_3ds_elements.read(data_i)
+        landmarks_dict:dict[int, np.ndarray] = self.landmarks_elements.read(data_i)
         return ViewMeta(color=None,
                         depth=None,
                         masks=None,
@@ -2205,11 +2736,11 @@ class PostureDatasetFormat(DatasetFormat[_DataCluster, ViewMeta]):
                         visib_fract=None,
                         labels=labels_dict)
 
-    def _write_elements(self, data_i: int, viewmeta: ViewMeta, appdir="", appname=""):
-        self.labels_elements.write(data_i, viewmeta.labels, appdir=appdir, appname=appname)
-        self.bbox_3ds_elements.write(data_i, viewmeta.bbox_3d, appdir=appdir, appname=appname)
-        self.landmarks_elements.write(data_i, viewmeta.landmarks, appdir=appdir, appname=appname)
-        self.extr_vecs_elements.write(data_i, viewmeta.extr_vecs, appdir=appdir, appname=appname)
+    def _write_elements(self, data_i: int, viewmeta: ViewMeta, subdir="", appname=""):
+        self.labels_elements.write(data_i, viewmeta.labels, subdir=subdir, appname=appname)
+        self.bbox_3ds_elements.write(data_i, viewmeta.bbox_3d, subdir=subdir, appname=appname)
+        self.landmarks_elements.write(data_i, viewmeta.landmarks, subdir=subdir, appname=appname)
+        self.extr_vecs_elements.write(data_i, viewmeta.extr_vecs, subdir=subdir, appname=appname)
 
     def calc_by_base(self, mesh_dict:dict[int, MeshMeta], overwitre = False):
         '''
@@ -2251,23 +2782,24 @@ class LinemodFormat(PostureDatasetFormat):
             id_format = str(class_id).rjust(6, "0")
             return id_format
 
-        def _read(self, data_i, *arg, **kwargs) -> dict[int, np.ndarray]:
+        def _read(self, data_i, **kwargs) -> dict[int, np.ndarray]:
             masks = {}
-            appdir = ""
+            subdir = ""
             for n, scene_gt in enumerate(self.dataset_node.scene_gt_dict[data_i]):
                 id_ = scene_gt[LinemodFormat.KW_GT_ID]
-                mask:np.ndarray = super()._read(data_i, appdir, appname=self.id_format(n))
+                mask:np.ndarray = super()._read(data_i)
                 if mask is None:
                     continue
                 masks[id_] = mask
             return masks
 
-        def _write(self, data_i, value: dict[int, ndarray], appdir="", appname="", *arg, **kwargs):
+        def _write(self, data_i, value: dict[int, ndarray], subdir="", appname="", **kwargs):
             for n, scene_gt in enumerate(self.dataset_node.scene_gt_dict[data_i]):
                 id_ = scene_gt[LinemodFormat.KW_GT_ID]
                 mask = value[id_]
                 super().write(data_i, mask, appname=self.id_format(n))
-            return super()._write(data_i, value, appdir, appname, *arg, **kwargs)
+            super()._write(data_i, value, subdir, appname, **kwargs)
+            return self.LOG_APPEND
 
     def _init_clusters(self):
         super()._init_clusters()
@@ -2288,11 +2820,11 @@ class LinemodFormat(PostureDatasetFormat):
         self.scene_camera_dict          = JsonDict(self, self.GT_CAM_FILE)
         self.scene_gt_info_dict         = JsonDict(self, self.GT_INFO_FILE)
 
-    def _write_elements(self, data_i:int, viewmeta:ViewMeta):
+    def _write_elements(self, data_i:int, viewmeta:ViewMeta, subdir="", appname=""):
         super()._write_elements(data_i, viewmeta)
-        self.rgb_elements.  write(data_i, viewmeta.color)
-        self.depth_elements.write(data_i, viewmeta.depth)
-        self.masks_elements.write(data_i, viewmeta.masks)
+        self.rgb_elements.  write(data_i, viewmeta.color, subdir=subdir, appname=appname)
+        self.depth_elements.write(data_i, viewmeta.depth, subdir=subdir, appname=appname)
+        self.masks_elements.write(data_i, viewmeta.masks, subdir=subdir, appname=appname)
 
     def _write_jsondict(self, data_i:int, viewmeta:ViewMeta):
         super()._write_jsondict(data_i, viewmeta)
@@ -2335,8 +2867,8 @@ class LinemodFormat(PostureDatasetFormat):
             })
         self.scene_gt_info_dict.write(self.data_num, gt_info_one_info)         
 
-    def read_one(self, data_i, *arg, **kwargs):
-        super().read_one(data_i, *arg, **kwargs)
+    def read_one(self, data_i, **kwargs):
+        super().read_one(data_i, **kwargs)
         color     = self.rgb_elements.read(data_i)
         depth   = self.depth_elements.read(data_i)
         masks   = self.masks_elements.read(data_i)
@@ -2365,73 +2897,78 @@ class VocFormat(PostureDatasetFormat):
 
     class cxcywhLabelElement(IntArrayDictElement):
         def __init__(self, dataset_node: Any, sub_dir: str, array_fmt: str = "", register=True, name="", filllen=6, fillchar='0') -> None:
-            super().__init__(dataset_node, sub_dir, (4,), array_fmt, register, name, filllen, fillchar)
-            self.image_size_required = True
+            self.skip = False
             self.__trigger = False
 
             self.default_image_size = None
+            super().__init__(dataset_node, sub_dir, (4,), array_fmt, register, name, filllen, fillchar)
 
-        def ignore_warning_once(self):
-            self.image_size_required = False
+        def skip_once(self):
+            self.skip = True
             self.__trigger = True
 
-        def __reset_trigger(self):
+        def _reset_trigger(self):
             if self.__trigger:
                 self.__trigger = False
-                self.image_size_required = True
+                self.skip = False
 
-        def _read_format(self, labels: np.ndarray, image_size):
+        def _read_format(self, labels: np.ndarray, image_size = None):
             if image_size is not None:
                 bbox_2d = labels[:,1:].astype(np.float32) #[cx, cy, w, h]
                 bbox_2d = VocFormat._normedcxcywh_2_x1y1x2y2(bbox_2d, image_size)
                 labels[:,1:] = bbox_2d   
             return labels         
         
-        def _write_format(self, labels: np.ndarray, image_size):
+        def _write_format(self, labels: np.ndarray, image_size = None):
             if image_size is not None:
                 bbox_2d = labels[:,1:].astype(np.float32) #[cx, cy, w, h]
                 bbox_2d = VocFormat._x1y1x2y2_2_normedcxcywh(bbox_2d, image_size)
                 labels[:,1:] = bbox_2d
             return labels
 
-        def read(self, data_i, appdir="", appname="", *arg, 
-                 force = False, image_size = None, **kw)->dict[int, np.ndarray]:
-            '''
-            set_image_size() is supported be called before read() \n
-            or the bbox_2d will not be converted from normed cxcywh to x1x2y1y2
-            image_size: (w, h)
-            '''
-            if image_size is None:
-                image_size = self.default_image_size
-            if image_size is not None:
-                return super().read(data_i, appdir, appname, *arg, force = force, image_size = image_size, **kw)
-            else:
-                if self.image_size_required:
+        class _read(IntArrayDictElement._read):
+            def __init__(self, cluster) -> None:
+                super().__init__(cluster)
+                self.cluster: VocFormat.cxcywhLabelElement = cluster
+
+            def _call(self, data_i, *, image_size = None, **kwargs: Any):
+                if self.cluster.skip:
+                    self.cluster._reset_trigger()
+                    raise ClusterDataIOError("skip")
+                if image_size is None:
+                    image_size = self.cluster.default_image_size
+                if image_size is None:
                     warnings.warn("image_size is None, bbox_2d will not be converted from normed cxcywh to x1x2y1y2",
-                                  ClusterParaWarning)
-                self.__reset_trigger()
-                return super().read(data_i, appdir, appname, *arg, image_size = image_size, **kw)
-        
-        def write(self, data_i, labels_dict:dict[int, np.ndarray], appdir="", appname="", *arg, 
-                  force = False, image_size = None, **kw):
-            '''
-            set_image_size() is supported be called before write() \n
-            or the bbox_2d will not be converted from x1x2y1y2 to normed cxcywh
-            image_size: (w, h)
-            '''
-            if image_size is None:
-                image_size = self.default_image_size
-            if image_size is not None:
-                return super().write(data_i, labels_dict, appdir, appname, *arg, force=force, image_size = image_size, **kw)
-            else:
-                if self.image_size_required:
+                                    ClusterParaWarning)
+                return super()._call(data_i, image_size = image_size, **kwargs)
+            
+            def __call__(self, data_i, *args, force=False, image_size = None, **kwargs: Any):
+                return super().__call__(data_i, *args, force=force, image_size = image_size, **kwargs)
+
+        class _write(IntArrayDictElement._write):
+            def __init__(self, cluster) -> None:
+                super().__init__(cluster)
+                self.cluster: VocFormat.cxcywhLabelElement = cluster
+
+            def _call(self, data_i, labels_dict:dict[int, np.ndarray], subdir="", *,
+                      image_size = None, **kwargs):
+                if self.cluster.skip:
+                    self.cluster._reset_trigger()
+                    raise ClusterDataIOError("skip")
+                if image_size is None:
+                    image_size = self.cluster.default_image_size
+                if image_size is None:
                     warnings.warn("image_size is None, bbox_2d will not be converted from x1x2y1y2 to normed cxcywh",
                                     ClusterParaWarning)
-                self.__reset_trigger()                    
-                return super().write(data_i, labels_dict, appdir, appname, *arg, force=force, image_size = image_size, **kw)    
+                return super()._call(data_i, labels_dict, subdir, image_size = image_size, **kwargs)
+            
+            def __call__(self, data_i, labels_dict:dict[int, np.ndarray], subdir="", *args, 
+                         force = False, image_size = None, **kwargs):
+                return super().__call__(data_i, labels_dict, subdir, *args, 
+                                        force=force, image_size = image_size, **kwargs)
 
-    def __init__(self, directory, split_rate = 0.75, clear = False, parent = None) -> None:
-        super().__init__(directory, split_rate, clear, parent)
+    def __init__(self, directory, split_rate = 0.25, parent = None) -> None:
+        super().__init__(directory, split_rate, parent)
 
     def _init_clusters(self):
         super()._init_clusters()
@@ -2447,7 +2984,7 @@ class VocFormat(PostureDatasetFormat):
                                             read_func=lambda x: deserialize_image_container(deserialize_object(x), cv2.IMREAD_GRAYSCALE),
                                             write_func=lambda path, x: serialize_object(path, serialize_image_container(x)),  
                                             suffix = ".pkl")
-        self.intr_elements       = Elements(self, "intr",
+        self.intr_elements       = Elements[VocFormat, np.ndarray](self, "intr",
                                             read_func=loadtxt_func((3,3)), 
                                             write_func=savetxt_func("%8.8f"), 
                                             suffix = ".txt")
@@ -2457,6 +2994,8 @@ class VocFormat(PostureDatasetFormat):
                                             suffix = ".txt")
         self.visib_fract_elements= IntArrayDictElement(self, "visib_fracts", ())
         self.labels_elements     = self.cxcywhLabelElement(self, "labels", )
+
+        self.labels_elements.default_image_size = (640, 480)
 
     def get_default_set(self, data_i):
         if data_i in self.default_train_idx_array:
@@ -2530,19 +3069,19 @@ class VocFormat(PostureDatasetFormat):
         bbox_2d = np.concatenate([x1, y1, x2, y2], axis=-1)
         return bbox_2d
 
-    def _write_elements(self, data_i: int, viewmeta: ViewMeta):
+    def _write_elements(self, data_i: int, viewmeta: ViewMeta, subdir="", appname=""):
         sub_set = self.decide_default_set(data_i)
-        self.labels_elements.ignore_warning_once()
-        super()._write_elements(data_i, viewmeta, appdir=sub_set)
+        self.labels_elements.skip_once()
+        super()._write_elements(data_i, viewmeta, subdir=sub_set)
         #
-        self.images_elements.write(data_i, viewmeta.color, appdir=sub_set)
+        self.images_elements.write(data_i, viewmeta.color, subdir=sub_set)
         #
-        self.depth_elements.write(data_i, viewmeta.depth, appdir=sub_set)
+        self.depth_elements.write(data_i, viewmeta.depth, subdir=sub_set)
         #
-        self.masks_elements.write(data_i, viewmeta.masks, appdir=sub_set)
+        self.masks_elements.write(data_i, viewmeta.masks, subdir=sub_set)
         
         ###
-        self.labels_elements.write(data_i, viewmeta.bbox_2d, appdir=sub_set, image_size = viewmeta.color.shape[:2][::-1]) # necessary to set image_size
+        self.labels_elements.write(data_i, viewmeta.bbox_2d, subdir=sub_set, image_size = viewmeta.color.shape[:2][::-1]) # necessary to set image_size
         # labels = []
         # for id_, mask in viewmeta.masks.items():
         #     img_size = mask.shape
@@ -2553,55 +3092,66 @@ class VocFormat(PostureDatasetFormat):
         #     cx, cy, w, h = self._x1y1x2y2_2_normedcxcywh(bbox_2d, img_size)
         #     labels.append([id_, cx, cy, w, h])
 
-        # self.labels_elements.write(data_i, labels, appdir=sub_set)
+        # self.labels_elements.write(data_i, labels, subdir=sub_set)
 
-        self.intr_elements.write(data_i, viewmeta.intr, appdir=sub_set)
-        self.depth_scale_elements.write(data_i, np.array([viewmeta.depth_scale]), appdir=sub_set)
-        self.visib_fract_elements.write(data_i, viewmeta.visib_fract, appdir=sub_set)
+        self.intr_elements.write(data_i, viewmeta.intr, subdir=sub_set)
+        self.depth_scale_elements.write(data_i, np.array([viewmeta.depth_scale]), subdir=sub_set)
+        self.visib_fract_elements.write(data_i, viewmeta.visib_fract, subdir=sub_set)
     
-    def read_one(self, data_i, *arg, **kwargs) -> ViewMeta:
+    def read_one(self, data_i, **kwargs) -> ViewMeta:
         # 判断data_i属于train或者val
-        sub_set = self.decide_default_set(data_i)
-
-        self.labels_elements.ignore_warning_once()
-        viewmeta = super().read_one(data_i, appdir=sub_set, *arg, **kwargs)
+        self.labels_elements.skip_once()
+        viewmeta = super().read_one(data_i, **kwargs)
         # 读取
-        color:np.ndarray = self.images_elements.read(data_i, appdir=sub_set)
+        color:np.ndarray = self.images_elements.read(data_i)
         viewmeta.set_element(ViewMeta.COLOR, color)
         #
-        depth = self.depth_elements.read(data_i, appdir=sub_set)
+        depth = self.depth_elements.read(data_i)
         viewmeta.set_element(ViewMeta.DEPTH, depth)
         #
-        labels_dict = self.labels_elements.read(data_i, appdir=sub_set, image_size = color.shape[:2][::-1]) # {id: [cx, cy, w, h]}
+        labels_dict = self.labels_elements.read(data_i, image_size = color.shape[:2][::-1]) # {id: [cx, cy, w, h]}
         viewmeta.set_element(ViewMeta.LABELS, labels_dict)
         #
-        masks_dict = self.masks_elements.read(data_i, appdir=sub_set)
+        masks_dict = self.masks_elements.read(data_i)
         viewmeta.set_element(ViewMeta.MASKS, masks_dict)
         #
-        intr = self.intr_elements.read(data_i, appdir=sub_set)
+        intr = self.intr_elements.read(data_i)
         viewmeta.set_element(ViewMeta.INTR, intr)
         #
-        ds    = self.depth_scale_elements.read(data_i, appdir=sub_set)
+        ds    = self.depth_scale_elements.read(data_i)
         viewmeta.set_element(ViewMeta.DEPTH_SCALE, ds)
         #
-        visib_fract_dict = self.visib_fract_elements.read(data_i, appdir=sub_set)
+        visib_fract_dict = self.visib_fract_elements.read(data_i)
         viewmeta.set_element(ViewMeta.VISIB_FRACT, visib_fract_dict)
 
         return viewmeta
 
-    def save_elements_cache(self):
-        self.labels_elements.save_cache(image_size=[img.shape[:2][::-1] for img in self.images_elements])
-        self.bbox_3ds_elements.save_cache()
-        self.depth_scale_elements.save_cache()
-        self.intr_elements.save_cache()
-        self.landmarks_elements.save_cache()
-        self.extr_vecs_elements.save_cache()
-        self.visib_fract_elements.save_cache()
+    def save_elements_data_info_map(self):
+        if self.labels_elements.default_image_size is not None:
+            kw = {}
+        else:
+            kw = {"image_size" : [img.shape[:2][::-1] for img in self.images_elements]}
+        self.labels_elements.cache_to_data_info_map(True, **kw)
+        for c in [self.bbox_3ds_elements, 
+                  self.depth_scale_elements,
+                  self.intr_elements, 
+                  self.landmarks_elements, 
+                  self.extr_vecs_elements,
+                  self.visib_fract_elements]:
+            c:Elements = c
+            c.cache_to_data_info_map(True)
+
+    def synchronize_default_split(self):
+        self.spliter_group.cur_spliter_name = self.DEFAULT_SPLIT_TYPE[0]
+        for data_i, info in self.labels_elements.data_info_map.items():
+            subdir = info.dir
+            self.spliter_group.cur_training_spliter.set_one(data_i, subdir)
+
 
 class _LinemodFormat_sub1(LinemodFormat):
     class _MasksElements(LinemodFormat._MasksElements):
 
-        def _read(self, data_i, *arg, **kwargs) -> dict[int, ndarray]:
+        def _read(self, data_i, **kwargs) -> dict[int, ndarray]:
             masks = {}
             for n in range(100):
                 mask = super().read(data_i, appname=self.id_format(n))
@@ -2610,10 +3160,11 @@ class _LinemodFormat_sub1(LinemodFormat):
                 masks[n] = mask
             return masks
         
-        def _write(self, data_i, value: dict[int, ndarray], appdir="", appname="", *arg, **kwargs):
+        def _write(self, data_i, value: dict[int, ndarray], subdir="", appname="", **kwargs):
             for id_, mask in value.items():
                 super().write(data_i, mask, appname=self.id_format(id_))
-            return super()._write(data_i, value, appdir, appname, *arg, **kwargs)
+            super()._write(data_i, value, subdir, appname, **kwargs)
+            return self.LOG_APPEND
 
     def __init__(self, directory, clear = False) -> None:
         super().__init__(directory, clear)
@@ -2622,8 +3173,8 @@ class _LinemodFormat_sub1(LinemodFormat):
                                        write_func=cv2.imwrite, 
                                        suffix='.jpg')
 
-    def read_one(self, data_i, *arg, **kwargs):
-        viewmeta = super().read_one(data_i, *arg, **kwargs)
+    def read_one(self, data_i, **kwargs):
+        viewmeta = super().read_one(data_i, **kwargs)
 
         for k in viewmeta.bbox_3d:
             viewmeta.bbox_3d[k] = viewmeta.bbox_3d[k][:, ::-1]
@@ -2635,30 +3186,34 @@ class _LinemodFormat_sub1(LinemodFormat):
   
 class Mix_VocFormat(VocFormat):
     DEFAULT_SPLIT_TYPE = ["default", "posture", "reality", "basis"]
+
+    REALITY_SUBSETS = ["real", "sim"]
+    BASIS_SUBSETS = ["basic", "augment"]
+
     MODE_DETECTION = 0
     MODE_POSTURE = 1
 
     IMGAE_DIR = "images"
 
-    def __init__(self, directory, split_rate=0.75, clear=False, parent = None) -> None:
-        super().__init__(directory, split_rate, clear, parent)
+    def __init__(self, directory, split_rate=0.75, parent = None) -> None:
+        super().__init__(directory, split_rate, parent)
 
-        self.split_mode = self.DEFAULT_SPLIT_TYPE[1]
+        self.spliter_name = self.DEFAULT_SPLIT_TYPE[1]
         self.spliter_group[self.DEFAULT_SPLIT_TYPE[0]].split_for = Spliter.SPLIT_FOR_TRAINING
         self.spliter_group[self.DEFAULT_SPLIT_TYPE[1]].split_for = Spliter.SPLIT_FOR_TRAINING
         self.spliter_group[self.DEFAULT_SPLIT_TYPE[2]].split_for = Spliter.SPLIT_FOR_DATATYPE
         self.spliter_group[self.DEFAULT_SPLIT_TYPE[3]].split_for = Spliter.SPLIT_FOR_DATATYPE
 
-        self.spliter_group[self.DEFAULT_SPLIT_TYPE[2]]._default_subtypes = ["real", "sim"]
-        self.spliter_group[self.DEFAULT_SPLIT_TYPE[3]]._default_subtypes = ["basic", "augment"]
+        self.spliter_group[self.DEFAULT_SPLIT_TYPE[2]].set_default_subsets(self.REALITY_SUBSETS)
+        self.spliter_group[self.DEFAULT_SPLIT_TYPE[3]].set_default_subsets(self.BASIS_SUBSETS)
 
     @property
     def posture_train_idx_list(self):
-        return self.spliter_group[self.DEFAULT_SPLIT_TYPE[1]][self.KW_TRAIN]
-    
+        return self.spliter_group[self.DEFAULT_SPLIT_TYPE[1]].get_idx_list(self.KW_TRAIN)
+
     @property
     def posture_val_idx_list(self):
-        return self.spliter_group[self.DEFAULT_SPLIT_TYPE[1]][self.KW_VAL]
+        return self.spliter_group[self.DEFAULT_SPLIT_TYPE[1]].get_idx_list(self.KW_VAL)
 
     @property
     def default_spliter(self):
@@ -2679,77 +3234,148 @@ class Mix_VocFormat(VocFormat):
     def _init_clusters(self):
         super()._init_clusters()
 
-    def gen_posture_log(self, ratio = 0.85):
+    def gen_posture_log(self, ratio = 0.15, source:list[int] = None):
         """
         Only take ratio of the real data as the verification set
         """
-        assert self.reality_spliter.total_num == self.data_num, "reality_spliter.total_num != data_num"
-        assert self.basis_spliter.total_num == self.data_num, "basis_spliter.total_num != data_num"
+        # assert self.reality_spliter.total_num == self.data_num, "reality_spliter.total_num != data_num"
+        # assert self.basis_spliter.total_num == self.data_num, "basis_spliter.total_num != data_num"
         
-        real_idx = self.reality_spliter.get_subtype_idx_list(0).copy()
-        np.random.shuffle(real_idx)
+        real_idx = self.reality_spliter.get_idx_list(0).copy()
+        real_base_idx = list(set(real_idx).intersection(self.basis_spliter.get_idx_list(0)))
+        sim_idx  = self.reality_spliter.get_idx_list(1).copy()
+
+        if source is None:
+            pass
+        else:
+            real_idx = list(set(real_idx).intersection(source))
+            real_base_idx = list(set(real_base_idx).intersection(source))
+            sim_idx  = list(set(sim_idx).intersection(source))
+
+        train_real, val_real = Spliter.gen_split(real_base_idx, ratio, 2)
+
         self.posture_val_idx_list.clear()
-        self.posture_val_idx_list.extend(real_idx[:int(len(real_idx)*ratio)])
+        self.posture_val_idx_list.extend(val_real)
 
         posture_train_idx_list = np.setdiff1d(
-            np.union1d(self.reality_spliter.get_subtype_idx_list(0), self.reality_spliter.get_subtype_idx_list(1)),
+            np.union1d(real_idx, sim_idx),
             self.posture_val_idx_list
             ).astype(np.int32).tolist()
         self.posture_train_idx_list.clear()
         self.posture_train_idx_list.extend(posture_train_idx_list)
 
+        self.posture_val_idx_list.sort()
+        self.posture_train_idx_list.sort()
+
         with self.posture_spliter.writer:
             self.posture_spliter.save()
             
-
     def record_data_type(self, data_i, is_real, is_basic):
-        self.reality_spliter.set_one(data_i, self.reality_spliter.subtypes[int(not is_real)])
-        self.basis_spliter.set_one(data_i, self.basis_spliter.subtypes[int(not is_basic)])
+        reality = "real" if is_real else "sim"
+        basis = "basic" if is_basic else "augment"
+        self.reality_spliter.set_one(data_i, reality)
+        self.basis_spliter.set_one(data_i, basis)
 
-    def get_data_type_as_bool(self, data_i):
-        types = self.get_data_type(data_i)
-        for k, v in types.items():
-            types[k] = (v == self.spliter_group[k].subtypes[0])
-        return types
+    # def get_data_type_as_bool(self, data_i):
+    #     types = self.get_data_type(data_i)
+    #     for k, v in types.items():
+    #         types[k] = (v == self.spliter_group[k].subsets[0])
+    #     return types
 
 class Spliter(FileCluster["SpliterGroup", list[int]]):
     SPLIT_FOR_TRAINING = 0
     SPLIT_FOR_DATATYPE = 1
 
-    SPLIT_INFO_FILE = "__split_for.txt"
+    SPLIT_MODE_BASE = "base"
 
-    def __init__(self, dataset_node:"SpliterGroup", sub_dir:str, split_for=None, default_subtypes:list = [], register = True, name = "") -> None:
-        self.split_info_file = SingleFile[tuple[int, list[str]]](
-            self.SPLIT_INFO_FILE, 
-            self.load_split_info_func, 
-            self.save_split_info_func)
-        super().__init__(dataset_node, sub_dir, register, name, singlefile_list=[self.split_info_file])
+    SPLIT_FOR_FILE = "__split_for.txt"
+    SPLIT_FILE = "split.json"
+
+    class SpliterTable(Table[str, str, list[int]]):
+        def __init__(self, spliter:"Spliter"):
+            super().__init__()
+            self.add_column(Spliter.SPLIT_MODE_BASE)
+            for row in spliter.default_subsets:
+                self.add_row(row)
+            self.spliter = spliter
+        
+        def gen_default_value(self) -> list[int]:
+            return []
+
+        def get_base_filter(self):
+            return self.get_column(Spliter.SPLIT_MODE_BASE)
+        
+        def qurey(self, data_i:int, return_key:bool = False):
+            if return_key:
+                result_keys:list[tuple[str]] = []
+                for row_name, col_name, value in self.tranverse(with_key=True):
+                    if data_i in value:
+                        result_keys.append((row_name, col_name))
+                return result_keys
+            else:
+                result_table = Table[str, str, bool](self.row_names, self.col_names, bool)
+                for row_name, col_name, value in self.tranverse(with_key=True):
+                    result_table[row_name, col_name] = data_i in value
+                return result_table
+            
+        def __str__(self) -> str:
+            tile = "\n" + self.spliter.spliter_name + ":\n"
+            string = super().__str__()
+            # match self.spliter.split_mode and add '>' '<' to it
+            string = string.replace(' ' + self.spliter.split_mode + ' ', f">{self.spliter.split_mode}<")
+            return tile + string
+
+    def __init__(self, dataset_node:"SpliterGroup", sub_dir:str, split_for=None, default_subsets:list = [], register = True, name = "") -> None:
+        self.split_for_file = SingleFile[tuple[int, list[str]]](
+            self.SPLIT_FOR_FILE, 
+            self.load_split_for_info_func, 
+            self.save_split_for_info_func)
+        self.split_file = SingleFile[dict[str, dict[str, list[int]]]](
+            self.SPLIT_FILE,
+            partial(JsonIO.load_json, cvt_list_to_array=False),
+            partial(JsonIO.dump_json, regard_list_as_array = True))
+        super().__init__(dataset_node, sub_dir, register, name, singlefile_list=[self.split_for_file, self.split_file])
         ### init split_for
         if split_for is None:
-            if self.split_info_file.exist:
-                self.split_for, subs = self.split_info_file.read()
+            if self.split_for_file.exist:
+                self.split_for = self.split_for_file.read()
             else:
                 self.split_for = self.SPLIT_FOR_TRAINING
-                subs = []
+                self.split_for_file.write(self.split_for)
 
-        ### init default_subtypes
+        ### init default_subsets
         if self.split_for == self.SPLIT_FOR_TRAINING:
-            default_subtypes = [VocFormat.KW_TRAIN, VocFormat.KW_VAL]
+            default_subsets = [VocFormat.KW_TRAIN, VocFormat.KW_VAL]
+        if self.split_file.exist:
+            default_subsets += list(self.split_file.read().keys())
+        
+        self.__default_subsets:list[str] = remove_duplicates(default_subsets)
 
-        subtypes = [os.path.splitext(sub)[0] for sub in subs if sub != self.SPLIT_INFO_FILE]
-        self.__default_subtypes:list[str] = remove_duplicates(default_subtypes + subtypes)
-
-        ### init subtypes_files
-        for file_mainname in self.__default_subtypes:
-            sf = SingleFile(file_mainname + ".txt", self.loadsplittxt_func, self.savesplittxt_func)
-            self.update_file(sf)
-
+        self.split_table = self.SpliterTable(self)
+        
+        self.__split_mode = self.SPLIT_MODE_BASE
         self.__exclusive = True
         self.load()
 
+    @property
+    def data(self):
+        return self.split_table.data
+
+    @property
+    def active_split(self):
+        return self.get_split(self.split_mode)
+
     @property 
-    def split_mode(self):
+    def spliter_name(self):
         return os.path.split(self.sub_dir)[-1]
+
+    @property
+    def split_mode(self):
+        return self.__split_mode
+    
+    @split_mode.setter
+    def split_mode(self, mode:Union[int,str]):
+        self.set_split_mode(mode)
 
     @property
     def exclusive(self):
@@ -2757,64 +3383,80 @@ class Spliter(FileCluster["SpliterGroup", list[int]]):
     
     @exclusive.setter
     def exclusive(self, value):
-        if self.split_for == self.SPLIT_FOR_TRAINING:
-            self.__exclusive = True
-        else:
-            self.__exclusive = bool(value)
+        self.set_exclusive(value)
 
     @property
-    def subtypes(self):
-        return tuple(self.split.keys())
+    def default_subsets(self):
+        return self.__default_subsets
+
+    @property
+    def subsets(self):
+        return tuple(self.split_table.row_names)
     
     @property
-    def subtype_fileobjs_dict(self) -> dict[str, SingleFile[list[int]]]:
+    def split_mode_list(self):
+        return tuple(self.split_table.col_names)
+    
+    @property
+    def subset_fileobjs_dict(self) -> dict[str, SingleFile[list[int]]]:
         objs_dict = {}
         for k in self.fileobjs_dict.keys():
-            if self.SPLIT_INFO_FILE in k:
+            if self.SPLIT_FOR_FILE in k:
                 continue
             k = get_mainname(k)
             objs_dict.update({k: self.fileobjs_dict[self.filter_data_i(k)]})
         return objs_dict
 
     @property
-    def _default_subtypes(self):
-        return self.__default_subtypes
-    
-    @_default_subtypes.setter
-    def _default_subtypes(self, value:Union[str, Iterable[str]]):
+    def total_num(self):
+        return sum([len(v) for v in self.split_table.get_base_filter().values()])
+
+    def set_split_mode(self, split_mode:int):
+        split_mode = self.split_table._col_name_filter(split_mode)
+        assert split_mode in self.split_table.col_names, "split_mode must be in {}".format(self.split_table.col_names)
+        self.__split_mode = str(split_mode)
+
+    def set_exclusive(self, value:bool):
+        if self.split_for == self.SPLIT_FOR_TRAINING:
+            self.__exclusive = True
+        else:
+            self.__exclusive = bool(value)
+
+    def set_default_subsets(self, value:Union[str, Iterable[str]]):
         if isinstance(value, str):
             value = [value]
         if isinstance(value, Iterable):
-            self.__default_subtypes = tuple(remove_duplicates(value))
+            self.__default_subsets = tuple(remove_duplicates(value))
         for t in value:
-            if t not in self.split:
-                # 
-                self.split[t] = []
-                # file
-                sf = SingleFile(t + ".txt", self.loadsplittxt_func, self.savesplittxt_func)
-                self.update_file(sf)
-        for t in list(self.split.keys()):
+            self.split_table.add_row(t, exist_ok=True)
+        for t in self.split_table.row_names:
             if t not in value:
-                self.split.pop(t)
-                self.remove_file(t)
-        self.load()
+                self.split_table.remove_row(t)
+        self.split_table.resort_row(self.__default_subsets)
+        self.load() 
 
-    @property
-    def total_num(self):
-        return sum([len(v) for v in self.split.values()])
+    def add_split_mode(self, mode:str, exist_ok:bool = False):
+        self.split_table.add_column(mode, exist_ok=exist_ok)
 
-    def get_subtype_idx_list(self, subtype:Union[str, int]):
-        if isinstance(subtype, str):
-            return self.split[subtype]
-        elif isinstance(subtype, int):
-            return self.split[self.subtypes[subtype]]
-        else:
-            raise ValueError("subtype must be str or int")
+    def remove_split_mode(self, mode:str, not_exist_ok:bool = False):
+        self.split_table.remove_column(mode, not_exist_ok=not_exist_ok)
 
-    def get_file_path(self, subtype):
-        return os.path.join(self.directory, subtype + ".txt")
+    def get_split(self, split_mode):
+        return self.split_table.get_column(split_mode)
+
+    def get_idx_list(self, subset:Union[str, int], split_mode = None) -> list[int]:
+        if split_mode is None:
+            split_mode = self.split_mode
+        return self.split_table[subset, split_mode]
     
-    def load_split_info_func(self, path:str):
+    def read_idx_list(self, subset:Union[str, int], split_mode = None) -> tuple[int]:
+        return tuple(self.get_idx_list(subset, split_mode))
+
+    def clear_idx(self):
+        for item in self.split_table.tranverse():
+            item.clear()
+
+    def load_split_for_info_func(self, path:str):
         with open(path, 'r') as file:
             lines = file.readlines()
 
@@ -2822,20 +3464,12 @@ class Spliter(FileCluster["SpliterGroup", list[int]]):
         try:
             split_for = int(lines[0].strip())
         except ValueError:
-            return None, []
+            return None
+        return split_for
 
-        # extract strings
-        strings = [line.strip() for line in lines[1:]]
-
-        return split_for, strings
-
-    def save_split_info_func(self, path:str, value:list):
-        split_for, strings = value
+    def save_split_for_info_func(self, path:str, value:int):
         with open(path, 'w') as file:
-            file.write(str(split_for) + '\n')  # 写入整数值并换行
-            for string in strings:
-                file.write(string + '\n')  # 逐行写入字符串
-
+            file.write(str(value))
 
     def loadsplittxt_func(self, path:str):
         if os.path.exists(path):
@@ -2844,114 +3478,154 @@ class Spliter(FileCluster["SpliterGroup", list[int]]):
             return rlt
         else:
             return []
-        
-    def savesplittxt_func(self, path:str, value:Iterable):
-        assert isinstance(value, Iterable), "split_dict value must be a Iterable"
-        np.savetxt(path, np.array(value).astype(np.int32).reshape(-1, 1), fmt="%6d")
-
-    def load(self):
-        self.split:dict[str, list[int]] = {}
-        for st, sf in self.subtype_fileobjs_dict.items():
-            self.split[st] = self.read(st)
     
+    def load(self):
+        # load split_for_
+        self.split_for = self.split_for_file.read()
+        # load split
+        if self.split_file.exist:
+            split = self.split_file.read()
+        else:
+            split = {}
+        self.split_table.update(split)
+
     def save(self):
         with self.writer.allow_overwriting():
             os.makedirs(self.directory, exist_ok=True)
-            for st, sf in self.subtype_fileobjs_dict.items():
-                self.write(st, self.split[st])
-            self.split_info_file.write((self.split_for, self.subtypes))
-        # for subtype in self.subtypes:
-        #     file_path = self.get_file_path(subtype)
-        #     self.savesplittxt_func(file_path, self.split[subtype])
-        # self.savesplittxt_func(os.path.join(self.directory, self.SPLIT_FOR_FILE), [self.split_for])
+            split_data = dict(self.data)
+            self.split_file.write(self.data)
+            self.split_for_file.write(self.split_for)
 
-    def _check_split_rate(self, split_rate:Union[float, Iterable[float], dict[str, float]]):
-        assert len(self.subtypes) > 1, "len(subtypes) must > 1"
-        if len(self.subtypes) == 2 and isinstance(split_rate, float):
+    @staticmethod
+    def process_split_rate(split_rate:Union[float, Iterable[float], dict[str, float]], 
+                            split_num:Union[int, list[str]]):
+        if isinstance(split_num, int):
+            subsets = None
+        elif isinstance(split_num, Iterable):
+            subsets = split_num
+            split_num = len(subsets)
+        else:
+            raise ValueError("split_num must be int or Iterable")
+        
+        assert split_num > 1, "len(subsets) must > 1"
+        
+        if split_num == 2 and isinstance(split_rate, float):
             split_rate = (split_rate, 1 - split_rate)
-        if isinstance(split_rate, dict):
-            split_rate = tuple([split_rate[subtype] for subtype in self.subtypes])
+        if subsets is not None and isinstance(split_rate, dict):
+            split_rate = tuple([split_rate[subset] for subset in subsets])
         elif isinstance(split_rate, Iterable):
             split_rate = tuple(split_rate)
         else:
-            raise ValueError("split_rate must be Iterable or dict[str, float], (or float if len(subtypes) == 2)")
-        assert len(split_rate) == len(self.subtypes), "splite_rate must have {} elements".format(len(self.subtypes))
+            raise ValueError("split_rate must be Iterable or dict[str, float], (or float if len(subsets) == 2)")
+        assert len(split_rate) == split_num, "splite_rate must have {} elements".format(split_num)
+        
         return split_rate
 
-    def gen(self, data_num:int, split_rate:Union[float, Iterable[float], dict[str, float]]):
-        assert isinstance(data_num, int), "data_num must be int"
-        split_rate = self._check_split_rate(split_rate)
-        _s = np.arange(data_num, dtype=np.int32)
-        np.random.shuffle(_s)
-        for subtype, rate in zip(self.subtypes, split_rate):
-            num = int(data_num * rate)
-            self.split[subtype] = _s[:num]
-            _s = _s[num:]
-            
-    def set_one(self, data_i, subtype, sort = False):
-        if data_i not in self.split[subtype]:
-            self.split[subtype].append(data_i)
-        if self.exclusive:
-            # remove from other subtypes
-            for _subtype in self.subtypes:
-                if _subtype != subtype and data_i in self.split[_subtype]:
-                    self.split[_subtype].remove(data_i)
-        if sort:
-            self.split[subtype].sort()
+    @staticmethod
+    def gen_split(data_num:Union[int, Iterable], 
+                  split_rate:Union[float, Iterable[float], dict[str, float]],
+                  split_num:int):
+        assert isinstance(data_num, (int, Iterable)), "data_num must be int"
+        assert isinstance(split_num, int), "split_num must be int"
 
-    def set_one_by_rate(self, data_i, split_rate):
-        split_rate = self._check_split_rate(split_rate)
-        total_nums = [len(st) for st in self.split.values()]
+        split_rate = Spliter.process_split_rate(split_rate, split_num)
+
+        if isinstance(data_num, int):
+            _s = np.arange(data_num, dtype=np.int32)
+        else:
+            _s = np.array(data_num, dtype=np.int32)
+            data_num = len(_s)
+        np.random.shuffle(_s)
+
+        _s:list[int] = _s.tolist()
+        rlt:list[list[int]] = []
+        for i, rate in enumerate(split_rate):
+            if i != split_num - 1:
+                num = int(data_num * rate)
+                seq = _s[:num]
+                _s = _s[num:]
+            else:
+                seq = _s
+            seq.sort()
+            rlt.append(seq)
+        return tuple(rlt)
+            
+    def set_one(self, data_i, subset, split_mode=None, sort = False):
+        if split_mode is None:
+            split_mode = self.split_mode
+        if data_i not in self.split_table[subset, split_mode]:
+            self.split_table[subset, split_mode].append(data_i)
+        if self.exclusive:
+            # remove from other subsets
+            for _subset in self.subsets:
+                if _subset != subset and data_i in self.split_table[_subset, split_mode]:
+                    self.split_table[_subset, split_mode].remove(data_i)
+        if sort:
+            self.split_table[subset, split_mode].sort()
+
+    def set_one_by_rate(self, data_i, split_rate, split_mode=None):
+        if split_mode is None:
+            split_mode = self.split_mode
+        split_rate = self.process_split_rate(split_rate, self.subsets)
+        total_nums = [len(st) for st in self.split_table.get_column(0).values()]
         if sum(total_nums) == 0:
             # all empty, choose the first
-            subtype_idx = 0
+            subset_idx = 0
         else:
             rates = np.array(total_nums) / sum(total_nums)
-            subtype_idx = 0
+            subset_idx = 0
             for idx, r in enumerate(rates):
                 if r <= split_rate[idx]:
-                    subtype_idx = idx
+                    subset_idx = idx
                     break
-        self.set_one(data_i, self.subtypes[subtype_idx])
-        return self.subtypes[subtype_idx]
+        self.set_one(data_i, self.subsets[subset_idx], split_mode)
+        return self.subsets[subset_idx]
+
+    def remove_one(self, idx):
+        for item in self.split_table:
+            try:
+                item.remove(idx)
+            except ValueError:
+                pass
 
     def sort_all(self):
-        for subtype in self.subtypes:
-            self.split[subtype].sort()
-    
-    def get_one_subtype(self, data_i):
-        subtypes = []
-        for subtype in self.subtypes:
-            if data_i in self.split[subtype]:
-                subtypes.append(subtype)
-        return subtypes
+        for value in self.split_table.tranverse():
+            value.sort()
 
-    def one_is_subtype(self, data_i, subtype):
-        assert subtype in self.subtypes, "subtype must be one of {}".format(self.subtypes)
-        return data_i in self.split[subtype]
+    def get_one_subset(self, data_i):
+        return self.split_table.qurey(data_i)
     
+    def print(self):
+        print(self.split_table)
+
     def __getitem__(self, key):
-        return self.get_subtype_idx_list(key)
+        return self.split_table[key]
 
-class SpliterGroup(DatasetNode[Spliter]):
+class SpliterGroup(DatasetNode[Spliter, VDST]):
     DEFAULT_SPLIT_TYPE = ["default"]
 
-    def __init__(self, directory, split_mode_list:list, parent = None) -> None:
-        self.__split_mode_list = split_mode_list
+    def __init__(self, directory, spliter_name_list:list, parent = None) -> None:
+        self.__spliter_name_list = spliter_name_list
         super().__init__(directory, parent)
-        self.__split_mode:str = self.DEFAULT_SPLIT_TYPE[0]
+        self.__spliter_name:str = self.DEFAULT_SPLIT_TYPE[0]
+        self.cluster_map:_ClusterMap[Spliter] = self.cluster_map
 
     def _init_clusters(self):
-        self.__split_mode_list = remove_duplicates(self.__split_mode_list + os.listdir(self.split_subdir))
-        _spliter_list:list = [Spliter(self, m, register=True) for m in self.__split_mode_list]
+        self.__spliter_name_list = remove_duplicates(self.__spliter_name_list + os.listdir(self.split_subdir))
+        _spliter_list:list = [Spliter(self, m, register=True) for m in self.__spliter_name_list]
         return super()._init_clusters()
+
+    ###
+    def read_one(self, data_i, **kwargs) -> VDST:
+        raise NotImplementedError("read_one should not be called in SpliterGroup")
+    ###
 
     @property
     def split_subdir(self):
         return self.sub_dir
     
     @property
-    def split_mode_list(self):
+    def spliter_name_list(self):
         # mode_list = []
         # for key, spliter in self.cluster_map.items():
         #     _, _, _, sub_dir, name = spliter.parse_identity_string(key)
@@ -2960,49 +3634,52 @@ class SpliterGroup(DatasetNode[Spliter]):
         return tuple(self.cluster_map.get_keywords())
 
     @property
-    def split_mode(self):
-        return self.__split_mode
+    def cur_spliter_name(self):
+        return self.__spliter_name
     
-    @split_mode.setter
-    def split_mode(self, split_type:str):
-        self.set_split_mode(split_type)
+    @cur_spliter_name.setter
+    def cur_spliter_name(self, spliter_name:str):
+        self.set_cur_spliter_name(spliter_name)
     
     @property
     def cur_training_spliter(self):
-        spliter = self[self.split_mode]
+        spliter = self.cluster_map.search(self.cur_spliter_name)
         assert spliter.split_for == Spliter.SPLIT_FOR_TRAINING, "cur_training_spliter must be Spliter.SPLIT_FOR_TRAINING"
         return spliter
 
-    def set_split_mode(self, split_type:str):
-        assert split_type in self.split_mode_list, "split_type must be one of {}".format(self.split_mode_list)
-        self.__split_mode = split_type
-
-    def get_split_array_of(self, split_type, sub_set:str = ""):
-        if sub_set == "":
-            dict_:dict[str, list] = self[split_type]
-            # convert as dict[str, tuple]
-            dict_ = {k:tuple(v) for k, v in dict_.items()}
-            return dict_
-        else:
-            return tuple(self[split_type][sub_set])
-
-    def _query(self, split_for:int, data_i:int) -> dict[str, list[str]]:
+    def set_cur_spliter_name(self, spliter_name:str):
+        assert spliter_name in self.spliter_name_list, "spliter_name must be one of {}".format(self.spliter_name_list)
+        self.__spliter_name = spliter_name
+        
+    def query_set(self, data_i:int, split_for:int = None) -> dict[str, Table[str, str, bool]]:
         set_ = {}
         for s in self.cluster_map.values():
-            if s.split_for == split_for:
-                set_.update({s.split_mode: s.get_one_subtype(data_i)})
+            if split_for is None or s.split_for == split_for:
+                set_.update({s.spliter_name: s.get_one_subset(data_i)})
         return set_
 
-    def query_datatype_set(self, data_i:int) -> dict[str, list[str]]:
-        return self._query(Spliter.SPLIT_FOR_DATATYPE, data_i)
+    def query_datatype_set(self, data_i:int) -> dict[str, Table[str, str, bool]]:
+        return self._query(data_i, Spliter.SPLIT_FOR_DATATYPE)
 
-    def query_training_set(self, data_i) -> dict[str, list[str]]:
-        return self._query(Spliter.SPLIT_FOR_TRAINING, data_i)
+    def query_training_set(self, data_i) -> dict[str, Table[str, str, bool]]:
+        return self._query(data_i, Spliter.SPLIT_FOR_TRAINING)
+
+    def record_set(self, data_i:int, set_:dict[str, Table[str, str, bool]]):
+        for spliter_name, table in set_.items():
+            for row, col, v in table.tranverse(with_key=True):
+                if v:
+                    spliter = self.cluster_map.search(spliter_name)
+                    spliter.add_split_mode(col, exist_ok=True)
+                    spliter.set_one(data_i, row, col)
 
     def save(self):
         for spliter in self.cluster_map.values():
             spliter.save()
     
+    def remove_one(self, idx):
+        for spliter in self.clusters:
+            spliter.remove_one(idx)
+
     def __getitem__(self, key):
         return self.cluster_map.search(key)
 
@@ -3040,28 +3717,21 @@ def zip_dict(ids:list[int], item:Union[Iterable, None, Any], func = lambda x: x)
 def get_mainname(path):
     return os.path.splitext(os.path.split(path)[1])[0]
 
-KT = TypeVar("KT")
-VT = TypeVar("VT")
-def search_in_dict(_dict:dict[KT, VT], key:Union[int, str], return_index=False, process_func:Callable = None):
-    def default_func(key, string):
-        return key in string 
 
-    if process_func is None:
-        process_func:Callable = default_func
+def dataset_test(ds:DatasetNode, dst_ds:DatasetNode):
+    # read
+    v = ds[0]
+    # write
+    dst_ds.write_one(0, v)
 
-    if isinstance(key, int):
-        value = list(_dict.values())[key]
-        return key if return_index else value
-    elif isinstance(key, str):
-        if key in _dict:
-            return list(_dict.keys()).index(key) if return_index else _dict[key]
-        else:
-            matching_keys = [k for k in _dict if process_func(key, k)]
-            if len(matching_keys) == 1:
-                matching_key = matching_keys[0]
-                return list(_dict.keys()).index(matching_key) if return_index else _dict[matching_key]
-            else:
-                raise ValueError("Key not found or ambiguous")
-    else:
-        raise TypeError("Key must be an int or str")
-    
+
+def _cvt_old_element_map(dataset_node:DatasetNode, sub_dir:str, suffix:str):
+    path = os.path.join(dataset_node.directory, sub_dir, Elements.DATA_INFO_MAP_FILE)
+    if not os.path.exists(path):
+        return
+    _map:dict[int, dict] = deserialize_object(path)
+    for k, v in _map.items():
+        if not isinstance(v["cache"], list):
+            continue
+        _map[k]["cache"] = _map[k]["cache"][0]
+    serialize_object(path, _map)

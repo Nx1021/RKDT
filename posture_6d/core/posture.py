@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+from scipy.spatial.transform import Rotation as _R
 import matplotlib.pyplot as plt
 
 class Posture:
@@ -14,7 +15,7 @@ class Posture:
     def __init__(self, *, rvec:np.ndarray = None, tvec:np.ndarray = None,
                                         rmat:np.ndarray = None,
                                         homomat:np.ndarray = None,
-                                        EularZYX:np.ndarray = None
+                                        **Eular
                                         ) -> None:
         self.trans_mat:np.ndarray  = np.eye(4)
         if rvec is not None:
@@ -27,6 +28,10 @@ class Posture:
             self.set_tvec(tvec)
         if homomat is not None:
             self.set_homomat(homomat)
+        if len(Eular) > 0:
+            seq = list(Eular.keys())[0]
+            eular = list(Eular.values())[0]
+            self.set_rmat(_R.from_euler(seq, eular, degrees=False).as_matrix())
         
     def __mul__(self, obj):
         if isinstance(obj, Posture):
@@ -77,6 +82,16 @@ class Posture:
 
     def set_homomat(self, homomat):
         self.trans_mat:np.ndarray = homomat.copy()
+
+    def get_eular(self, seq, degrees=False):
+        assert seq in ['xyz', 'zyx', 'yxz', 'xzy', 'zxy', 'yzx', 'XYZ', 'ZYX', 'YXZ', 'XZY', 'ZXY', 'YZX']
+        r = _R.from_matrix(self.rmat)
+        euler_angles = r.as_euler(seq, degrees=degrees)  # 'xyz'表示顺序是绕X、Y、Z轴旋转
+        return euler_angles
+
+    def get_NED(self, degrees=False):
+        eular = self.get_eular('zyx', degrees=degrees)
+        return eular
 
 class Rotation:
     def __init__(self) -> None:

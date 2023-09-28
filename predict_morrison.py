@@ -19,19 +19,49 @@ from posture_6d.data.dataset_format import Mix_VocFormat
 
 if __name__ == "__main__":
     cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
-    setup_paras = load_yaml(cfg_file)["setup"]
+    # setup_paras = load_yaml(cfg_file)["setup"]
 
-    sys = platform.system()
-    if sys == "Windows":
-        batch_size = 4
-        # model = torch.nn.DataParallel(model)
-    elif sys == "Linux":
-        batch_size = 32 # * torch.cuda.device_count()
-        # model = torch.nn.DataParallel(model)
-    setup_paras["sub_data_dir"] = "morrison_mix/"
-    setup_paras["ldt_branches"] = {0: "20230909124109branch_ldt_00.pt"}
-    setup_paras["batch_size"] = batch_size
+    # sys = platform.system()
+    # if sys == "Windows":
+    #     batch_size = 4
+    #     # model = torch.nn.DataParallel(model)
+    # elif sys == "Linux":
+    #     batch_size = 32 # * torch.cuda.device_count()
+    #     # model = torch.nn.DataParallel(model)
+    # setup_paras["sub_data_dir"] = "morrison_mix/"
+    # setup_paras["ldt_branches"] = {0: "20230923080858branch_ldt_00.pt"}
+    # setup_paras["batch_size"] = batch_size
 
-    predictor = setup("predict", **setup_paras)
-    predictor.predict_val()
+    # predictor = setup("predict", 
+    #     detection_base_weight=f"{WEIGHTS_DIR}/morrison_mix_single/best.pt" ,
+    #     **setup_paras)
+    # dataset:Mix_VocFormat = predictor.train_dataset.vocformat
+    # dataset.spliter_group.set_cur_spliter_name("posture")
+    # predictor.predict_val()
 
+    for i in range(0,1):
+        setup_paras = load_yaml(cfg_file)["setup"]
+
+        sys = platform.system()
+        if sys == "Windows":
+            batch_size = 4
+            # model = torch.nn.DataParallel(model)
+        elif sys == "Linux":
+            batch_size = 32 # * torch.cuda.device_count()
+            # model = torch.nn.DataParallel(model)
+        setup_paras["ldt_branches"] = {i: "20230923080858branch_ldt_00.pt"}
+        setup_paras["batch_size"] = batch_size
+        setup_paras["sub_data_dir"] = f"morrison_mix_single/{str(i).rjust(6, '0')}"
+
+        predictor = setup("predict",
+                        detection_base_weight=f"{WEIGHTS_DIR}/morrison_mix_single/best.pt" ,
+                         **setup_paras)
+        predictor.train_dataset.vocformat.spliter_group.set_cur_spliter_name("posture")
+        format:Mix_VocFormat = predictor.train_dataset.vocformat
+        # format.posture_spliter.set_split_mode(f"obj_{str(i).rjust(2, '0')}")
+        # format.gen_posture_log(0.5)
+        # trainer.train_dataset.vocformat.spliter_group.copyto(os.path.join(setup_paras["server_dataset_dir"], "morrison_mix_single", "ImageSets"))
+        predictor.predict_val()
+
+
+        predictor = None

@@ -7,6 +7,7 @@ import open3d as o3d
 import cv2
 import matplotlib.pyplot as plt
 import os
+from scipy.optimize import fsolve
 from typing import Union, Iterable, TypeVar, Callable
 
 from .data.mesh_manager import MeshMeta
@@ -192,7 +193,7 @@ def cvt_by_intr(image:np.ndarray,
     return result_image
 
 @ignore_viewmeta_warning
-def calc_viewmeat_by_base(viewmeta:ViewMeta, mesh_dict:dict[int, MeshMeta], cover = False):
+def calc_viewmeta_by_base(viewmeta:ViewMeta, mesh_dict:dict[int, MeshMeta], cover = False):
 
     def _calc_in_loop(keys:list[int], mesh_dict:dict[int, MeshMeta], postures:dict[int, Posture], camera_intr:CameraIntr, func:Callable):
         _dict = {}
@@ -226,7 +227,7 @@ def calc_viewmeat_by_base(viewmeta:ViewMeta, mesh_dict:dict[int, MeshMeta], cove
             visib_fract_dict[key] = visib_fract
 
         if cover or viewmeta.masks is None:
-            viewmeta.masks = masks_dict
+            viewmeta.visib_fract = masks_dict
         if cover or viewmeta.visib_fract is None:
             viewmeta.visib_fract = visib_fract_dict
 
@@ -243,6 +244,24 @@ def calc_viewmeat_by_base(viewmeta:ViewMeta, mesh_dict:dict[int, MeshMeta], cove
     if cover or viewmeta.labels is None:
         viewmeta.labels = _calc_in_loop(visible_ids, mesh_dict, postures_dict, camera_intr, calc_bbox_2d_proj)
 
+def calc_Z_rot_angle_to_horizontal(T_ex) -> np.ndarray:
+    Z_axis = np.array([0, 0, 1.0])
+    Z_axis = Z_axis / np.linalg.norm(Z_axis)
+    R_ex = T_ex[:3, :3]
+    def func(theta):
+        rvec = theta * Z_axis
+        R = cv2.Rodrigues(rvec)[0]
+        return sum((R_ex @ R @ np.array([1,0,0])) * np.array([0,0,1]))
+    init_values = [func(x) for x in np.linspace(0, 2*np.pi, 36)]
+    init_arg = np.linspace(0, 2*np.pi, 36)[np.argmin(np.abs(init_values))]
+    theta = float(fsolve(func, init_arg))
+
+    rvec = theta * Z_axis
+    R = cv2.Rodrigues(rvec)[0]
+    new_R_y = R_ex @ R @ np.array([0,1,0])
+    if new_R_y[2] > 0:
+        theta = theta + np.pi
+    return theta
 
 class PnPSolver():
     '''

@@ -14,6 +14,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from models.OLDT import OLDT
+from models.loss import LandmarkLoss
 from models.results import LandmarkDetectionResult, ImagePosture, compare_image_posture
 from post_processer.PostProcesser import PostProcesser, \
     create_pnpsolver, create_model_manager
@@ -233,6 +234,8 @@ class OLDTPredictor(Launcher):
 
         self.logger = BaseLogger(self.log_dir)
         self.logger.log(cfg_file)
+
+        self.loss = LandmarkLoss(cfg_file)
 
     @Launcher.timing(-1)
     def preprocess(self, inputs:Union[list[ImagePosture], np.ndarray, Iterable[np.ndarray]]) -> list[cv2.Mat]:

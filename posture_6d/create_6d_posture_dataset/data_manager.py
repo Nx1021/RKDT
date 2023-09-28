@@ -67,7 +67,7 @@ class EnumElements(Elements[CommonData, Any]):
     def enums(self):
         return self.dataset_node.std_meshes_names
 
-    def format_path(self, enum:Union[str, int], appdir="", appname="", **kw):
+    def format_path(self, enum:Union[str, int], subdir="", appname="", **kw):
         if isinstance(enum, (np.intc, np.integer)):
             enum = int(enum)
         if not appname:
@@ -81,7 +81,7 @@ class EnumElements(Elements[CommonData, Any]):
         else:
             assert isinstance(enum, int), "enum must be int when appname is not empty"
             data_i = enum
-        return super().format_path(data_i, appdir, appname, **kw)
+        return super().format_path(data_i, subdir, appname, **kw)
     
     def dulmap_id_name(self, enum:Union[str, int]):
         if isinstance(enum, int):
@@ -195,8 +195,8 @@ class DataRecorder(CommonData[FrameMeta]):
             self.inc_idx()
             
     def get_category_idx(self, data_i):
-        appdir = self.rgb_elements.auto_path(data_i, return_app=True)[-2]
-        return self.category_names.index(appdir)
+        subdir = self.rgb_elements.auto_path(data_i, return_app=True)[-2]
+        return self.category_names.index(subdir)
 
     def read_one(self, data_i) -> FrameMeta:
         super().read_one(data_i)
@@ -224,10 +224,10 @@ class DataRecorder(CommonData[FrameMeta]):
                 yield category_idx, framemeta
 
     def _write_elements(self, data_i: int, framemeta: FrameMeta):
-        appdir = self.category_names[self.__categroy_index]
-        self.rgb_elements.write(data_i,    framemeta.color,   appdir=appdir)
-        self.depth_elements.write(data_i,  framemeta.depth, appdir=appdir)
-        self.trans_elements.write(data_i,  framemeta.trans_mat_Cn2C0, appdir=appdir)
+        subdir = self.category_names[self.__categroy_index]
+        self.rgb_elements.write(data_i,    framemeta.color,   subdir=subdir)
+        self.depth_elements.write(data_i,  framemeta.depth, subdir=subdir)
+        self.trans_elements.write(data_i,  framemeta.trans_mat_Cn2C0, subdir=subdir)
         ### ADD    
         self.AddNum += 1
 
@@ -236,7 +236,7 @@ class DataRecorder(CommonData[FrameMeta]):
         data_i = self.data_i_upper
         self.write_one(data_i, framemeta)
 
-    def delete(self, delete_list:list, change_file = True):
+    def remove(self, remove_list:list, change_file = True):
         pass
 
     def insert(self, insert_list:list, change_file = True):
@@ -315,9 +315,9 @@ class ModelManager(CommonData):
 
         self.process_data = ProcessData(self, register = False)
     
-    def read_one(self, data_i, appdir="", appname="") -> ViewMeta:
+    def read_one(self, data_i, subdir="", appname="") -> ViewMeta:
         warn("the file might be too large to read, only the paths are returned", ClusterNotRecommendWarning)
-        return self.get_element_paths_of_one(data_i, appdir, appname)
+        return self.get_element_paths_of_one(data_i, subdir, appname)
     
     def write_one(self, data_i, data: Any, *arg, **kwargs):
         warn("can not write", ClusterNotRecommendWarning)
