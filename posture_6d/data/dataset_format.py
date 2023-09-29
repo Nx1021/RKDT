@@ -1285,7 +1285,7 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
         def erase_cache(self):
             self["cache"] = None
 
-        def clear_notfound(self, idx):
+        def clear_notfound(self):
             new_appnames = []
             for i, e in enumerate(self["file_exist"]):
                 if e:
@@ -1329,7 +1329,7 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
         def add_appname(self, data_i, appname):
             self[data_i].add_file(appname)
 
-        def rebuild(self, ignore_notfound = False):
+        def rebuild(self, ignore_notfound = False, cache_priority = True):
             paths = glob.glob(os.path.join(self.directory, "**/*" + self.elements.suffix), recursive=True)
             for path in paths:
                 data_i, subdir, appname = Elements.parse_path(self.directory, path)
@@ -1337,7 +1337,9 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
                 self.add_appname(data_i, appname)
             for data_i, info in dict(self).items():
                 info.refresh_has_file(self.elements, data_i)
-                if info.empty:
+                if cache_priority and info.empty:
+                    self.pop(data_i)
+                elif not cache_priority and info.has_notfound:
                     self.pop(data_i)
                 if info.has_notfound:
                     if ignore_notfound:
@@ -1450,7 +1452,10 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
             for name in src_appnames:
                 src_path = self.cluster.format_path(src, src_dir, name)
                 dst_path = self.cluster.format_path(dst, src_dir, name)
-                shutil.move(src_path, dst_path)
+                try:
+                    shutil.move(src_path, dst_path)
+                except:
+                    pass
             info = self.cluster._data_info_map.pop(src)
             self.cluster._data_info_map.update({dst: info})
             
@@ -2519,6 +2524,8 @@ class DatasetNode(InstanceRegistry, WriteController, ABC, Generic[DCT, VDST]):
                 start = 0
             if step is None:
                 step = 1
+            if stop is None:
+                stop = self.data_i_upper
             stop = min(stop, self.data_i_upper)
             def g():
                 for i in range(start, stop, step):
@@ -2920,6 +2927,7 @@ class VocFormat(PostureDatasetFormat):
             return labels         
         
         def _write_format(self, labels: np.ndarray, image_size = None):
+            labels = labels.astype(np.float32)
             if image_size is not None:
                 bbox_2d = labels[:,1:].astype(np.float32) #[cx, cy, w, h]
                 bbox_2d = VocFormat._x1y1x2y2_2_normedcxcywh(bbox_2d, image_size)
@@ -3125,6 +3133,35 @@ class VocFormat(PostureDatasetFormat):
         viewmeta.set_element(ViewMeta.VISIB_FRACT, visib_fract_dict)
 
         return viewmeta
+
+    def remove_one(self, data_i, *args, **kwargs):
+        for c in self.clusters:
+            c.remove(data_i, None)
+        for spliter in self.spliter_group.clusters:
+            result_keys = spliter.split_table.qurey(data_i, True)
+            for row, col in result_keys:
+                spliter.split_table[row, col].remove(data_i)
+            spliter.save()
+
+    def make_continuous(self):
+        row_names = self.data_overview_table.row_names
+        for i, data_i in enumerate(row_names):
+            for c in self.clusters:
+                if data_i != i:
+                    c.move(data_i, i)
+            for spliter in self.spliter_group.clusters:
+                result_keys = spliter.split_table.qurey(data_i, True)
+                for row, col in result_keys:
+                    _list = spliter.split_table[row, col]
+                    _list.remove(data_i)
+                    _list.append(i)
+        for c in self.clusters:
+            c:Elements = c
+            c.save_data_info_map()
+        for spliter in self.spliter_group.clusters:
+            spliter.save()
+
+
 
     def save_elements_data_info_map(self):
         if self.labels_elements.default_image_size is not None:
@@ -3611,7 +3648,7 @@ class SpliterGroup(DatasetNode[Spliter, VDST]):
         self.cluster_map:_ClusterMap[Spliter] = self.cluster_map
 
     def _init_clusters(self):
-        self.__spliter_name_list = remove_duplicates(self.__spliter_name_list + os.listdir(self.split_subdir))
+        self.__spliter_name_list = remove_duplicates(self.__spliter_name_list)# + os.listdir(self.split_subdir))
         _spliter_list:list = [Spliter(self, m, register=True) for m in self.__spliter_name_list]
         return super()._init_clusters()
 

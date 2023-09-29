@@ -256,7 +256,7 @@ class Trainer(Launcher):
             self.cur_epoch = epoch
             tqdm.write('\nEpoch {} start...'.format(self.cur_epoch))
             # 训练阶段
-            # train_loss = self.train_one_epoch(train_dataloader)
+            train_loss = self.train_one_epoch(train_dataloader)
 
             # 验证阶段
             val_loss = self.val_one_epoch(val_dataloader)

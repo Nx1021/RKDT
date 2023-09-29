@@ -1,4 +1,4 @@
-from __init__ import CFG_DIR, SCRIPT_DIR, WEIGHTS_DIR, DATASETS_DIR
+from __init__ import CFG_DIR, SCRIPT_DIR, WEIGHTS_DIR, DATASETS_DIR, SERVER_DATASET_DIR
 import launcher
 from launcher.setup import setup
 from models import yolo8_patch
@@ -10,8 +10,18 @@ from posture_6d.data.dataset_format import Mix_VocFormat
 import os
 
 if __name__ == "__main__":
+    # vm = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_single/000000")
+    # vm.images_elements.cache_priority = False
+    # vm.depth_elements.cache_priority = False
+    # vm.masks_elements.cache_priority = False
+    # vm.labels_elements.cache_priority = False
+    # vm.copyto(f"{SERVER_DATASET_DIR}/morrison_mix_single/000000")
+
     yolo_cfg_file = f"{CFG_DIR}/yolo_morrison_mix_single.yaml"
-    cfg = load_yaml(yolo_cfg_file)
+    # dataset_cfg = f"{DATASETS_DIR}/morrison_mix_single.yaml"
+    # cfg = load_yaml(dataset_cfg)
+    # cfg["path"] = f"{SERVER_DATASET_DIR}/morrison_mix_single"
+    # dump_yaml(dataset_cfg, cfg)
     # dataset_cfg = load_yaml(data_cfg_file)
     # weights_copy_path = yolo_weight_path#os.path.join(WEIGHTS_DIR, DATASET, SERIAL + "_best.pt")
     # TASK_MAP['detect'][1] = yolo8_patch.get_MyTrainer(weights_copy_path)

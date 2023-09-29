@@ -1,4 +1,4 @@
-from __init__ import SCRIPT_DIR, DATASETS_DIR, WEIGHTS_DIR, CFG_DIR, _get_sub_log_dir
+from __init__ import SCRIPT_DIR, DATASETS_DIR, WEIGHTS_DIR, CFG_DIR, _get_sub_log_dir, SERVER_DATASET_DIR
 import matplotlib.pyplot as plt
 import torch
 import platform
@@ -46,7 +46,7 @@ def clear_log():
     print("{} invalid logs cleared".format(len(to_remove)))
 
 USE_DATA_IN_SERVER = True
-SERVER_DATASET_DIR = "/home/nerc-ningxiao/datasets/morrison"
+
 
 if __name__ == "__main__":
     sys = platform.system()

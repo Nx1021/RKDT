@@ -14,6 +14,7 @@ CFG_DIR         = f"{SCRIPT_DIR}/cfg"
 DATASETS_DIR    = f"{SCRIPT_DIR}/datasets"
 LOGS_DIR        = f"{SCRIPT_DIR}/logs"
 WEIGHTS_DIR     = f"{SCRIPT_DIR}/weights"
+SERVER_DATASET_DIR = "/home/nerc-ningxiao/datasets"
 
 def _get_sub_log_dir(type):
     return f"{LOGS_DIR}/{type.__name__}_logs/"

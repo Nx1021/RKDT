@@ -370,7 +370,7 @@ class LandmarkBranch(nn.Module):
 
         self.position_embedding = PositionEmbeddingSine(int(self.transformer.d_model/2), 24*24) ###TODO###
         self.query_embed = nn.Embedding(self.num_queries, hidden_dim).to("cuda")
-        self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1, device="cuda") ###TODO###
+        self.input_proj = nn.Conv2d(320, hidden_dim, kernel_size=1, device="cuda") ###TODO###
         self.aux_loss = aux_loss
 
     def forward(self, roi_feature:Tensor, masks:Tensor):

@@ -2,7 +2,7 @@
 # 在子类指定了Generic的类型后，其类型被绑定，子类的子类无法再修改已经绑定的TypeVar
 # 如果子类未绑定，则可以在子类的子类再指定
 from __init__ import DATASETS_DIR, CFG_DIR
-from MyLib.posture_6d.data.dataset_format import VocFormat, Mix_VocFormat, Spliter
+from posture_6d.data.dataset_format import VocFormat, Mix_VocFormat, Spliter
 
 # from gen_mixed_linemod import MixLinemod_VocFormat
 # from posture_6d.data.mesh_manager import MeshManager
@@ -15,10 +15,10 @@ from MyLib.posture_6d.data.dataset_format import VocFormat, Mix_VocFormat, Split
 # from gen_mixed_linemod import MixLinemod_VocFormat
 from posture_6d.data.mesh_manager import MeshManager
 # from posture_6d.data.viewmeta import ViewMeta
-from MyLib.posture_6d.core.utils import Table
-from MyLib.posture_6d.core.posture import Posture
-from MyLib.posture_6d.core import CameraIntr
-from MyLib.posture_6d.derive import calc_bbox_2d_proj, calc_Z_rot_angle_to_horizontal
+from posture_6d.core.utils import Table
+from posture_6d.core.posture import Posture
+from posture_6d.core import CameraIntr
+from posture_6d.derive import calc_bbox_2d_proj, calc_Z_rot_angle_to_horizontal
 import numpy as np
 import cv2
 from tqdm import tqdm
@@ -99,9 +99,37 @@ from abc import ABC, abstractmethod
 # # TODO 建立split和data_i_map的关系
 
 vm = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_single/000000")
+# vm2 = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_single_test/000000")
+vm.labels_elements.default_image_size = (640, 480)
+# vm2.labels_elements.default_image_size = (640, 480)
+with vm.writer.allow_overwriting():
+    for data_i, v in vm.items():
+        bbox = v.labels
+        masks = v.masks
+        color = v.color
+        # 排除黑色区域，重新计算mask
+        for i, mask in masks.items():
+            visib = v.visib_fract[i]
+            if np.sum(mask) == 0 or visib == 0:
+                continue
+            bin_color = np.zeros(color.shape[:2], np.uint8)
+            gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+            bin_color[gray > 30] = 1
+            valid_mask = bin_color * mask
 
-for v in vm:
-    v.plot()
+            orig_pixel_num = np.sum(mask) / visib
+            new_visib = np.sum(valid_mask) / orig_pixel_num
+
+            v.masks[i] = valid_mask
+            v.visib_fract[i] = new_visib
+
+        v.labels = v.calc_bbox2d_from_mask(v.masks)
+        
+        subdir = vm.images_elements.data_info_map[data_i].dir
+        vm.masks_elements.write(data_i, v.masks, subdir=subdir)
+        vm.visib_fract_elements.write(data_i, v.visib_fract, subdir=subdir)
+        vm.labels_elements.write(data_i, v.labels, subdir=subdir)
+
 # vm_test = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_test")
 # for c in vm_test.clusters:
 #     c._update_cluster_all()
