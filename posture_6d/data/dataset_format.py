@@ -98,8 +98,8 @@ class WriteController(ABC):
             return False
         else:
             self.is_writing = True
-            with open(self.get_writing_mark_file(), 'w'):
-                pass
+            # with open(self.get_writing_mark_file(), 'w'):
+            #     pass
             return True
 
     def stop_writing(self):
@@ -827,7 +827,7 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT, D
                         if overwrited and log_type == self.LOG_APPEND:
                             log_type = self.LOG_CHANGE
                         self._update_cluster_inc(iometa, data_i, value, *args, **kwargs)
-                        self.log_to_mark_file(log_type, data_i, value)
+                        # self.log_to_mark_file(log_type, data_i, value)
                 
                 if write_error:
                     warnings.warn(f"{self.__class__.__name__}:{self.sub_dir} \

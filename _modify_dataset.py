@@ -55,75 +55,95 @@ import glob
 #         if sub_dirs[i] != dict_[n]["dir"]:
 #             p = paths[i]
 #             os.remove(p)
+# for obj_i in range(2,9):
+#     # obj_i = 1
+#     vm = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_single/{str(obj_i).rjust(6, '0')}")
+#     for c in vm.elements_map.values():
+#         c._data_info_map.clear()
+#         c._data_info_map.rebuild(True, False)
+#         c.save_data_info_map()
+#     vm.labels_elements.default_image_size = (640, 480)
+#     #### 1
+#     with vm.writer.allow_overwriting():
+#         for data_i, v in vm.items():
+#             # bbox = v.labels
+#             masks = v.masks
+#             color = v.color
+#             # 排除黑色区域，重新计算mask
+#             for i, mask in masks.items():
+#                 visib = v.visib_fract[i]
+#                 if np.sum(mask) == 0 or visib == 0:
+#                     continue
+#                 bin_color = np.zeros(color.shape[:2], np.uint8)
+#                 gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+#                 bin_color[gray > 30] = 1
+#                 valid_mask = bin_color * mask
 
-obj_i = 0
-vm = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_single/000000")
-vm.labels_elements.default_image_size = (640, 480)
-#### 1
-# vm.labels_elements.default_image_size = (640, 480)
-# with vm.writer.allow_overwriting():
-#     for data_i, v in vm.items():
-#         # bbox = v.labels
-#         masks = v.masks
-#         color = v.color
-#         # # 排除黑色区域，重新计算mask
-#         # for i, mask in masks.items():
-#         #     visib = v.visib_fract[i]
-#         #     if np.sum(mask) == 0 or visib == 0:
-#         #         continue
-#         #     bin_color = np.zeros(color.shape[:2], np.uint8)
-#         #     gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
-#         #     bin_color[gray > 30] = 1
-#         #     valid_mask = bin_color * mask
+#                 orig_pixel_num = np.sum(mask) / visib
+#                 new_visib = np.sum(valid_mask) / orig_pixel_num
 
-#         #     orig_pixel_num = np.sum(mask) / visib
-#         #     new_visib = np.sum(valid_mask) / orig_pixel_num
+#                 v.masks[i] = valid_mask
+#                 v.visib_fract[i] = new_visib
 
-#         #     v.masks[i] = valid_mask
-#         #     v.visib_fract[i] = new_visib
-
-#         v.labels = v.calc_bbox2d_from_mask(v.masks)
-        
-#         subdir = vm.images_elements.data_info_map[data_i].dir
-#         # vm.masks_elements.write(data_i, v.masks, subdir=subdir)
-#         # vm.visib_fract_elements.write(data_i, v.visib_fract, subdir=subdir)
-#         vm.labels_elements.write(data_i, v.labels, subdir=subdir)
+#             v.labels = v.calc_bbox2d_from_mask(v.masks)
+            
+#             subdir = vm.images_elements.data_info_map[data_i].dir
+#             vm.masks_elements.write(data_i, v.masks, subdir=subdir)
+#             vm.visib_fract_elements.write(data_i, v.visib_fract, subdir=subdir)
+#             vm.labels_elements.write(data_i, v.labels, subdir=subdir)
 
 
-### 2
-# to_remove = []
-# for data_i, visib in vm.visib_fract_elements.items():
-#     if obj_i not in visib:
-#         to_remove.append(data_i)
-#     elif visib[obj_i] < 0.7:
-#         to_remove.append(data_i)
+#     ## 2
+#     to_remove = []
+#     for data_i, visib in vm.visib_fract_elements.items():
+#         if obj_i not in visib:
+#             to_remove.append(data_i)
+#         elif visib[obj_i] < 0.7:
+#             to_remove.append(data_i)
 
-# with vm.writer.allow_overwriting():
-#     for data_i in to_remove:
-#         vm.remove_one(data_i)
+#     with vm.writer.allow_overwriting():
+#         for data_i in to_remove:
+#             vm.remove_one(data_i)
 
-# for c in vm.elements_map.values():
-#     # c._data_info_map.rebuild(True, False)
-#     c.save_data_info_map()
+#     for c in vm.elements_map.values():
+#         # c._data_info_map.rebuild(True, False)
+#         c.save_data_info_map()
 
-# for i in range(len(vm.data_overview_table.row_names)):
-#     if i not in vm.masks_elements.data_info_map:
-#         vm.data_overview_table.remove_row(i)
-# vm.save_overview()
+#     for i in range(len(vm.data_overview_table.row_names)):
+#         if i not in vm.masks_elements.data_info_map:
+#             vm.data_overview_table.remove_row(i)
+#     vm.save_overview()
 
-### 3
-# with vm.writer.allow_overwriting():
-#     vm.make_continuous()
-# vm.labels_elements.continuous
+#     ## 3
+#     with vm.writer.allow_overwriting():
+#         vm.make_continuous()
+#     vm.labels_elements.continuous
 
-vm.save_elements_data_info_map()
+#     vm.save_elements_data_info_map()
 
-### 4
-# for c in vm.elements_map.values():
-#     c._data_info_map.clear()
-#     c._data_info_map.rebuild(True, False)
-# for v in vm[::500]:
-#     v.plot()
-#     plt.show()
+#     ### 4
+#     # for c in vm.elements_map.values():
+#     #     c._data_info_map.clear()
+#     #     c._data_info_map.rebuild(True, False)
+#     # for v in vm[::500]:
+#     #     v.plot()
+#     #     plt.show()
 
-# print(1)
+#     # print(1)
+
+
+for obj_i in range(9):
+    vm = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_single/{str(obj_i).rjust(6, '0')}")
+    vm.init_overview()
+    vm.save_overview()
+    vm_iso = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_iso/{str(obj_i).rjust(6, '0')}")
+    with vm_iso.writer.allow_overwriting():
+        for data_i, v in vm.items():
+            ## 孤立指定的物体
+            for pn in ViewMeta.PARA_NAMES:
+                attr = getattr(v, pn)
+                if isinstance(attr, dict):
+                    setattr(v, pn, {obj_i: attr[obj_i]})
+            vm_iso.write_one(data_i, v)
+        vm_iso.save_elements_data_info_map()
+            ##

@@ -48,7 +48,7 @@ if __name__ == "__main__":
         elif sys == "Linux":
             batch_size = 32 # * torch.cuda.device_count()
             # model = torch.nn.DataParallel(model)
-        setup_paras["ldt_branches"] = {i: "20230923080858branch_ldt_00.pt"}
+        setup_paras["ldt_branches"] = {i: ""}
         setup_paras["batch_size"] = batch_size
         setup_paras["sub_data_dir"] = f"morrison_mix_single/{str(i).rjust(6, '0')}"
 
@@ -56,7 +56,7 @@ if __name__ == "__main__":
                         detection_base_weight=f"{WEIGHTS_DIR}/morrison_mix_single/best.pt" ,
                          **setup_paras)
         trainer.train_dataset.vocformat.spliter_group.set_cur_spliter_name("posture")
-        format:Mix_VocFormat = trainer.train_dataset.vocformat
+        trainer.val_dataset.vocformat.spliter_group.set_cur_spliter_name("posture")
         # format.posture_spliter.set_split_mode(f"obj_{str(i).rjust(2, '0')}")
         # format.gen_posture_log(0.5)
         # trainer.train_dataset.vocformat.spliter_group.copyto(os.path.join(setup_paras["server_dataset_dir"], "morrison_mix_single", "ImageSets"))

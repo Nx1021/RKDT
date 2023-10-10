@@ -26,6 +26,7 @@ from .OLDTDataset import OLDTDataset, collate_fn
 from .BaseLauncher import Launcher, BaseLogger
 
 from utils.yaml import load_yaml
+from models.utils import tensor_to_numpy
 
 
 def match_roi(pred:ImagePosture, gt:ImagePosture) -> list[tuple[int, Posture, Posture]]:

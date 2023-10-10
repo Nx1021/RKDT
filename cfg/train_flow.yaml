@@ -1,21 +1,21 @@
 0:
   lr_func: warmup
-  lr:      0.000025
+  lr:      0.00005
   cfg:
     use_variable_tokennum: False
 40:
   lr_func: cosine
-  lr:      0.000025
+  lr:      0.00005
   cfg:
     use_variable_tokennum: False
 400:
   lr_func: warmup
-  lr:      0.000025
+  lr:      0.00005
   cfg:
     use_variable_tokennum: False
 440:
   lr_func: cosine
-  lr:      0.000025
+  lr:      0.00005
   cfg:
     use_variable_tokennum: False
 800:

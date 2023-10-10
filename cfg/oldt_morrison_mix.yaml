@@ -25,7 +25,7 @@ setup:
 ### landmark detect settings
 max_token_num: 784
 pool_size: [24, 24]
-use_variable_tokennum: true
+use_variable_tokennum: false
 normalize_before: false
 landmark_num: 24
 decoder_num_queries: 96

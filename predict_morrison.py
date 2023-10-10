@@ -18,7 +18,8 @@ from utils.yaml import load_yaml, dump_yaml
 from posture_6d.data.dataset_format import Mix_VocFormat
 
 if __name__ == "__main__":
-    cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
+    # cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
+    cfg_file = f"{CFG_DIR}/oldt_morrison_mix_single.yaml"
     # setup_paras = load_yaml(cfg_file)["setup"]
 
     # sys = platform.system()
@@ -49,7 +50,7 @@ if __name__ == "__main__":
         elif sys == "Linux":
             batch_size = 32 # * torch.cuda.device_count()
             # model = torch.nn.DataParallel(model)
-        setup_paras["ldt_branches"] = {i: "20230923080858branch_ldt_00.pt"}
+        setup_paras["ldt_branches"] = {i: "20231006050449branch_ldt_00.pt"}
         setup_paras["batch_size"] = batch_size
         setup_paras["sub_data_dir"] = f"morrison_mix_single/{str(i).rjust(6, '0')}"
 
@@ -57,11 +58,11 @@ if __name__ == "__main__":
                         detection_base_weight=f"{WEIGHTS_DIR}/morrison_mix_single/best.pt" ,
                          **setup_paras)
         predictor.train_dataset.vocformat.spliter_group.set_cur_spliter_name("posture")
-        format:Mix_VocFormat = predictor.train_dataset.vocformat
+        predictor.val_dataset.vocformat.spliter_group.set_cur_spliter_name("posture")
         # format.posture_spliter.set_split_mode(f"obj_{str(i).rjust(2, '0')}")
         # format.gen_posture_log(0.5)
         # trainer.train_dataset.vocformat.spliter_group.copyto(os.path.join(setup_paras["server_dataset_dir"], "morrison_mix_single", "ImageSets"))
-        predictor.predict_val()
+        predictor.predict_val(plot_outlier = False)
 
 
         predictor = None
