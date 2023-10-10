@@ -475,7 +475,7 @@ class LandmarkLoss(nn.Module):
         restore = restore.unsqueeze(1).unsqueeze(1) #[match_num, 1, 1, 2]
         out_coord = out_coord * restore
         tgt_coord = tgt_coord * restore
-
+        
         # 距离损失
         dist_loss  = torch.mean(torch.norm(out_coord - tgt_coord, dim = -1), dim=(-1)) #[match_num, output_num]
         ### 分类损失

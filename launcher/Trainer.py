@@ -16,6 +16,7 @@ import numpy as np
 from models.OLDT import OLDT
 from models.loss import LandmarkLossRecorder, LandmarkLoss
 from models.results import ImagePosture, GtResult, PredResult, MatchedRoi
+from models.utils import tensor_to_numpy
 from .OLDTDataset import transpose_data
 from .OLDTDataset import collate_fn
 from .BaseLauncher import BaseLogger, Launcher

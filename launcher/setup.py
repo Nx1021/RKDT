@@ -39,7 +39,8 @@ def setup(
         use_data_on_server = True, 
         flow_file:str = f"train_flow.yaml",
         server_dataset_dir = "",
-        remark = ""):
+        remark = "",
+        detection_base_weight = None):
     ### input check
     if isinstance(dataset_format, str):
         _globals = globals()
@@ -63,7 +64,10 @@ def setup(
     DATASET, SERIAL = os.path.split(sub_data_dir)
     cfg_file = f"{CFG_DIR}/oldt_{DATASET}.yaml"
     data_cfg_file = f"{DATASETS_DIR}/{DATASET}.yaml"
-    yolo_weight_path = concat_weight_path(DATASET, SERIAL)  
+    if detection_base_weight is not None:
+        yolo_weight_path = detection_base_weight
+    else:
+        yolo_weight_path = concat_weight_path(DATASET, SERIAL)  
     if not os.path.exists(cfg_file) or\
         not os.path.exists(data_cfg_file) or\
         not (os.path.exists(yolo_weight_path) or mode == "detection"):
@@ -90,10 +94,13 @@ def setup(
             assert os.path.exists(local_full_data_dir), f"local data dir {local_full_data_dir} not exist"
             print(f"copy data to the server: {server_full_data_dir}, it may take a while...")
             voc:VocFormat = dataset_format(local_full_data_dir)
-            voc.set_elements_cachemode(True)
-            voc.labels_elements.cache_mode = False
+            voc.set_elements_cache_priority(True)
+            voc.labels_elements.cache_priority = False
+            voc.images_elements.cache_priority = False
+            voc.depth_elements.cache_priority = False
+            voc.masks_elements.cache_priority = False
             voc.copyto(server_full_data_dir, cover=True)
-            # voc.labels_elements.cache_mode = False
+            # voc.labels_elements.cache_priority = False
             # voc.labels_elements.copyto(os.path.join(server_full_data_dir, 
             #                                         voc.labels_elements.sub_dir), cover = True)
             # shutil.copytree(local_full_data_dir, server_full_data_dir)
@@ -109,8 +116,9 @@ def setup(
         ### setup model
         train_dataset = OLDTDataset(data_folder, "train", dataset_format) 
         val_dataset = OLDTDataset(data_folder, "val", dataset_format)
-        train_dataset.vocformat.set_elements_cachemode(True)
-        val_dataset.vocformat.set_elements_cachemode(True)
+        train_dataset.vocformat.spliter_group
+        train_dataset.vocformat.set_elements_cache_priority(True)
+        val_dataset.vocformat.set_elements_cache_priority(True)
 
         model = OLDT(yolo_weight_path, cfg_file, list(ldt_branches.keys()))  
         for load_brach_i, load_from in ldt_branches.items():
@@ -162,10 +170,13 @@ def setup(
         yolo_cfg_file = f"{CFG_DIR}/yolo_{DATASET}.yaml"
         cfg = load_yaml(yolo_cfg_file)
         dataset_cfg = load_yaml(data_cfg_file)
-        weights_copy_path = yolo_weight_path#os.path.join(WEIGHTS_DIR, DATASET, SERIAL + "_best.pt")
+        weights_copy_path = yolo_weight_path #os.path.join(WEIGHTS_DIR, DATASET, SERIAL + "_best.pt")
         TASK_MAP['detect'][1] = yolo8_patch.get_MyTrainer(weights_copy_path)
 
-        model = YOLO(f"{SCRIPT_DIR}/weights/yolov8l.pt")  # load a pretrained model (recommended for training)
+        if detection_base_weight is None:
+            detection_base_weight = f"{SCRIPT_DIR}/weights/yolov8l.pt"
+
+        model = YOLO(detection_base_weight)  # load a pretrained model (recommended for training)
         model.train(cfg = yolo_cfg_file)  # train the model
 
 

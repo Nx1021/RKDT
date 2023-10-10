@@ -14,15 +14,16 @@ CFG_DIR         = f"{SCRIPT_DIR}/cfg"
 DATASETS_DIR    = f"{SCRIPT_DIR}/datasets"
 LOGS_DIR        = f"{SCRIPT_DIR}/logs"
 WEIGHTS_DIR     = f"{SCRIPT_DIR}/weights"
+SERVER_DATASET_DIR = "/home/nerc-ningxiao/datasets"
 
 def _get_sub_log_dir(type):
     return f"{LOGS_DIR}/{type.__name__}_logs/"
 
 try:
     import MyLib.posture_6d
-    sys.path.insert(0, MyLib.__path__[0])
-    shutil.rmtree(f"{SCRIPT_DIR}/posture_6d")
-    shutil.copytree(MyLib.posture_6d.__path__[0], f"{SCRIPT_DIR}/posture_6d")
+    # sys.path.insert(0, MyLib.__path__[0])
+    # shutil.rmtree(f"{SCRIPT_DIR}/posture_6d")
+    # shutil.copytree(MyLib.posture_6d.__path__[0], f"{SCRIPT_DIR}/posture_6d")
 except ModuleNotFoundError:
     pass
 

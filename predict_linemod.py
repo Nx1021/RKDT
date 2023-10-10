@@ -28,8 +28,8 @@ if __name__ == "__main__":
     elif sys == "Linux":
         batch_size = 32 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
-    setup_paras["sub_data_dir"] = "linemod_mix/000003"
-    setup_paras["ldt_branches"] = {3: "20230817050741branch_ldt_03.pt"}
+    setup_paras["sub_data_dir"] = "linemod_mix/000006"
+    setup_paras["ldt_branches"] = {6: "20230823005717branch_ldt_06.pt"}
     setup_paras["batch_size"] = batch_size
 
     predictor = setup("predict", **setup_paras)

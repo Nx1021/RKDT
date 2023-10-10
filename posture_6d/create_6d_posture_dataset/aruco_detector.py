@@ -1284,7 +1284,7 @@ class ArucoDetector():
 #                Ts = np.array(Ts)
 #                if ok == 'y':
 #                     Ts = Ts[all_verified_index]
-#                     data_recorder.delete(all_not_verified_index)
+#                     data_recorder.remove(all_not_verified_index)
 #                ffr_0, ffr_1 = data_recorder.model_index_dict["global_base_frames"]
 #                base_frames_mean_error = frames_mean_error[:base_frames_end]
 #                if ffr_1 - ffr_0 > 1 and not if_2d:

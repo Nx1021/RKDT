@@ -859,7 +859,7 @@ class Capturing():
 #     gt_posture_computer = GtPostureComputer(folder)
 
 #     record_pipeline = RecordingPipeline(folder, data_recorder, rs_camera, gt_posture_computer)
-#     # record_pipeline.data_recorder.delete(list(range(421, 847)))
+#     # record_pipeline.data_recorder.remove(list(range(421, 847)))
 #     record_pipeline.data_recorder.add_skip_seg(len(record_pipeline.data_recorder.std_meshes_names) - 1)
     
 #     for mode, func in zip([Camera.MODE_CALI, Camera.MODE_DATA], [callback_CALI, callback_DATA]):

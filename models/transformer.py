@@ -359,7 +359,8 @@ class LandmarkBranch(nn.Module):
         self.num_queries = self.cfg["decoder_num_queries"]
         return_intermediate_dec = self.cfg["calc_intermediate"]
         normalize_before = self.cfg["normalize_before"] 
-        self.transformer = Transformer(256, activation="gelu", 
+        transformer_d = self.cfg["transformer_d"]
+        self.transformer = Transformer(transformer_d, activation="gelu", 
                                        return_intermediate_dec=return_intermediate_dec, 
                                        dropout=0.1, normalize_before=normalize_before) ###TODO###
         hidden_dim = self.transformer.d_model
@@ -369,7 +370,7 @@ class LandmarkBranch(nn.Module):
 
         self.position_embedding = PositionEmbeddingSine(int(self.transformer.d_model/2), 24*24) ###TODO###
         self.query_embed = nn.Embedding(self.num_queries, hidden_dim).to("cuda")
-        self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1, device="cuda") ###TODO###
+        self.input_proj = nn.Conv2d(320, hidden_dim, kernel_size=1, device="cuda") ###TODO###
         self.aux_loss = aux_loss
 
     def forward(self, roi_feature:Tensor, masks:Tensor):

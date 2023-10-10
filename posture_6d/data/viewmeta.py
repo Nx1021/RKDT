@@ -236,8 +236,8 @@ class ViewMeta():
 
         def _rotate(self, M:ndarray):
             new_trans_vector_info:dict[int, ndarray] = {}
-            angle = np.arccos(M[0,0]) ####
-            rot_Z_posture = Posture(rvec=[0, 0, -angle]) # 绕相机坐标系Z轴逆向旋转
+            angle = np.arctan2(M[1, 0], M[0, 0]) ####
+            rot_Z_posture = Posture(rvec=[0, 0, angle]) # 绕相机坐标系Z轴旋转
             for _id, vecs in self.obj.items():
                 org_posture = Posture(rvec=vecs[0], tvec=vecs[1])
                 new_posture = rot_Z_posture * org_posture
@@ -309,7 +309,7 @@ class ViewMeta():
                     proj_pixel_num = np.sum(mask.astype(np.bool_)) / visib # 不考虑任何遮挡和相机视野边界的像素数量
                     new_pixel_num = np.sum(new_masks[_id].astype(np.bool_))
                     vf = min(new_pixel_num / proj_pixel_num, 1)
-                    new_visib_fract.update({_id: vf})      
+                    new_visib_fract.update({_id: np.array(vf)})      
             return new_visib_fract 
 
         def _crop(self, crop_rect: ndarray):
@@ -483,9 +483,9 @@ class ViewMeta():
         ids = list(set(self.masks.keys()).union(set(self.visib_fract.keys())))
         visible_ids = ids.copy()
         for id_ in ids:
-            try: mask_cond = np.sum(self.masks[id_]) == 0
+            try: mask_cond = np.sum(self.masks[id_]) < self.masks[id_].shape[0] * self.masks[id_].shape[1] * 1e-4
             except: mask_cond = False
-            try: vf_cond = self.visib_fract[id_] == 0
+            try: vf_cond = self.visib_fract[id_] < 0.01
             except: vf_cond = False
             if mask_cond or vf_cond:
                 visible_ids.remove(id_)
@@ -502,8 +502,8 @@ class ViewMeta():
         modify_class_id(orig_dict_list, modify_class_id_pairs)
 
     def calc_by_base(self, mesh_dict:dict[int, MeshMeta], cover = False):
-        from ..derive import calc_viewmeat_by_base
-        calc_viewmeat_by_base(self, mesh_dict, cover)
+        from ..derive import calc_viewmeta_by_base
+        calc_viewmeta_by_base(self, mesh_dict, cover)
 
     @staticmethod
     def from_base_data( color: np.ndarray, 
@@ -537,31 +537,7 @@ class ViewMeta():
         ViewMeta.IGNORE_WARNING = False
         
         return value
-
-    def __set_element(self, ap_type:type, value, func = lambda x:x):
-        '''
-        ap_type: type of AugmentPipeline
-        value: Any
-        func: Callable
-        '''
-        matched_idx = self.__init_parameters_values.index(id(value))
-        key = self.__init_parameters_keys[matched_idx]
-        self.__init_parameters_keys.pop(matched_idx)
-        self.__init_parameters_values.pop(matched_idx)
-        # value = func(copy.deepcopy(value))
-        value = func(value) if value is not None else None
-        if isinstance(value, dict):
-            value = dict(sorted(value.items(), key=lambda x: x[0]))
-            new_ids = list(value.keys())
-            if len(self.ids):
-                self.ids = new_ids
-            elif self.ids != new_ids:
-                raise ValueError("ids must be same")
-        self.elements[key] = value
-        ### match ap_type with name
-        self._agmts_type.update({key: ap_type})
-        return value
-
+    
     @staticmethod
     def __reshape_array_in_dict(dictionary: dict[Any, ndarray], shape):
         if isinstance(dictionary, dict):
@@ -609,7 +585,7 @@ class ViewMeta():
         cam_K = self.intr
         center:tuple[float] = (cam_K[0,2], cam_K[1,2])
         # 获取旋转矩阵
-        M = cv2.getRotationMatrix2D(center, angle * 180/ np.pi, 1.0) # 角度制，旋转方向向外，与相机坐标系Z轴相反
+        M = cv2.getRotationMatrix2D(center, -angle * 180/ np.pi, 1.0) # 角度制，旋转方向向外，与相机坐标系Z轴相反
 
         return self.__augment("rotate", M)
 
@@ -668,6 +644,9 @@ class ViewMeta():
         if self.landmarks is not None:
             for ldmks in self.landmarks.values():
                 plt.scatter(ldmks[:,0], ldmks[:,1], c = 'g')
+                # plot the idx of landmarks
+                for idx, ldmk in enumerate(ldmks):
+                    plt.text(ldmk[0], ldmk[1], idx, verticalalignment='top')
         # bbox_3d
         if self.bbox_3d is not None:
             for bbox_3d in self.bbox_3d.values():
