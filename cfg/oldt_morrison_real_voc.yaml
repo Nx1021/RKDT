@@ -6,19 +6,19 @@ yolo_override:
   mode: predict  # YOLO mode, i.e. train, val, predict, export, track, benchmark
 
   # Train settings -------------------------------------------------------------------------------------------------------
-  model: E:\shared\code\OLDT/weights\morrison_mix_single\000000_best.pt                 # path to model file, i.e. yolov8n.pt, yolov8n.yaml
-  data: ./datasets/morrison_mix_single.yaml # path to data file, i.e. coco128.yaml
+  model: /home/nerc-ningxiao/share/code/OLDT/weights/morrison_real_voc/best.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
+  data: ./datasets/morrison_real_voc.yaml # path to data file, i.e. coco128.yaml
   verbose: false  # whether to print verbose output
 
 
 ### setup
 setup:
-  sub_data_dir: morrison_mix_single/000000
+  sub_data_dir: morrison_real_voc/
   ldt_branches:
-    0: 20231006050449branch_ldt_00.pt
-  batch_size: 4
+    4: 20231010114246branch_ldt_04.pt
+  batch_size: 32
   start_epoch: 1
-  dataset_format: Mix_VocFormat
+  dataset_format: VocFormat_6dPosture
   use_data_on_server: true
   flow_file: train_flow.yaml
   server_dataset_dir: /home/nerc-ningxiao/datasets/   # server dataset dir  

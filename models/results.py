@@ -7,7 +7,7 @@ from posture_6d.core.intr import CameraIntr
 
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import Any, Union, TypeVar, Generator, Iterable, Generic, Type
+from typing import Any, Union, TypeVar, Generator, Iterable, Generic, Type, Optional
 
 PLE = TypeVar('PLE')
 PL = TypeVar('PL', bound='PairedLists')
@@ -462,7 +462,7 @@ class LandmarkDetectionResult():
         return landmarks
     
 class ObjPosture():
-    def __init__(self, landmarks, bbox_n, class_id, image_size, posture:Posture=None):
+    def __init__(self, landmarks, bbox_n, class_id, image_size, posture:Optional[Posture]=None, stable:bool = True, name = ""):
         """
         初始化ObjPosture对象。
 
@@ -479,11 +479,18 @@ class ObjPosture():
         self.image_posture:ImagePosture = None
 
         self.image_size = image_size
+        self.stable = stable
+
+        self.name = name
 
     @property
     def bbox(self):
         # with torch.no_grad():
-        bbox = denormalize_bbox(np.expand_dims(self.bbox_n, 0), self.image_size)
+        if isinstance(self.bbox_n, torch.Tensor):
+            bbox_n = tensor_to_numpy(self.bbox_n)
+        else:
+            bbox_n = self.bbox_n
+        bbox = denormalize_bbox(np.expand_dims(bbox_n, 0), self.image_size)
         bbox = bbox.squeeze(0)
         return bbox
 

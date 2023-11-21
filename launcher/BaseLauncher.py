@@ -13,6 +13,7 @@ import pandas as pd
 import time
 
 from typing import Callable
+from functools import wraps 
 
 class BaseLogger():
     def __init__(self, log_dir):
@@ -189,6 +190,7 @@ class Launcher():
         '''
         assert isinstance(count_batch_from, int)
         def decorator(func:Callable):
+            @wraps(func)
             def wrapper(obj: Launcher, *args, **kwargs):
                 timer = obj.frame_timer.get(func.__name__)
                 start = time.time()

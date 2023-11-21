@@ -42,7 +42,7 @@ def build_predictor(yolo_weight_path, branches_weight:dict[int, str], cfg_path):
     model.set_mode("predict")
 
     remark = "new_variable_length"
-    predctor = OLDTPredictor(model, cfg_path, remark, 1, if_postprocess=True, if_calc_error=False)
+    predctor = OLDTPredictor(model, cfg_path)
     predctor.save_imtermediate = False
 
     return predctor

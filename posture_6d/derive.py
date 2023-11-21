@@ -227,7 +227,7 @@ def calc_viewmeta_by_base(viewmeta:ViewMeta, mesh_dict:dict[int, MeshMeta], cove
             visib_fract_dict[key] = visib_fract
 
         if cover or viewmeta.masks is None:
-            viewmeta.visib_fract = masks_dict
+            viewmeta.masks = masks_dict
         if cover or viewmeta.visib_fract is None:
             viewmeta.visib_fract = visib_fract_dict
 

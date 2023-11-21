@@ -200,7 +200,14 @@ class IntermediateManager:
         return self._load_object(class_name, index, load_pkl_func)
 
 class OLDTPredictor(Launcher):
-    def __init__(self, model, train_dataset:OLDTDataset, val_dataset:OLDTDataset, cfg_file, batch_size=32,  if_postprocess = True, if_calc_error = False, intermediate_from:str = "", log_remark = ""):
+    def __init__(self, model, cfg_file,
+                  train_dataset:OLDTDataset = None, 
+                  val_dataset:OLDTDataset = None, 
+                  batch_size=32,  
+                  if_postprocess = True, 
+                  if_calc_error = False, 
+                  intermediate_from:str = "", 
+                  log_remark = ""):
         super().__init__(model, batch_size, log_remark)
 
         # Enable GPU if available
@@ -397,9 +404,9 @@ class OLDTPredictor(Launcher):
             inputs:list[cv2.Mat] = self.preprocess(image)
             # inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
             predictions = self.inference(inputs)
-            processed_predictions = self.postprocess((inputs, predictions))
+            processed_prediction:ImagePosture = self.postprocess(inputs, predictions)[0]
 
-        return processed_predictions
+        return processed_prediction
 
     def clear(self):
         self.frame_timer.reset()

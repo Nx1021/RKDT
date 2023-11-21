@@ -82,12 +82,12 @@ class ObjectPcd(MeshMeta):
         '''
         世界坐标系(WCS)下的点云
         '''
-        pcd = self.pcd
+        pcd = self.points_array
         return self.posture_WCS * pcd
 
     @property
     def pointcloud_size(self):
-        pcd = self.pcd
+        pcd = self.points_array
         return np.max(pcd[:,:3], 0) - np.min(pcd[:,:3], 0)
     
     def read_candidate_coord(self):
@@ -100,12 +100,38 @@ class ObjectPcd(MeshMeta):
         except FileNotFoundError:
             self.candi_coord_parameter = np.zeros((0,8))
             print("Can not find {}".format(path))
+    
+    def write_candidate_coord(self):
+        '''
+        将候选夹持坐标写入硬盘
+        '''
+        path = os.path.join(MODELS_DIR, self.name + "_candi_grasp_posture.npy")
+        np.save(path, self.candi_coord_parameter)
 
-    def parse_candidate_coord(self):
+    def add_candidate_coord(self, rvec, tvec, u, score, *, replace = None):
+        '''
+        添加候选夹持坐标
+        '''
+        rvec = np.array(rvec).reshape((1,3))
+        tvec = np.array(tvec).reshape((1,3))
+        u = np.array(u).reshape((1,1))
+        score = np.array(score).reshape((1,1))
+        if isinstance(replace, int):
+            self.candi_coord_parameter[replace] = np.hstack([rvec, tvec, u, score]).squeeze(0)
+        else:
+            self.candi_coord_parameter = np.vstack([self.candi_coord_parameter, np.hstack([rvec, tvec, u, score])])
+
+    def parse_candidate_coord(self, idx = None):
         '''
         解析夹持坐标
         '''
-        candi_coord_parameter = self.candi_coord_parameter
+        if idx is None:
+            candi_coord_parameter = self.candi_coord_parameter
+        elif isinstance(idx, int):
+            candi_coord_parameter = self.candi_coord_parameter[idx:idx+1, :] #[1, 8]
+        else:
+            raise TypeError("None or int")
+
         rvec = candi_coord_parameter[:, 0:3]
         tvec = candi_coord_parameter[:, 3:6]
         u = candi_coord_parameter[:, 6]

@@ -16,8 +16,9 @@ class Gripper():
         self.finger_gripping_length = finger_gripping_length
         self.finger_gripping_width = finger_gripping_width
         self.finger_thickness = finger_thickness
+        self.rot_bias = 0.0
         
-        self.finger_trans_mat:np.ndarray = np.eye(4)
+        self.finger_base_trans_mat:np.ndarray = np.eye(4)
         self.u = 0
         self.set_u(self.u)
         self.u_list = np.linspace(0,1,51)
@@ -30,12 +31,12 @@ class Gripper():
     @property
     def finger_gripping_center(self):
         point = np.array([-self.finger_gripping_width, 0, -self.finger_gripping_length/2, 1])
-        return self.finger_trans_mat.dot(point)
+        return self.finger_base_trans_mat.dot(point)
 
     @property
     def finger_gripping_bottom(self):
         point = np.array([-self.finger_gripping_width, 0, 0, 1])
-        return self.finger_trans_mat.dot(point)
+        return self.finger_base_trans_mat.dot(point)
 
     @property
     def max_grasp_depth(self):
@@ -55,7 +56,7 @@ class Gripper():
 
     def set_u(self, u):
         self.u = u
-        self.finger_trans_mat = self.calc_finger_trans_mat(u)
+        self.finger_base_trans_mat = self.calc_finger_trans_mat(u)
 
 class MyThreeFingerGripper(Gripper):
     '''
@@ -63,9 +64,10 @@ class MyThreeFingerGripper(Gripper):
     坐标系与机器人末端坐标系重合
     '''
     def __init__(self, finger_num=3, finger_length=40, finger_width=10, finger_gripping_length=20, finger_gripping_width=10, finger_thickness=3) -> None:
-        self.rod = 60
+        self.rod = 40
         self.center_distance = 15   
         self.z_offset = 213.64     
+        self.rot_bias = 0.0 # np.pi / 6
         finger_length = 47
         finger_width = 1
         finger_gripping_length = 33.5
@@ -146,15 +148,16 @@ class MyThreeFingerGripper(Gripper):
         in_array = in_array + outof_z
         # exclude those point that is obviously not interference with the gripper
         global_max_r = self.finger_gripping_bottom[0] + self.finger_width + self.finger_gripping_width
-        global_max_z = self.finger_trans_mat[2,3]
+        global_max_z = self.finger_base_trans_mat[2,3]
         possible_itrfrnc_index = np.where((np.linalg.norm(pointcloud_Gpr[:,:2], axis=-1) < global_max_r) * \
                                         (pointcloud_Gpr[:,2] < global_max_z) * \
                                         (pointcloud_Gpr[:,2] > global_min_z))[0]
         pointcloud_itfrc = pointcloud_Gpr[possible_itrfrnc_index, :]
         # 手指均布，包含了二指和三指的情况
         for phi in np.linspace(0, np.pi*2, self.finger_num, False):
+            phi += self.rot_bias
             finger_rot_trans = Posture(rvec = np.array([0,0,phi])).trans_mat
-            finger_trans = np.dot(finger_rot_trans, self.finger_trans_mat)
+            finger_trans = np.dot(finger_rot_trans, self.finger_base_trans_mat)
             finger_trans_posture = Posture(homomat=finger_trans)
             pointcloud_Finger = finger_trans_posture.inv() * pointcloud_itfrc
             y_min = -self.finger_thickness / 2
@@ -330,6 +333,33 @@ class MyThreeFingerGripper(Gripper):
             return -score
         return score_func
 
+    def _get_finger_trans_mat(self, u):
+        trans_t_fingers = Posture(tvec=np.array([0, -self.finger_thickness/2, -self.finger_length]))
+        trans_t_fingers_grippings = Posture(tvec=np.array([-self.finger_gripping_width, -self.finger_thickness/2, -self.finger_gripping_length]))
+        Tb = self.calc_finger_trans_mat(u)
+        finger_trans_mat = [np.linalg.multi_dot((   Posture(rvec=np.array([0, 0, np.pi/3*2*i + self.rot_bias])).trans_mat, 
+                                                    Tb,
+                                                    trans_t_fingers.trans_mat)) for i in range(3)]
+        finger_grippings_trans_mat = [np.linalg.multi_dot((Posture(rvec=np.array([0, 0, np.pi/3*2*i + self.rot_bias])).trans_mat,                                                     
+                                                    Tb,
+                                                    trans_t_fingers_grippings.trans_mat)) for i in range(3)] 
+        return finger_trans_mat + finger_grippings_trans_mat
+    
+    def _get_transmit_mat_for_u(self, u1, u2):
+        '''
+        u1 -> u2
+        '''
+        T1_list = self._get_finger_trans_mat(u1)
+        T2_list = self._get_finger_trans_mat(u2)
+
+        P_list = []
+
+        for T1, T2 in zip(T1_list, T2_list):
+            P = np.linalg.multi_dot((T2, np.linalg.inv(T1)))
+            P_list.append(P)
+        
+        return P_list
+
     def get_gripper_o3d_geo(self):
         fingers = [o3d.geometry.TriangleMesh.create_box(width=self.finger_width,
                                                 height=self.finger_thickness,
@@ -339,15 +369,7 @@ class MyThreeFingerGripper(Gripper):
                                                 depth=self.finger_gripping_length) for i in range(3)]
         gripper_o3d_geos =  fingers + finger_grippings
         
-        trans_t_fingers = Posture(tvec=np.array([0, -self.finger_thickness/2, -self.finger_length]))
-        trans_t_fingers_grippings = Posture(tvec=np.array([-self.finger_gripping_width, -self.finger_thickness/2, -self.finger_gripping_length]))
-        finger_trans_mat = [np.linalg.multi_dot((   Posture(rvec=np.array([0, 0, np.pi/3*2*i])).trans_mat, 
-                                                    self.finger_trans_mat,
-                                                    trans_t_fingers.trans_mat)) for i in range(3)]
-        finger_grippings_trans_mat = [np.linalg.multi_dot((Posture(rvec=np.array([0, 0, np.pi/3*2*i])).trans_mat,                                                     
-                                                    self.finger_trans_mat,
-                                                    trans_t_fingers_grippings.trans_mat)) for i in range(3)] 
-        gripper_o3d_geos_trans_mat = finger_trans_mat + finger_grippings_trans_mat                                            
+        gripper_o3d_geos_trans_mat = self._get_finger_trans_mat(self.u)                                 
         for f, mat in zip(gripper_o3d_geos, gripper_o3d_geos_trans_mat):
             f.compute_vertex_normals()    
             f.paint_uniform_color([1, 0, 0])     

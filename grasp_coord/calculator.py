@@ -621,7 +621,7 @@ class _CoordSearcher():
         triangles: [N, 4]
         contact_point_indices: [N, 3, 2]
         '''
-        contact_point_indices = contact_point_indices.astype(np.int)
+        contact_point_indices = contact_point_indices.astype(np.int32)
         ## calculate u
         gig_center = triangles[:, None, :2] #np.mean(contact_point_indices, axis = -2, keepdims=True) #[N, 1, 2]
         ## Filter those points whose angle of the horizontal grip with the gripper finger's direction is less than h, 
@@ -665,8 +665,8 @@ class _CoordSearcher():
                 phase = np.arctan2(v[:,0], v[:,1])
                 p1 = cpi[:, :2] + (finger_thickness-1) * np.array([np.sin(phase), np.cos(phase)]).T
                 p2 = p1 + finger_width * np.array([np.sin(phase), np.cos(phase)]).T
-                p1 = np.around(p1).astype(np.int) #[3, 2]
-                p2 = np.around(p2).astype(np.int) #[3, 2]
+                p1 = np.around(p1).astype(np.int32) #[3, 2]
+                p2 = np.around(p2).astype(np.int32) #[3, 2]
                 for pp1, pp2 in zip(p1, p2):
                     finger_mask = cv2.line(finger_mask, pp1[::-1], pp2[::-1], 1, finger_thickness) #draw a line
                 finger_index = np.where(finger_mask)
@@ -726,7 +726,7 @@ class _CoordSearcher():
             angle = gi[3]
 
             posture_base_rot = Posture(rvec=rvec)
-            posture_z_rot = Posture(rvec=np.array([0,0,angle]))
+            posture_z_rot = Posture(rvec=np.array([0,0,angle - self.gripper.rot_bias]))
             posture_t = Posture(tvec=center)
             posture_gripper_trans = Posture(homomat = np.linalg.multi_dot( (posture_base_rot.trans_mat, 
                                                                             posture_t.trans_mat, 
