@@ -22,7 +22,7 @@ from .utils.camera_sys import convert_depth_frame_to_pointcloud
 from .utils.bounded_voronoi import bounded_voronoi, get_seg_maps
 from .utils.plane import fitplane
 from .utils.pc_voxelize import pc_voxelize, pc_voxelize_reture
-from . import Posture, JsonIO, JsonDict, FRAMETYPE_DATA, CameraIntr
+from . import Posture, JsonIO, FRAMETYPE_DATA, CameraIntr
 
 
 
@@ -44,7 +44,6 @@ class PcdCreator():
         self.max_correspondence_distance_fine       = voxel_size * 1.5
         
         self.process_data = self.model_manager.process_data
-        self.process_data.save_mode = JsonDict.SAVE_IMMIDIATELY
 
         # assert self.data_recorder.intr_0_file.all_exist, "intr_0_file must exist"
         # assert self.data_recorder.intr_1_file.all_exist, "intr_1_file must exist"
@@ -101,8 +100,8 @@ class PcdCreator():
     def register(self, downsample = True, update = False):
         if update or len(self.model_manager.registerd_pcd) != len(self.model_manager.std_meshes):
             raw_pcd_dict = {}
-            aruco_used_times = {}
-            for category_idx, framemeta in tqdm(self.data_recorder.read_in_category_range(0, -1)):
+            aruco_used_times:dict[str, dict[int, int]] = {}
+            for category_idx, framemeta in tqdm(self.data_recorder.read_in_category_range(0, -1), total=self.data_recorder.num):
                 category_name = self.data_recorder.category_names[category_idx]
 
                 color   = framemeta.color
@@ -137,24 +136,24 @@ class PcdCreator():
                     aruco_used_times[category_name].setdefault(id_, 0)
                     aruco_used_times[category_name][id_] += 1
             
-            self.process_data.write(ProcessData.ARUCO_USED_TIMES, aruco_used_times, force=True)
+            self.process_data.write_info(ProcessData.ARUCO_USED_TIMES, aruco_used_times)
+
             # post process
-            self.model_manager.registerd_pcd.open()
-            self.model_manager.registerd_pcd.set_writable()
-            for k, pcd_list in tqdm(raw_pcd_dict.items()):
-                singlemerged_pcd = self._register_post_process(pcd_list)[0]
-                # downsample
-                singlemerged_pcd = singlemerged_pcd.voxel_down_sample(voxel_size = self.voxel_size *2)
-                # write
-                name = k
-                self.model_manager.registerd_pcd.write(name, singlemerged_pcd)
-            self.model_manager.registerd_pcd.set_readonly()
-        if update or not self.model_manager.merged_regist_pcd_file.all_exist:
+
+            with self.model_manager.registerd_pcd.get_writer().allow_overwriting():
+                for k, pcd_list in tqdm(raw_pcd_dict.items()):
+                    singlemerged_pcd = self._register_post_process(pcd_list)[0]
+                    # downsample
+                    singlemerged_pcd = singlemerged_pcd.voxel_down_sample(voxel_size = self.voxel_size *2)
+                    # write
+                    name = k
+                    self.model_manager.registerd_pcd.write(name, singlemerged_pcd)
+        if update or not self.model_manager.merged_regist_pcd_file.all_files_exist:
             merged = self._merge_meshes()
             self.model_manager.merged_regist_pcd_file.write(0, merged, force=True)
 
-        self.model_manager.close_all()
-        self.data_recorder.close_all()
+        # self.model_manager.close()
+        # self.data_recorder.close()
     
     def match_segmesh_name(self, seg_polygons, SCStrans_mat):
         '''
@@ -201,7 +200,7 @@ class PcdCreator():
         ### 原始点云的前处理
         model_pcds = [] #点云列表[M]
         model_pcds_dense = [] #点云密度列表[M] 用于估算面积
-        for i, pcd in tqdm(enumerate(self.model_manager.registerd_pcd), desc="original pointcloud preprocess"):
+        for i, pcd in tqdm(enumerate(self.model_manager.registerd_pcd), desc="original pointcloud preprocess", total=self.model_manager.registerd_pcd.num):
             pcd.transform(SCStrans_mat)
             pcd = pcd.voxel_down_sample(voxel_size=1) #降采样，使得点云密度相等
             name = self.model_manager.std_meshes_names[i]
@@ -257,23 +256,20 @@ class PcdCreator():
         interact = Interact_ChechSeg(model_pcds, self.model_manager.std_meshes_names, top_rank_slice, o3d_vols)
         interact.start()
         # print("请检查是否匹配正确，如有错误请在{}目录下手动修改名称".format(VORONOI_SEGPCD_DIR))
-        self.model_manager.voronoi_segpcd.open()
-        self.model_manager.voronoi_segpcd.set_writable()
-        self.model_manager.voronoi_segpcd.set_overwrite_allowed(True)
-        for model_id, vol in zip(interact.top_rank_slice, interact.o3d_vols):
-            pcd = interact.model_pcds[model_id]
-            name = interact.model_names[model_id]
 
-            # o3d.visualization.draw_geometries([pcd], width=1280, height=720)    
-            vol.axis_min = 0.000
-            comp = vol.crop_point_cloud(pcd) #裁剪
-            # o3d.visualization.draw_geometries([comp], width=1280, height=720)   
-            self.model_manager.voronoi_segpcd.write(model_id, comp)
-            # o3d.io.write_point_cloud(os.path.join(voronoi_seg_dir, name+".ply"), comp)
+
+        with self.model_manager.voronoi_segpcd.get_writer().allow_overwriting():
+            for model_id, vol in zip(interact.top_rank_slice, interact.o3d_vols):
+                pcd = interact.model_pcds[model_id]
+                name = interact.model_names[model_id]
+
+                # o3d.visualization.draw_geometries([pcd], width=1280, height=720)    
+                vol.axis_min = 0.000
+                comp = vol.crop_point_cloud(pcd) #裁剪
+                # o3d.visualization.draw_geometries([comp], width=1280, height=720)   
+                self.model_manager.voronoi_segpcd.write(model_id, comp)
+                # o3d.io.write_point_cloud(os.path.join(voronoi_seg_dir, name+".ply"), comp)
         # y = input("检查完毕请输入任意字符")
-        self.model_manager.voronoi_segpcd.set_overwrite_allowed(False)
-        self.model_manager.voronoi_segpcd.set_readonly()
-        self.model_manager.voronoi_segpcd.close()
         return 
     
     def extract_uniform_pcd(self, SCStrans_mat, floor_color = None):
@@ -293,34 +289,35 @@ class PcdCreator():
         #     pcd = o3d.io.read_point_cloud(os.path.join(voronoi_segpcd_dir, name))
         #     seged_pcds_dict.update({mainname: pcd})
 
-        self.model_manager.extracted_mesh.open()
-        self.model_manager.voronoi_segpcd.open()
-        self.model_manager.extracted_mesh.set_writable()
-        for name, comp in zip(self.model_manager.std_meshes_names , self.model_manager.voronoi_segpcd):
-            print(name)            
-            # o3d.visualization.draw_geometries([comp], width=1280, height=720)
-            # name:str = model_names[pcd_index]
-            offset = 5
-            floor_points, floor_point_colors, refine_vol = self._get_floor_points(comp)
-            if floor_color is not None:
-                comp = self._filter_by_color(comp, floor_color, 20/255)
-            refine_vol.axis_min = offset
-            comp = refine_vol.crop_point_cloud(comp) #裁剪
-            comp.points = o3d.utility.Vector3dVector(np.vstack((np.array(comp.points), floor_points)))
-            comp.colors = o3d.utility.Vector3dVector(np.vstack((np.array(comp.colors), floor_point_colors)))
 
-            # o3d.visualization.draw_geometries([comp], width=1280, height=720)       
-            comp.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=5, max_nn=10))
-            comp.orient_normals_towards_camera_location(np.mean(np.array(comp.points), axis = 0))
-            normals = np.negative(np.array(comp.normals))
-            comp.normals = o3d.utility.Vector3dVector(normals)          
-            mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(comp, depth = 8, linear_fit = True) 
-            mesh.transform(np.linalg.inv(SCStrans_mat))
 
-            self.model_manager.extracted_mesh.write(name, mesh)
-        self.model_manager.extracted_mesh.set_readonly()
-        self.model_manager.extracted_mesh.close()
-        self.model_manager.voronoi_segpcd.close()
+        with self.model_manager.extracted_mesh.get_writer().allow_overwriting():
+            # for name, comp in zip(self.model_manager.std_meshes.enums , self.model_manager.voronoi_segpcd):
+            for fh in self.model_manager.voronoi_segpcd.query_all_fileshandle():
+                print(fh.get_name())      
+                model_idx = self.model_manager.voronoi_segpcd.deformat_corename(fh.corename)
+                comp = self.model_manager.voronoi_segpcd[model_idx]
+                # o3d.visualization.draw_geometries([comp], width=1280, height=720)
+                # name:str = model_names[pcd_index]
+                offset = 5
+                floor_points, floor_point_colors, refine_vol = self._get_floor_points(comp)
+                if floor_color is not None:
+                    comp = self._filter_by_color(comp, floor_color, 20/255)
+                refine_vol.axis_min = offset
+                comp = refine_vol.crop_point_cloud(comp) #裁剪
+                comp.points = o3d.utility.Vector3dVector(np.vstack((np.array(comp.points), floor_points)))
+                comp.colors = o3d.utility.Vector3dVector(np.vstack((np.array(comp.colors), floor_point_colors)))
+
+                # o3d.visualization.draw_geometries([comp], width=1280, height=720)       
+                comp.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=5, max_nn=10))
+                comp.orient_normals_towards_camera_location(np.mean(np.array(comp.points), axis = 0))
+                normals = np.negative(np.array(comp.normals))
+                comp.normals = o3d.utility.Vector3dVector(normals)          
+                mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(comp, depth = 8, linear_fit = True) 
+                mesh.transform(np.linalg.inv(SCStrans_mat))
+
+                self.model_manager.extracted_mesh.write(model_idx, mesh)
+
 
     def auto_seg(self, update = False):
         '''
@@ -333,20 +330,18 @@ class PcdCreator():
         org_pcd = self.model_manager.merged_regist_pcd_file.read(0)        
         ### 1 ###
         if update or \
-                self.process_data.ARUCO_CENTERS not in self.process_data or \
-                self.process_data.PLANE_EQUATION not in self.process_data or \
-                self.process_data.TRANS_MAT_C0_2_SCS not in self.process_data:
+                not self.process_data.has_info(self.process_data.ARUCO_CENTERS) or \
+                not self.process_data.has_info(self.process_data.PLANE_EQUATION) or \
+                not self.process_data.has_info(self.process_data.TRANS_MAT_C0_2_SCS):
             aruco_centers, plane_equation, trans_mat = self.build_build_sceneCS(org_pcd)
-            self.process_data.set_overwrite_allowed(True)
-            with self.process_data.writer:
-                self.process_data[self.process_data.ARUCO_CENTERS]      = aruco_centers
-                self.process_data[self.process_data.PLANE_EQUATION]     = plane_equation
-                self.process_data[self.process_data.TRANS_MAT_C0_2_SCS] = trans_mat
-            self.process_data.set_overwrite_allowed(False)
+            # self.process_data.write(self.process_data.ARUCO_CENTERS, aruco_centers)
+            self.process_data.write_info(self.process_data.ARUCO_CENTERS,        aruco_centers)
+            self.process_data.write_info(self.process_data.PLANE_EQUATION,       plane_equation)
+            self.process_data.write_info(self.process_data.TRANS_MAT_C0_2_SCS,   trans_mat)
         else:
-            aruco_centers = self.process_data[self.process_data.ARUCO_CENTERS]
-            plane_equation = self.process_data[self.process_data.PLANE_EQUATION]
-            trans_mat = self.process_data[self.process_data.TRANS_MAT_C0_2_SCS]
+            aruco_centers   = self.process_data.read_info(self.process_data.ARUCO_CENTERS)
+            plane_equation  = self.process_data.read_info(self.process_data.PLANE_EQUATION)
+            trans_mat       = self.process_data.read_info(self.process_data.TRANS_MAT_C0_2_SCS)
         ### 2 ###
         arucos_SCS = Posture(homomat=trans_mat) * aruco_centers
         pointcloud_SCS = Posture(homomat=trans_mat) * np.array(org_pcd.points)
@@ -364,22 +359,22 @@ class PcdCreator():
         # ax = plt.axes(projection='3d')  # 设置三维轴
         # ax.scatter(arucos_SCS[:, 0], arucos_SCS[:, 1], arucos_SCS[:, 2])
         # plt.show()
-        if update or self.process_data.VOR_POLYS_COORD not in self.process_data:
+        if update or not self.process_data.has_info(self.process_data.VOR_POLYS_COORD):
             box, box_color, restore_mat = pc_voxelize(pointcloud_SCS, 3, pcd_color = colors_SCS) #???
             vor_polys_coord = get_seg_maps(box[:,:,0], restore_mat, scale = 1) #???
-            self.process_data.write(self.process_data.VOR_POLYS_COORD, vor_polys_coord, force=True)
+            self.process_data.write_info(self.process_data.VOR_POLYS_COORD, vor_polys_coord)
         else:
             vor_polys_coord = self.process_data[self.process_data.VOR_POLYS_COORD]
         ### 3 ###
-        if update or self.process_data.FLOOR_COLOR not in self.process_data:
+        if update or not self.process_data.has_info(self.process_data.FLOOR_COLOR):
             floor_color = self.get_floor_color(pointcloud_SCS, colors_SCS)
-            self.process_data.write(self.process_data.FLOOR_COLOR, floor_color, force=True)
+            self.process_data.write_info(self.process_data.FLOOR_COLOR, floor_color)
         else:
-            floor_color = self.process_data[self.process_data.FLOOR_COLOR]
+            floor_color = self.process_data.read_info(self.process_data.FLOOR_COLOR)
 
-        if update or not os.path.exists(self.model_manager.voronoi_segpcd.directory):
+        if update or self.model_manager.voronoi_segpcd.num != self.model_manager.std_meshes.num:
             seged_pcds = self.match_segmesh_name(vor_polys_coord, trans_mat)
-        if update or not os.path.exists(self.model_manager.extracted_mesh.directory):
+        if update or self.model_manager.extracted_mesh.num != self.model_manager.std_meshes.num:
             self.extract_uniform_pcd(trans_mat, floor_color)
 
     def build_build_sceneCS(self, test_pcd):

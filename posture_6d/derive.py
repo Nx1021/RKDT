@@ -43,7 +43,7 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
     return
     -----
     masks: list[cv2.Mat]
-    visib_fract: list[float]
+    visib_fracts: list[float]
     '''
     def draw_one_mask(meta:MeshMeta, posture:Posture):
         CAM_WID, CAM_HGT    = intrinsics.cam_wid, intrinsics.cam_hgt # 重投影到的深度图尺寸
@@ -133,14 +133,14 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
             masks.append(mask)
 
     ### 计算可见比例
-    visib_fract:list[float] = []
+    visib_fracts:list[float] = []
     for mask, orig_proj, meta in zip(masks, orig_proj_list, mesh_metas):
         orig_proj = orig_proj.astype(np.int32)
         orig_proj = intrinsics.filter_in_view(orig_proj)
         vf = np.sum(mask[orig_proj[:,1], orig_proj[:,0]].astype(np.bool8)) / meta.points_array.shape[0]
-        visib_fract.append(vf)
+        visib_fracts.append(vf)
    
-    return masks, visib_fract
+    return masks, visib_fracts
 
 def calc_landmarks_proj(mesh_meta:MeshMeta, postures:Posture, intrinsics:CameraIntr):
     landmarks = mesh_meta.ldmk_3d
@@ -214,22 +214,22 @@ def calc_viewmeta_by_base(viewmeta:ViewMeta, mesh_dict:dict[int, MeshMeta], cove
         postures_dict[key] = posture
         keys.append(key)
 
-    # calc masks and visib_fract
-    if cover or viewmeta.masks is None or viewmeta.visib_fract is None:
+    # calc masks and visib_fracts
+    if cover or viewmeta.masks is None or viewmeta.visib_fracts is None:
         mesh_list = [mesh_dict[key] for key in keys]
         posture_list = [postures_dict[key] for key in keys]
         masks, visib_fracts = calc_masks(mesh_list, posture_list, camera_intr, ignore_depth=True)
 
         masks_dict = {}
-        visib_fract_dict = {}
-        for key, mask, visib_fract in zip(keys, masks, visib_fracts):
+        visib_fracts_dict = {}
+        for key, mask, vf in zip(keys, masks, visib_fracts):
             masks_dict[key] = mask
-            visib_fract_dict[key] = visib_fract
+            visib_fracts_dict[key] = vf
 
         if cover or viewmeta.masks is None:
-            viewmeta.visib_fract = masks_dict
-        if cover or viewmeta.visib_fract is None:
-            viewmeta.visib_fract = visib_fract_dict
+            viewmeta.masks = masks_dict
+        if cover or viewmeta.visib_fracts is None:
+            viewmeta.visib_fracts = visib_fracts_dict
 
     # filter unvisible
     visible_ids = viewmeta.filter_unvisible()

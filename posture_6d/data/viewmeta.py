@@ -137,6 +137,7 @@ class ViewMeta():
     '''
     一个视角下的所有数据的元
     '''
+    # region augment pipeline
     class ColorAP(AugmentPipeline):
         '''
         Color image augment pipline
@@ -288,7 +289,7 @@ class ViewMeta():
                 new_landmarks_info.update({_id: rot_xy_list_2dpoints(M, landmark)})
             return new_landmarks_info
 
-    class VisibFractAP(AugmentPipeline):
+    class VisibFractsAP(AugmentPipeline):
         def __init__(self, meta: "ViewMeta") -> None:
             super().__init__(meta)
             self.old_masks_callback = lambda :self.get_ap_of_meta(self.meta.MasksAP).obj
@@ -296,31 +297,31 @@ class ViewMeta():
 
         @property
         def obj(self):
-            return self.meta.visib_fract
+            return self.meta.visib_fracts
 
-        def calc_new_visib_fract(self, old_masks:dict[str, np.ndarray], new_masks:dict[str, np.ndarray]):
-            # 修改visib_fract
-            new_visib_fract = {}
+        def calc_new_visib_fracts(self, old_masks:dict[str, np.ndarray], new_masks:dict[str, np.ndarray]):
+            # 修改visib_fracts
+            new_visib_fracts = {}
             for _id, visib in self.obj.items():
                 if visib == 0:
-                    new_visib_fract.update({_id: 0})
+                    new_visib_fracts.update({_id: 0})
                 else:
                     mask = old_masks[_id]
                     proj_pixel_num = np.sum(mask.astype(np.bool_)) / visib # 不考虑任何遮挡和相机视野边界的像素数量
                     new_pixel_num = np.sum(new_masks[_id].astype(np.bool_))
                     vf = min(new_pixel_num / proj_pixel_num, 1)
-                    new_visib_fract.update({_id: np.array(vf)})      
-            return new_visib_fract 
+                    new_visib_fracts.update({_id: np.array(vf)})      
+            return new_visib_fracts 
 
         def _crop(self, crop_rect: ndarray):
             old_masks = self.old_masks_callback()
             new_masks = self.new_masks_callback()
-            return self.calc_new_visib_fract(old_masks, new_masks)
+            return self.calc_new_visib_fracts(old_masks, new_masks)
         
         def _rotate(self, crop_rect: ndarray):
             old_masks = self.old_masks_callback()
             new_masks = self.new_masks_callback()
-            return self.calc_new_visib_fract(old_masks, new_masks)
+            return self.calc_new_visib_fracts(old_masks, new_masks)
 
     class LabelsAP(AugmentPipeline):
         def __init__(self, meta: "ViewMeta") -> None:
@@ -338,7 +339,7 @@ class ViewMeta():
         def _rotate(self, M:cv2.Mat):
             new_masks = self.new_masks_callback()
             return self.meta.calc_bbox2d_from_mask(new_masks)
-
+    # endregion augment pipeline
     IGNORE_WARNING = False
 
     PARA_NAMES = ["color", 
@@ -349,7 +350,7 @@ class ViewMeta():
                   "depth_scale", 
                   "bbox_3d", 
                   "landmarks", 
-                  "visib_fract", 
+                  "visib_fracts", 
                   "labels"]
     
     COLOR = PARA_NAMES[0]
@@ -358,9 +359,9 @@ class ViewMeta():
     EXTR_VECS = PARA_NAMES[3]
     INTR = PARA_NAMES[4]
     DEPTH_SCALE = PARA_NAMES[5]
-    BBOX_3D = PARA_NAMES[6]
+    BBOX_3DS = PARA_NAMES[6]
     LANDMARKS = PARA_NAMES[7]
-    VISIB_FRACT = PARA_NAMES[8]
+    VISIB_FRACTS = PARA_NAMES[8]
     LABELS = PARA_NAMES[9]
 
     def __init__(self, 
@@ -372,7 +373,7 @@ class ViewMeta():
                 depth_scale:float,
                 bbox_3d: dict[int, ndarray],        
                 landmarks: dict[int, ndarray],
-                visib_fract: dict[int, float],
+                visib_fracts: dict[int, float],
                 labels: dict[int, np.ndarray] = None
                 # keypoints_visib: dict[int, list],
                 ) -> None:
@@ -382,7 +383,7 @@ class ViewMeta():
         masks: dict[int, np.ndarray], 
         extr_gt: list[dict[int, list]], 外参
         camera: dict, 相机参数
-        visib_fract: dict[int, float], 物体可见性
+        visib_fracts: dict[int, float], 物体可见性
         bbox: dict[int, ndarray:[B, (x,y)]],        
         keypoints: dict[int, ndarray:[N, (x,y)]],
         trans_vector:dict[int, list] 外参
@@ -399,7 +400,7 @@ class ViewMeta():
             ViewMeta.PARA_NAMES[5]: lambda x: float(x),                                       # depth_scale
             ViewMeta.PARA_NAMES[6]: lambda x: self.__reshape_array_in_dict(x, (-1, 2)),       # bbox_3d
             ViewMeta.PARA_NAMES[7]: lambda x: self.__reshape_array_in_dict(x, (-1, 2)),       # landmarks
-            ViewMeta.PARA_NAMES[8]: None,                                                     # visib_fract
+            ViewMeta.PARA_NAMES[8]: None,                                                     # visib_fracts
             ViewMeta.PARA_NAMES[9]: None,                                                     # labels
         }
         self._agmts_type:dict[str, type] = {
@@ -411,7 +412,7 @@ class ViewMeta():
             ViewMeta.PARA_NAMES[5]: ViewMeta.DepthScaleAP,
             ViewMeta.PARA_NAMES[6]: ViewMeta.Bbox3dAP,    
             ViewMeta.PARA_NAMES[7]: ViewMeta.LandmarksAP, 
-            ViewMeta.PARA_NAMES[8]: ViewMeta.VisibFractAP,
+            ViewMeta.PARA_NAMES[8]: ViewMeta.VisibFractsAP,
             ViewMeta.PARA_NAMES[9]: ViewMeta.LabelsAP    
         }
         self.agmts:dict[str, AugmentPipeline] = {}
@@ -424,7 +425,7 @@ class ViewMeta():
         self.depth_scale: float             = self.set_element(ViewMeta.PARA_NAMES[5], depth_scale)
         self.bbox_3d:dict[int, ndarray]     = self.set_element(ViewMeta.PARA_NAMES[6], bbox_3d)
         self.landmarks:dict[int, ndarray]   = self.set_element(ViewMeta.PARA_NAMES[7], landmarks)
-        self.visib_fract: dict[int, float]  = self.set_element(ViewMeta.PARA_NAMES[8], visib_fract)
+        self.visib_fracts: dict[int, float]  = self.set_element(ViewMeta.PARA_NAMES[8], visib_fracts)
         self.labels:dict[int, ndarray]      = self.set_element(ViewMeta.PARA_NAMES[9], labels)
         # self.color:np.ndarray               = self.__set_element(ViewMeta.RgbAP,         color)
         # self.depth:np.ndarray               = self.__set_element(ViewMeta.DepthAP,       depth)            
@@ -434,7 +435,7 @@ class ViewMeta():
         # self.depth_scale: float             = self.__set_element(ViewMeta.DepthScaleAP,  depth_scale)
         # self.bbox_3d:dict[int, ndarray]     = self.__set_element(ViewMeta.Bbox3dAP,      bbox_3d,    lambda x:self.__reshape_array_in_dict(x, (-1,2)))
         # self.landmarks:dict[int, ndarray]   = self.__set_element(ViewMeta.LandmarksAP,   landmarks,  lambda x:self.__reshape_array_in_dict(x, (-1,2)))
-        # self.visib_fract: dict[int, float]  = self.__set_element(ViewMeta.VisibFractAP,  visib_fract)
+        # self.visib_fracts: dict[int, float]  = self.__set_element(ViewMeta.VisibFractsAP,  visib_fracts)
         # self.labels:dict[int, ndarray]      = self.__set_element(ViewMeta.LabelsAP,      labels) #[N, H, W]        
         # self.keypoints_visib                = copy.deepcopy(keypoints_visib)
         # self.filter_unvisible()
@@ -480,12 +481,12 @@ class ViewMeta():
         return None
 
     def filter_unvisible(self):
-        ids = list(set(self.masks.keys()).union(set(self.visib_fract.keys())))
+        ids = list(set(self.masks.keys()).union(set(self.visib_fracts.keys())))
         visible_ids = ids.copy()
         for id_ in ids:
             try: mask_cond = np.sum(self.masks[id_]) < self.masks[id_].shape[0] * self.masks[id_].shape[1] * 1e-4
             except: mask_cond = False
-            try: vf_cond = self.visib_fract[id_] < 0.01
+            try: vf_cond = self.visib_fracts[id_] < 0.01
             except: vf_cond = False
             if mask_cond or vf_cond:
                 visible_ids.remove(id_)
@@ -621,6 +622,24 @@ class ViewMeta():
         '''
         pass
 
+    def as_dict(self):
+        '''
+        转换为dict
+        '''
+        dict_ = {
+            ViewMeta.COLOR: self.color,
+            ViewMeta.DEPTH: self.depth,
+            ViewMeta.MASKS: self.masks,
+            ViewMeta.EXTR_VECS: self.extr_vecs,
+            ViewMeta.INTR: self.intr,
+            ViewMeta.DEPTH_SCALE: self.depth_scale,
+            ViewMeta.BBOX_3DS: self.bbox_3d,
+            ViewMeta.LANDMARKS: self.landmarks,
+            ViewMeta.VISIB_FRACTS: self.visib_fracts,
+            ViewMeta.LABELS: self.labels
+        }
+        return dict_
+
     def plot(self):
         '''
         显示
@@ -657,7 +676,7 @@ class ViewMeta():
         # 标注类别与可见性
         if self.bbox_3d is not None:
             for class_id in self.bbox_3d.keys():
-                vb = self.visib_fract[class_id]
+                vb = self.visib_fracts[class_id]
                 label = "{} {:>.3}".format(class_id, float(vb))
                 lt = np.min(self.bbox_3d[class_id], axis = 0)
                 plt.text(lt[0], lt[1], label, verticalalignment='top')
@@ -684,7 +703,7 @@ class ViewMetaMaskContour(ViewMeta):
                 new_masks.update({_id: rot_xy_list_2dpoints(M, contour)})
             return new_masks      
 
-    class VisibFractAP(AugmentPipeline):
+    class VisibFractsAP(AugmentPipeline):
         def __init__(self, meta: "ViewMeta") -> None:
             super().__init__(meta)
             self.old_masks_callback = lambda :self.get_ap_of_meta(self.meta.MasksAP).obj
@@ -692,7 +711,7 @@ class ViewMetaMaskContour(ViewMeta):
 
         @property
         def obj(self):
-            return self.meta.visib_fract
+            return self.meta.visib_fracts
 
         # TODO: _crop, _rotate
 
@@ -713,8 +732,8 @@ class ViewMetaMaskContour(ViewMeta):
             new_masks = self.new_masks_callback()
             return self.meta.calc_bbox2d_from_mask(new_masks)
 
-    def __init__(self, color: ndarray, depth: ndarray, masks: dict[int, ndarray], extr_vecs: dict[int, ndarray], intr: ndarray, depth_scale: float, bbox_3d: dict[int, ndarray], landmarks: dict[int, ndarray], visib_fract: dict[int, float], labels: dict[int, ndarray] = None) -> None:
-        super().__init__(color, depth, masks, extr_vecs, intr, depth_scale, bbox_3d, landmarks, visib_fract, labels)
+    def __init__(self, color: ndarray, depth: ndarray, masks: dict[int, ndarray], extr_vecs: dict[int, ndarray], intr: ndarray, depth_scale: float, bbox_3d: dict[int, ndarray], landmarks: dict[int, ndarray], visib_fracts: dict[int, float], labels: dict[int, ndarray] = None) -> None:
+        super().__init__(color, depth, masks, extr_vecs, intr, depth_scale, bbox_3d, landmarks, visib_fracts, labels)
 
     @staticmethod
     def calc_bbox2d_from_mask(mask_dict: dict[int, ndarray]):
@@ -728,46 +747,3 @@ class ViewMetaMaskContour(ViewMeta):
                 rb = np.max(where, -1)
                 bbox_2d[id_] = np.array([lt[1], lt[0], rb[1], rb[0]])
         return bbox_2d
-
-
-def is_image(array):
-    if not isinstance(array, np.ndarray):
-        return False
-    if array.ndim not in [2, 3]:
-        return False
-    if array.dtype not in [np.uint8, np.uint16, np.float32, np.float64]:
-        return False
-    return True
-
-def serialize_image_container(image_container):
-    def serialize_image(image:np.ndarray):  
-        # 将NumPy数组编码为png格式的图像
-        retval, buffer = cv2.imencode('.png', image)
-        # 将图像数据转换为字节字符串
-        image_bytes = buffer.tobytes()
-        image.tobytes()
-        return image_bytes
-    if is_image(image_container):
-        return serialize_image(image_container)
-    elif isinstance(image_container, (list, tuple)):
-        new_value = [serialize_image_container(item) for item in image_container]
-    elif isinstance(image_container, dict):
-        new_value = dict(zip(image_container.keys(), [serialize_image(x) for x in image_container.values()]))
-    else:
-        return image_container
-    return new_value
-
-def deserialize_image_container(bytes_container, imread_flags):
-    def deserialize_image(image_bytes):  
-        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-        image = cv2.imdecode(image_array, flags=imread_flags)# 将numpy数组解码为图像
-        return image
-    if isinstance(bytes_container, bytes):
-        return deserialize_image(bytes_container)
-    elif isinstance(bytes_container, (list, tuple)):
-        new_value = [deserialize_image(item) for item in bytes_container]
-    elif isinstance(bytes_container, dict):
-        new_value = dict(zip(bytes_container.keys(), [deserialize_image(x) for x in bytes_container.values()]))
-    else:
-        return bytes_container
-    return new_value

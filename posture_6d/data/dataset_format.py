@@ -98,8 +98,8 @@ class WriteController(ABC):
             return False
         else:
             self.is_writing = True
-            # with open(self.get_writing_mark_file(), 'w'):
-            #     pass
+            with open(self.get_writing_mark_file(), 'w'):
+                pass
             return True
 
     def stop_writing(self):
@@ -827,7 +827,7 @@ class _DataCluster(WriteController, InstanceRegistry, ABC, Generic[DSNT, VDCT, D
                         if overwrited and log_type == self.LOG_APPEND:
                             log_type = self.LOG_CHANGE
                         self._update_cluster_inc(iometa, data_i, value, *args, **kwargs)
-                        # self.log_to_mark_file(log_type, data_i, value)
+                        self.log_to_mark_file(log_type, data_i, value)
                 
                 if write_error:
                     warnings.warn(f"{self.__class__.__name__}:{self.sub_dir} \
@@ -988,7 +988,7 @@ class JsonDict(_DataCluster[DSNT, VDCT, "JsonDict"], dict):
     def values(self):
         super().values()
         return dict.values(self)
-    
+
     def items(self):
         super().items()
         return dict.items(self)
@@ -1065,7 +1065,6 @@ class JsonDict(_DataCluster[DSNT, VDCT, "JsonDict"], dict):
         else:
             raise TypeError(f"unsupported type: {type(k)} in src")
         self.log_to_mark_file(self.cluster_data_i_upper - 1, self.LOG_APPEND)
-
 
     def __iter__(self) -> Iterator:
         return _DataCluster.__iter__(self)
@@ -1285,7 +1284,7 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
         def erase_cache(self):
             self["cache"] = None
 
-        def clear_notfound(self):
+        def clear_notfound(self, idx):
             new_appnames = []
             for i, e in enumerate(self["file_exist"]):
                 if e:
@@ -1329,7 +1328,7 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
         def add_appname(self, data_i, appname):
             self[data_i].add_file(appname)
 
-        def rebuild(self, ignore_notfound = False, cache_priority = True):
+        def rebuild(self, ignore_notfound = False):
             paths = glob.glob(os.path.join(self.directory, "**/*" + self.elements.suffix), recursive=True)
             for path in paths:
                 data_i, subdir, appname = Elements.parse_path(self.directory, path)
@@ -1337,9 +1336,7 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
                 self.add_appname(data_i, appname)
             for data_i, info in dict(self).items():
                 info.refresh_has_file(self.elements, data_i)
-                if cache_priority and info.empty:
-                    self.pop(data_i)
-                elif not cache_priority and info.has_notfound:
+                if info.empty:
                     self.pop(data_i)
                 if info.has_notfound:
                     if ignore_notfound:
@@ -1452,10 +1449,7 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
             for name in src_appnames:
                 src_path = self.cluster.format_path(src, src_dir, name)
                 dst_path = self.cluster.format_path(dst, src_dir, name)
-                try:
-                    shutil.move(src_path, dst_path)
-                except:
-                    pass
+                shutil.move(src_path, dst_path)
             info = self.cluster._data_info_map.pop(src)
             self.cluster._data_info_map.update({dst: info})
             
@@ -1528,7 +1522,7 @@ class Elements(_DataCluster[DSNT, VDCT, "Elements"]):
                 filllen = 6, 
                 fillchar = '0', *,
                 alternative_suffix:list[str] = []) -> None:
-        # _cvt_old_element_map(dataset_node, sub_dir, suffix)
+        _cvt_old_element_map(dataset_node, sub_dir, suffix)
         super().__init__(dataset_node, sub_dir, register, name, 
                          read_func, write_func, suffix, filllen, fillchar, alternative_suffix = alternative_suffix)
         # self-check
@@ -2134,7 +2128,7 @@ class DatasetNode(InstanceRegistry, WriteController, ABC, Generic[DCT, VDST]):
 
         self.__inited = False # if the dataset has been inited   
         self.__init_node(parent)
-        self.init_dataset_attr()
+        self.init_dataset_attr_hook()
         self.__init_clusters()
         self.__inited = True # if the dataset has been inited
 
@@ -2144,7 +2138,7 @@ class DatasetNode(InstanceRegistry, WriteController, ABC, Generic[DCT, VDST]):
         self.children:list[DatasetNode] = []
         self.move_node(parent)
 
-    def init_dataset_attr(self):
+    def init_dataset_attr_hook(self):
         def is_directory_inside(base_dir, target_dir):
             base_dir:str = os.path.abspath(base_dir)
             target_dir:str = os.path.abspath(target_dir)
@@ -2524,8 +2518,6 @@ class DatasetNode(InstanceRegistry, WriteController, ABC, Generic[DCT, VDST]):
                 start = 0
             if step is None:
                 step = 1
-            if stop is None:
-                stop = self.data_i_upper
             stop = min(stop, self.data_i_upper)
             def g():
                 for i in range(start, stop, step):
@@ -2679,8 +2671,8 @@ class DatasetFormat(DatasetNode[DCT, VDST]):
 
         self.split_default_rate = split_rate
 
-    def init_dataset_attr(self):
-        super().init_dataset_attr()
+    def init_dataset_attr_hook(self):
+        super().init_dataset_attr_hook()
         self.spliter_group = SpliterGroup(os.path.join(self.directory, self.SPLIT_DIR), 
                                     self.DEFAULT_SPLIT_TYPE,
                                     self)
@@ -2740,7 +2732,7 @@ class PostureDatasetFormat(DatasetFormat[_DataCluster, ViewMeta]):
                         depth_scale=None,
                         bbox_3d = bbox_3d_dict, 
                         landmarks = landmarks_dict,
-                        visib_fract=None,
+                        visib_fracts=None,
                         labels=labels_dict)
 
     def _write_elements(self, data_i: int, viewmeta: ViewMeta, subdir="", appname=""):
@@ -2861,7 +2853,7 @@ class LinemodFormat(PostureDatasetFormat):
         for obj_id in viewmeta.masks.keys():
             mask = viewmeta.masks[obj_id]
             bb = bbox_2d[obj_id]
-            vf = viewmeta.visib_fract[obj_id]
+            vf = viewmeta.visib_fracts[obj_id]
             mask_count = int(np.sum(mask))
             mask_visib_count = int(mask_count * vf)
             gt_info_one_info.append({
@@ -2888,8 +2880,8 @@ class LinemodFormat(PostureDatasetFormat):
         postures = [Posture(rmat =x[LinemodFormat.KW_GT_R], tvec=x[LinemodFormat.KW_GT_t]) for x in self.scene_gt_dict[data_i]]
         extr_vecs = [np.array([x.rvec, x.tvec]) for x in postures]
         extr_vecs_dict = as_dict(ids, extr_vecs)
-        # visib_fract    = [x[LinemodFormat.KW_GT_INFO_VISIB_FRACT] for x in self.scene_gt_info_dict[data_i]]
-        visib_fract_dict = zip_dict(ids, self.scene_gt_info_dict[data_i], 
+        # visib_fracts    = [x[LinemodFormat.KW_GT_INFO_VISIB_FRACT] for x in self.scene_gt_info_dict[data_i]]
+        visib_fracts_dict = zip_dict(ids, self.scene_gt_info_dict[data_i], 
                                          lambda obj: [x[LinemodFormat.KW_GT_INFO_VISIB_FRACT] for x in obj])
         return ViewMeta(color, depth, masks, 
                         extr_vecs_dict,
@@ -2897,7 +2889,7 @@ class LinemodFormat(PostureDatasetFormat):
                         depth_scale,
                         bbox_3d,
                         landmarks,
-                        visib_fract_dict)
+                        visib_fracts_dict)
 
 class VocFormat(PostureDatasetFormat):
     IMGAE_DIR = "images"
@@ -3000,7 +2992,7 @@ class VocFormat(PostureDatasetFormat):
                                             read_func=lambda path: float(loadtxt_func((1,))(path)), 
                                             write_func=savetxt_func("%8.8f"), 
                                             suffix = ".txt")
-        self.visib_fract_elements= IntArrayDictElement(self, "visib_fracts", ())
+        self.visib_fracts_elements= IntArrayDictElement(self, "visib_fracts", ())
         self.labels_elements     = self.cxcywhLabelElement(self, "labels", )
 
         self.labels_elements.default_image_size = (640, 480)
@@ -3104,7 +3096,7 @@ class VocFormat(PostureDatasetFormat):
 
         self.intr_elements.write(data_i, viewmeta.intr, subdir=sub_set)
         self.depth_scale_elements.write(data_i, np.array([viewmeta.depth_scale]), subdir=sub_set)
-        self.visib_fract_elements.write(data_i, viewmeta.visib_fract, subdir=sub_set)
+        self.visib_fracts_elements.write(data_i, viewmeta.visib_fracts, subdir=sub_set)
     
     def read_one(self, data_i, **kwargs) -> ViewMeta:
         # 判断data_i属于train或者val
@@ -3129,39 +3121,10 @@ class VocFormat(PostureDatasetFormat):
         ds    = self.depth_scale_elements.read(data_i)
         viewmeta.set_element(ViewMeta.DEPTH_SCALE, ds)
         #
-        visib_fract_dict = self.visib_fract_elements.read(data_i)
-        viewmeta.set_element(ViewMeta.VISIB_FRACT, visib_fract_dict)
+        visib_fracts_dict = self.visib_fracts_elements.read(data_i)
+        viewmeta.set_element(ViewMeta.VISIB_FRACTS, visib_fracts_dict)
 
         return viewmeta
-
-    def remove_one(self, data_i, *args, **kwargs):
-        for c in self.clusters:
-            c.remove(data_i, None)
-        for spliter in self.spliter_group.clusters:
-            result_keys = spliter.split_table.qurey(data_i, True)
-            for row, col in result_keys:
-                spliter.split_table[row, col].remove(data_i)
-            spliter.save()
-
-    def make_continuous(self):
-        row_names = self.data_overview_table.row_names
-        for i, data_i in enumerate(row_names):
-            for c in self.clusters:
-                if data_i != i:
-                    c.move(data_i, i)
-            for spliter in self.spliter_group.clusters:
-                result_keys = spliter.split_table.qurey(data_i, True)
-                for row, col in result_keys:
-                    _list = spliter.split_table[row, col]
-                    _list.remove(data_i)
-                    _list.append(i)
-        for c in self.clusters:
-            c:Elements = c
-            c.save_data_info_map()
-        for spliter in self.spliter_group.clusters:
-            spliter.save()
-
-
 
     def save_elements_data_info_map(self):
         if self.labels_elements.default_image_size is not None:
@@ -3174,7 +3137,7 @@ class VocFormat(PostureDatasetFormat):
                   self.intr_elements, 
                   self.landmarks_elements, 
                   self.extr_vecs_elements,
-                  self.visib_fract_elements]:
+                  self.visib_fracts_elements]:
             c:Elements = c
             c.cache_to_data_info_map(True)
 
@@ -3648,7 +3611,7 @@ class SpliterGroup(DatasetNode[Spliter, VDST]):
         self.cluster_map:_ClusterMap[Spliter] = self.cluster_map
 
     def _init_clusters(self):
-        self.__spliter_name_list = remove_duplicates(self.__spliter_name_list)# + os.listdir(self.split_subdir))
+        self.__spliter_name_list = remove_duplicates(self.__spliter_name_list + os.listdir(self.split_subdir))
         _spliter_list:list = [Spliter(self, m, register=True) for m in self.__spliter_name_list]
         return super()._init_clusters()
 

@@ -2,11 +2,10 @@
 # 在子类指定了Generic的类型后，其类型被绑定，子类的子类无法再修改已经绑定的TypeVar
 # 如果子类未绑定，则可以在子类的子类再指定
 from __init__ import DATASETS_DIR, CFG_DIR
-from posture_6d.data.dataset_format import VocFormat, Mix_VocFormat, Spliter
 
 # from gen_mixed_linemod import MixLinemod_VocFormat
 # from posture_6d.data.mesh_manager import MeshManager
-# from posture_6d.data.dataset_format import ClusterIONotExecutedWarning
+# from posture_6d.data import ClusterIONotExecutedWarning
 # from posture_6d.posture import Posture
 # from posture_6d.derive import PnPSolver
 # import numpy as np
@@ -19,7 +18,7 @@ from posture_6d.core.utils import Table
 from posture_6d.core.posture import Posture
 from posture_6d.core import CameraIntr
 from posture_6d.derive import calc_bbox_2d_proj, calc_Z_rot_angle_to_horizontal
-from posture_6d.data.dataset_format import deserialize_object
+from posture_6d.data import deserialize_object
 from posture_6d.data.viewmeta import ViewMeta
 import numpy as np
 import cv2
@@ -89,13 +88,13 @@ import glob
             
 #             subdir = vm.images_elements.data_info_map[data_i].dir
 #             vm.masks_elements.write(data_i, v.masks, subdir=subdir)
-#             vm.visib_fract_elements.write(data_i, v.visib_fract, subdir=subdir)
+#             vm.visib_fracts_element.write(data_i, v.visib_fract, subdir=subdir)
 #             vm.labels_elements.write(data_i, v.labels, subdir=subdir)
 
 
 #     ## 2
 #     to_remove = []
-#     for data_i, visib in vm.visib_fract_elements.items():
+#     for data_i, visib in vm.visib_fracts_element.items():
 #         if obj_i not in visib:
 #             to_remove.append(data_i)
 #         elif visib[obj_i] < 0.7:

@@ -25,7 +25,7 @@ FIRST_FRAME_ARUCO_NUM = 12
 BASE_FRAME_ARUCO_NUM = 8
 SINGLE_BASE_FRAME_ARUCO_NUM = 3
 
-STOP_COLOR_THRESHOLD = 30
+STOP_COLOR_THRESHOLD = 25
 STOP_BLACK_TIME = 3
 
 TEST = False
@@ -49,7 +49,7 @@ from typing import Union
 
 from . import CameraIntr
 from .aruco_detector import ArucoDetector
-from .data_manager import DataRecorder
+from .data_manager import DataRecorder, ModelManager
 # from config.DataAcquisitionParameters import DEPTH_THRESH
 
 class Motion():
@@ -124,6 +124,8 @@ class Motion():
                 cali_dict = path["imus"][0]
             elif isinstance(path, str):
                 cali_dict = JsonIO.load_json(path)["imus"][0]
+            else:
+                raise TypeError("path must be str or dict")
             accel_X = np.zeros(12) #加速度的补偿矩阵
             accel_X[:9]     = np.array(cali_dict["accelerometer"]["scale_and_alignment"])
             accel_X[9:12]   = np.array(cali_dict["accelerometer"]["bias"])
@@ -333,7 +335,10 @@ class RsCamera():
         # depth_frame = self.hole_filling.process(depth_frame)
         # depth_frame = self.temporal.process(depth_frame)
         depth_frame = self.inv_disparity.process(depth_frame)
+
         return color_frame, depth_frame
+    
+        
 
 def get_corner_dict(img: np.ndarray) -> tuple[dict[int, np.ndarray], np.ndarray, bool]:
     corners, ids, _ = ArucoDetector.detect_aruco_2d(img)
@@ -392,9 +397,10 @@ def multiframe_distortion_correction(color_list: list[np.ndarray], image_size) -
     return median_color
 
 class Capturing():
-    def __init__(self, data_recorder:DataRecorder, aruco_detector:ArucoDetector, rs_camera:RsCamera = None) -> None:
+    def __init__(self, data_recorder:DataRecorder, aruco_detector:ArucoDetector, model_manager:ModelManager, rs_camera:RsCamera = None) -> None:
         self.data_recorder = data_recorder
         self.aruco_detector = aruco_detector
+        self.model_manager = model_manager
         self.trans_mat_list = []
         self.record_pos_list = []
 
@@ -413,13 +419,11 @@ class Capturing():
         self.record_pos_image = None
         # 物品例像字典
         self.obj_exanple_img_dict = {}
-        for name, img in zip(data_recorder.std_meshes_names, self.data_recorder.std_meshes_image):
+        for name, img in zip(self.model_manager.std_meshes_names, self.model_manager.std_meshes_image):
             if img is None:
                 img = np.zeros((480, 640, 3), np.uint8)
             self.obj_exanple_img_dict.update({name: img})
 
-        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
-        self.parameters = aruco.DetectorParameters()
         self.ignore_stable = False
 
         self.__rs_camera = rs_camera
@@ -433,12 +437,13 @@ class Capturing():
         assert isinstance(rs_camera, RsCamera), "para:rs_camera is not a RsCamera"
         self.__rs_camera = rs_camera
 
-        if rs_camera.mode == 0:
-            intr_json_dir = list(self.data_recorder.intr_0_file.files.keys())[0]
-        elif rs_camera.mode == 1:
-            intr_json_dir = list(self.data_recorder.intr_1_file.files.keys())[0]
-        else:
-            raise Exception("rs_camera.mode is illegal")
+        intr_json_dir = self.data_recorder.intr_file.query_fileshandle(rs_camera.mode).get_path()
+        # if rs_camera.mode == 0:
+        #     intr_json_dir = self.data_recorder.intr_file.query_fileshandle(rs_camera.mode).get_dir()
+        # elif rs_camera.mode == 1:
+        #     intr_json_dir = self.data_recorder.intr_file.query_fileshandle(0).get_dir()
+        # else:
+        #     raise Exception("rs_camera.mode is illegal")
         self.__rs_camera.intr.save_as_json(intr_json_dir)
 
     def read_trans_mats(self):
@@ -488,7 +493,7 @@ class Capturing():
 
     def start(self, break_callback, record_gate = True):
         assert self.rs_camera is not None, "RsCamera is None"
-        self.data_recorder.open_all()
+        self.data_recorder.open()
         self.record_gate = record_gate
 
         self.T_start = time.time() # 开始时间
@@ -532,7 +537,7 @@ class Capturing():
                 self.info_txt = "stand by" + "." * int(time.time() - start_stand_by_time)
             if not self.is_waiting and not has_made_directories:
                 # 倒计时结束后清空文件夹
-                self.data_recorder.make_directories()
+                # self.data_recorder.make_directories()
                 has_made_directories = True                
             self.visualise()
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -543,7 +548,7 @@ class Capturing():
         cv2.destroyAllWindows()  # 关闭窗口
         self.rs_camera.pipeline.stop()
 
-        self.data_recorder.close_all()
+        self.data_recorder.close()
 
     @property
     def is_waiting(self):
@@ -588,8 +593,11 @@ class Capturing():
         obj_exanple_img = np.zeros((camera_field.shape[0], int(camera_field.shape[1]/2), 3))
         if self.data_recorder.AddNum == 0:
             try:
-                obj_exanple_img = self.obj_exanple_img_dict[self.data_recorder.current_category_name]
-                obj_exanple_img = cv2.resize(obj_exanple_img, (int(camera_field.shape[1]/2), camera_field.shape[0]))
+                # TODO:
+                if self.data_recorder.current_category_index > 1 and self.data_recorder.current_category_index < 11:
+                    _name = self.model_manager.std_meshes_names
+                    obj_exanple_img = self.obj_exanple_img_dict[_name[self.data_recorder.current_category_index - 2]]
+                    obj_exanple_img = cv2.resize(obj_exanple_img, (int(camera_field.shape[1]/2), camera_field.shape[0]))
             except KeyError:
                 pass
 
@@ -612,7 +620,7 @@ class Capturing():
         # 如果已经开始记录数据
         else:
             # 显示当前已记录数据的数量和最大深度变化值
-            cv2.putText(shown_image,"all:" + str(self.data_recorder.data_num) + \
+            cv2.putText(shown_image,"all:" + str(self.data_recorder.num) + \
                         "|" * len(self.color_image_list),
                         (0,480 + 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 4,(0,0,255),2,cv2.LINE_AA, False)
@@ -639,7 +647,7 @@ class Capturing():
                         point.astype(np.int16),
                         cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 1, cv2.LINE_AA, False)
                 shown_image = cv2.circle(shown_image, point.astype(np.int16), 12, (0, 255, 0), -1)
-        cv2.imshow('COLOR\DEPTH IMAGE',shown_image)
+        cv2.imshow('COLOR&DEPTH IMAGE',shown_image)
 
     def process_one_frame(self, color, depth_frame):
         '''
@@ -649,9 +657,9 @@ class Capturing():
         '''
         ### 判断是否可以采集
         # 检测aruco
-        gray_src = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+        gray_src:cv2.Mat = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
         corners_src, ids_src, rejectedImgPoints = \
-            aruco.detectMarkers(gray_src, self.aruco_dict, parameters=self.parameters)
+            self.aruco_detector._inner_aruco_detector.detectMarkers(gray_src)
         ### 区分floor_aruco和其他aruco
         if ids_src is None:
             this_floor_aruco_num = 0
@@ -785,7 +793,7 @@ class Capturing():
             ### 根据采集的内容调整对精度的严格程度
             if self.data_recorder.current_category_index == 0:
                 restrict = 0.85
-            elif self.data_recorder.current_category_index == len(self.data_recorder.std_meshes_names) - 1:
+            elif self.data_recorder.current_category_index == len(self.model_manager.std_meshes_names) - 1:
                 restrict = 2.0
             else:
                 restrict =  1.0

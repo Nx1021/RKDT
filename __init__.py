@@ -21,9 +21,9 @@ def _get_sub_log_dir(type):
 
 try:
     import MyLib.posture_6d
-    # sys.path.insert(0, MyLib.__path__[0])
-    # shutil.rmtree(f"{SCRIPT_DIR}/posture_6d")
-    # shutil.copytree(MyLib.posture_6d.__path__[0], f"{SCRIPT_DIR}/posture_6d")
+    sys.path.insert(0, MyLib.__path__[0])
+    shutil.rmtree(f"{SCRIPT_DIR}/posture_6d")
+    shutil.copytree(MyLib.posture_6d.__path__[0], f"{SCRIPT_DIR}/posture_6d")
 except ModuleNotFoundError:
     pass
 

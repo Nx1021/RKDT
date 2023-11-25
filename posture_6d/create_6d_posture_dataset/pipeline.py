@@ -2,10 +2,10 @@ import os
 import numpy as np
 from .aruco_detector import ArucoDetector
 from .capturing import Capturing, RsCamera
-from .data_manager import DataRecorder, ModelManager
+from .data_manager import DataRecorder, ModelManager, FrameMeta
 from .interact_icp import InteractIcp
 from .pcd_creator import PcdCreator
-from . import ARUCO_FLOOR, FRAMETYPE_DATA, DatasetFormat, MeshManager, ViewMeta, Posture, MeshMeta, CameraIntr, cvt_by_intr
+from . import ARUCO_FLOOR, FRAMETYPE_DATA, MeshManager, ViewMeta, Posture, MeshMeta, CameraIntr, cvt_by_intr
 
 from typing import Union
 
@@ -15,19 +15,20 @@ class PipeLine():
         self.sub_dir = sub_dir
         self.directory = os.path.join(dataset_name, sub_dir)
         #
-        self.model_manager = ModelManager(self.directory)
+        self.model_manager = ModelManager(self.directory, "", flag_name="model_manager")
         #
-        self.data_recorder = DataRecorder(self.directory)
+        self.data_recorder = DataRecorder(self.directory, "", flag_name="data_recorder")
         #
-        if self.data_recorder.aruco_floor_json.all_exist:
+        if self.data_recorder.aruco_floor_json.all_files_exist:
             self.aruco_detector = ArucoDetector(self.data_recorder.aruco_floor_json.read(0))
-        elif self.data_recorder.aruco_floor_png.all_exist:
-            image, long_side = self.data_recorder.aruco_floor_png.read()
-            self.aruco_detector = ArucoDetector(image, long_side)
+        elif self.data_recorder.aruco_floor_png.all_files_exist:
+            image       = self.data_recorder.aruco_floor_png.read(0)
+            long_side   = self.data_recorder.aruco_floor_png.read(1)
+            self.aruco_detector = ArucoDetector(image, long_side_real_size=long_side)
         else:
             raise ValueError("aruco_floor.json or (aruco_floor.png and aruco_floor_long_side.txt) must exist")
         #
-        self.capturing = Capturing(self.data_recorder, self.aruco_detector)
+        self.capturing = Capturing(self.data_recorder, self.aruco_detector, self.model_manager)
         self.capturing.data_recorder.add_skip_seg(-1)
         #
         self.pcd_creator = PcdCreator(self.data_recorder, self.aruco_detector, self.model_manager)
@@ -36,7 +37,7 @@ class PipeLine():
 
     @property
     def data_num(self):
-        return self.data_recorder.data_num
+        return self.data_recorder.num
 
     def capture_image(self):
         is_recording_model = True
@@ -53,8 +54,9 @@ class PipeLine():
 
         
         for mode, func in zip([RsCamera.MODE_CALI, RsCamera.MODE_DATA], [callback_CALI, callback_DATA]):
-            self.capturing.rs_camera = RsCamera(mode, imu_calibration=self.data_recorder.imu_calibration.paths()[0])
-            self.capturing.rs_camera.intr.save_as_json(os.path.join(self.directory, "intrinsics_" + str(mode) + ".json"))
+            imu_calibration_fh = self.data_recorder.imu_calibration.query_fileshandle(0)
+            self.capturing.rs_camera = RsCamera(mode, imu_calibration=imu_calibration_fh.get_path())
+            # self.capturing.rs_camera.intr.save_as_json(os.path.join(self.directory, "intrinsics_" + str(mode) + ".json"))
             self.capturing.start(func)
 
     def register_pcd(self, update=False):
@@ -72,6 +74,7 @@ class PipeLine():
         elif isinstance(mesh_manager, dict):
             mmd = mesh_manager
         for framemeta in self.data_recorder:
+            framemeta:FrameMeta
             color = framemeta.color
             depth = framemeta.depth
             intr_M = framemeta.intr_M["intr_M"]

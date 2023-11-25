@@ -8,7 +8,6 @@ import cv2
 import json
 import scipy.spatial as spt
 from sko.GA import GA
-from posture_6d.core.posture import Posture
 import sys
 import glob
 import re
@@ -492,7 +491,7 @@ class MaskBilter():
     SHOW_NUM = 6
     def __init__(self, data_recorder:DataRecorder) -> None:
         self.data_recorder = data_recorder
-        self.directory = data_recorder.directory
+        self.data_path = data_recorder.data_path
         # 视角变换矩阵
         # trans_mat_directory = os.path.join(self.directory, "transforms.npy")
         # self.transforms = np.load(trans_mat_directory) 
@@ -508,7 +507,7 @@ class MaskBilter():
         self.__view_pointer = 0
 
         # 相机内参
-        self.camera_intr = CameraIntr.from_json(os.path.join(self.directory, CALI_INTR_FILE))
+        self.camera_intr = CameraIntr.from_json(os.path.join(self.data_path, CALI_INTR_FILE))
 
         plt.ion()
     
@@ -675,9 +674,9 @@ class InteractIcp():
         self.model_manager = model_manager
 
         self.std_meshes_dir = self.model_manager.std_meshes_dir
-        self.std_models_mainname_list = self.model_manager.std_meshes_names
-        self.icp_trans_dir      = self.model_manager.icp_trans.directory
-        self.icp_unf_pcd_dir    = self.model_manager.icp_unf_pcd.directory
+        self.std_meshes_enums = self.model_manager.std_meshes_enums
+        self.icp_trans_dir      = self.model_manager.icp_trans.data_path
+        self.icp_unf_pcd_dir    = self.model_manager.icp_unf_pcd.data_path
 
         # self.segmesh_dir = os.path.join(directory, SEGMESH_DIR)
         # self.segmesh_list = os.listdir(self.segmesh_dir)
@@ -707,7 +706,7 @@ class InteractIcp():
                                 ((0,0,1),(1,0,0)),((0,0,-1),(1,0,0))] #[(front, up)]
         self.view_switch:int = 0 #int
         self.ckt = None
-        self.cover_data_comfirm = False
+        self.cover_data_confirm = False
         # 相机视角
         self.is_camera_mode = False
         self.is_mask_visible = True
@@ -719,36 +718,34 @@ class InteractIcp():
         self.std_mi_list = []
         self.pcd_list = []  
         self.pcd_info_list = []
-        self.data_recorder.barycenter_dict.open()
-        self.data_recorder.barycenter_dict.set_writable()
-        for name in self.std_models_mainname_list:
-            mesh = self.model_manager.std_meshes.read(name)
-            barycenter = self.data_recorder.barycenter_dict[name]
-            std_mi = ModelInfo(mesh, 
-                               name = name, 
-                               class_id=self.model_manager.std_meshes.dulmap_id_name(name),
-                               barycenter=barycenter)
-            if name not in self.data_recorder.barycenter_dict:
-                self.data_recorder.barycenter_dict.write(name, std_mi.barycenter)
-            self.std_mi_list.append(std_mi)
+        with self.model_manager.icp_unf_pcd.get_writer().allow_overwriting():
+            for name in self.std_meshes_enums:
+                mesh = self.model_manager.std_meshes.read(name)
+                barycenter = self.data_recorder.barycenter_dict[name]
+                std_mi = ModelInfo(mesh, 
+                                name = name, 
+                                class_id=self.model_manager.std_meshes.dulmap_id_name(name),
+                                barycenter=barycenter)
+                if name not in self.data_recorder.barycenter_dict:
+                    self.data_recorder.barycenter_dict[name] = std_mi.barycenter
+                self.std_mi_list.append(std_mi)
 
-            icp_unf_pcd = self.model_manager.icp_unf_pcd.read(name)
-            if icp_unf_pcd is None:
-                extracted_mesh = self.model_manager.extracted_mesh.read(name)
-                if extracted_mesh is not None:
-                    icp_unf_pcd = extracted_mesh.sample_points_uniformly(int(np.asarray(std_mi.mesh.vertices).shape[0] * 1.2))
-                else:
-                    icp_unf_pcd = self.model_manager.registerd_pcd.read(name)
-                    # trans_mat = build_sceneCS(aruco_centers, plane_equation, pcd)
-                    # pcd.transform(np.linalg.inv(trans_mat))
-                print("创建:" + name)
-                self.model_manager.icp_unf_pcd.write(name, icp_unf_pcd)
-            # 缩小
-            bbox_3d = np.array(icp_unf_pcd.get_axis_aligned_bounding_box().get_box_points())
-            org_z_max = np.max(bbox_3d[:,2])       
-            self.pcd_list.append(icp_unf_pcd)
-            self.pcd_info_list.append({"z_max": org_z_max})                
-        self.data_recorder.barycenter_dict.close()
+                icp_unf_pcd = self.model_manager.icp_unf_pcd.read(name)
+                if icp_unf_pcd is None:
+                    extracted_mesh = self.model_manager.extracted_mesh.read(name)
+                    if extracted_mesh is not None:
+                        icp_unf_pcd = extracted_mesh.sample_points_uniformly(int(np.asarray(std_mi.mesh.vertices).shape[0] * 1.2))
+                    else:
+                        icp_unf_pcd = self.model_manager.registerd_pcd.read(name)
+                        # trans_mat = build_sceneCS(aruco_centers, plane_equation, pcd)
+                        # pcd.transform(np.linalg.inv(trans_mat))
+                    print("创建:" + name)
+                    self.model_manager.icp_unf_pcd.write(name, icp_unf_pcd)
+                # 缩小
+                bbox_3d = np.array(icp_unf_pcd.get_axis_aligned_bounding_box().get_box_points())
+                org_z_max = np.max(bbox_3d[:,2])       
+                self.pcd_list.append(icp_unf_pcd)
+                self.pcd_info_list.append({"z_max": org_z_max})                
 
     @staticmethod
     def color_generator():
@@ -881,7 +878,7 @@ class InteractIcp():
         vis.add_geometry(self.std_model_frame)
         self.pre_progress()        
 
-    def comfirm(self, vis):
+    def confirm(self, vis):
         saved = self.post_progress()
         if saved:
             self.skip(vis)
@@ -911,7 +908,7 @@ class InteractIcp():
 
     def gen_cur_std_model_meta(self):
         return self.std_mi_list[self.current_index]
-        # name = self.std_models_mainname_list[self.current_index]
+        # name = self.std_meshes_enums[self.current_index]
         # trans_mat_O2C0 = self.get_O2C0()
         # points = np.array(self.current_std_mi.mesh.vertices)
         # points = np.linalg.inv(trans_mat_O2C0).dot(homo_pad(points).T).T[:, :3]
@@ -921,7 +918,7 @@ class InteractIcp():
     def current_std_mi_transform(self, vis, T):
         self.current_std_mi.transform(T, False)  
         self.std_model_frame.transform(T)  
-        self.cover_data_comfirm = False
+        self.cover_data_confirm = False
         if vis is not None:
             vis.update_geometry(self.current_std_mi.mesh)
             vis.update_geometry(self.std_model_frame)
@@ -1112,7 +1109,7 @@ class InteractIcp():
         self.current_std_mi_transform(None, T)
 
         self.ckt = spt.cKDTree(np.array(self.current_pcd.points))  # 用C写的查找类，执行速度更快
-        self.maskbilter.set_current_name(self.std_models_mainname_list[self.current_index])
+        self.maskbilter.set_current_name(self.std_meshes_enums[self.current_index])
         points = np.array(self.current_pcd.points)
         # self.maskbilter.read_depths_as_mask(points)
 
@@ -1124,23 +1121,23 @@ class InteractIcp():
         trans_mat = self.get_O2C0()
         # points_ = trans_mat.dot(org_std_points_set.T).T
 
-        try:
-            transform_path = self.model_manager.icp_trans.auto_path(self.current_index)
-        except:
-            pass
-        else:
-            if self.cover_data_comfirm == False:
-                print("文件已经存在，再次按下确认覆盖")
-                self.cover_data_comfirm = True
-                return False                   
-        self.cover_data_comfirm = False
+        # try:
+        #     transform_path = self.model_manager.icp_trans.auto_path(self.current_index)
+        # except:
+        #     pass
+        # else:
+        if self.current_index in self.model_manager.icp_std_mesh and self.cover_data_confirm == False:
+            print("文件已经存在，再次按下确认覆盖")
+            self.cover_data_confirm = True
+            return False                   
+        self.cover_data_confirm = False
         self.model_manager.icp_trans.write(self.current_index, trans_mat, force=True)
         self.model_manager.icp_std_mesh.write(self.current_index, self.current_std_mi.mesh, force=True)
         return True
 
     def start(self):
         self.load_data()
-
+        
         self.maskbilter = MaskBilter(self.data_recorder)
 
         self.pre_progress()
@@ -1170,7 +1167,7 @@ class InteractIcp():
         key_to_callback[ord("4")] = self.set_is_mask_visible
 
         key_to_callback[ord("J")] = self.skip
-        key_to_callback[ord("N")] = self.comfirm
+        key_to_callback[ord("N")] = self.confirm
         # key_to_callback[ord("K")] = self.GA_registration
         key_to_callback[ord("M")] = self.auto_icp
         # key_to_callback[ord(",")] = self.place_step

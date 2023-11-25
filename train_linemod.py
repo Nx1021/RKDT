@@ -15,7 +15,6 @@ from typing import Iterable
 import os
 import shutil
 from utils.yaml import load_yaml, dump_yaml
-from posture_6d.data.dataset_format import Mix_VocFormat
 
 if __name__ == "__main__":
     cfg_file = f"{CFG_DIR}/oldt_linemod_mix.yaml"

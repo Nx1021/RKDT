@@ -127,7 +127,7 @@ with vm.writer.allow_overwriting():
         
         subdir = vm.images_elements.data_info_map[data_i].dir
         vm.masks_elements.write(data_i, v.masks, subdir=subdir)
-        vm.visib_fract_elements.write(data_i, v.visib_fract, subdir=subdir)
+        vm.visib_fracts_element.write(data_i, v.visib_fract, subdir=subdir)
         vm.labels_elements.write(data_i, v.labels, subdir=subdir)
 
 # vm_test = Mix_VocFormat(f"{DATASETS_DIR}/morrison_mix_test")
@@ -136,7 +136,7 @@ with vm.writer.allow_overwriting():
 # with vm_test.writer:
 #     for v in tqdm(vm[:10]):
 #         vm_test.write_to_disk(v)
-#         vm_test.record_data_type(vm_test.data_num - 1, True, False)
+#         vm_test.record_data_type(vm_test.num - 1, True, False)
 
 std_T_dir = r"E:\shared\code\OLDT\datasets\morrison_models\std_posture"
 
@@ -194,9 +194,9 @@ for obj_i in range(9):
         #     valid_data[class_id].append(data_i)
 
     # for data_i in tqdm():
-    #     if obj_i in vm.visib_fract_elements[data_i]:
+    #     if obj_i in vm.visib_fracts_element[data_i]:
     #         vm_single.write_to_disk(vm[data_i])
-    #         vm_single.record_data_type(vm.data_num - 1, True, False)
+    #         vm_single.record_data_type(vm.num - 1, True, False)
 
 # for i in range(15):
 #     vm = Mix_VocFormat(f"{DATASETS_DIR}/linemod_mix/{str(i).rjust(6, '0')}")
@@ -238,7 +238,7 @@ for obj_i in range(9):
 #     base = vm.spliter_group.cur_training_spliter.get_idx_list("train") + vm.spliter_group.cur_training_spliter.get_idx_list("val")
 #     print(len(base))
 #     for di in list(base):
-#         vf = vm.visib_fract_elements[di][i]
+#         vf = vm.visib_fracts_element[di][i]
 #         if vf < 0.6:
 #             base.remove(di)
 #     print(len(base))
@@ -259,7 +259,7 @@ for obj_i in range(9):
         # aug_v = v.change_brightness(np.random.randint(-100, 100))
         # aug_v = v.change_saturation(np.random.randint(-100, 100))
         # vm.write_to_disk(aug_v)
-        # vm.record_data_type(vm.data_num - 1, True, False)
+        # vm.record_data_type(vm.num - 1, True, False)
 
 # std_T_dir = r"E:\shared\code\OLDT\datasets\morrison_models\std_posture"
 
@@ -334,8 +334,8 @@ for obj_i in range(9):
     # # vc.extr_vecs_elements.save_cache()
     # vc.extr_vecs_elements.cache_priority = True
 
-    # # vc.visib_fract_elements.save_cache()
-    # vc.visib_fract_elements.cache_priority = True
+    # # vc.visib_fracts_element.save_cache()
+    # vc.visib_fracts_element.cache_priority = True
 
 
 # SERVER_DATASET_DIR = "/home/nerc-ningxiao/datasets/linemod_mix/000000"

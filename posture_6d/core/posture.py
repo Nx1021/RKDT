@@ -1,7 +1,12 @@
 import numpy as np
+import numpy.typing as npt
 import cv2
 from scipy.spatial.transform import Rotation as _R
 import matplotlib.pyplot as plt
+
+from typing import Generic, TypeVar, Any, Union
+
+T = TypeVar('T', 'Posture', npt.NDArray)
 
 class Posture:
     '''
@@ -33,7 +38,7 @@ class Posture:
             eular = list(Eular.values())[0]
             self.set_rmat(_R.from_euler(seq, eular, degrees=False).as_matrix())
         
-    def __mul__(self, obj):
+    def __mul__(self, obj:T) -> T:
         if isinstance(obj, Posture):
             posture = Posture(homomat = self.trans_mat.dot(obj.trans_mat))
             return posture
@@ -45,8 +50,13 @@ class Posture:
                 pass
             else:
                 raise ValueError
-            return (self.rmat.dot(obj[..., :3].T)).T + self.tvec
+            rlt:npt.NDArray = (self.rmat.dot(obj[..., :3].T)).T + self.tvec
+            return rlt
     
+    def __div__(self, obj):
+        if isinstance(obj, Posture):
+            return self * obj.inv()
+
     def inv(self):
         inv_transmat = self.inv_transmat
         return Posture(homomat=inv_transmat)
@@ -92,13 +102,21 @@ class Posture:
     def get_NED(self, degrees=False):
         eular = self.get_eular('zyx', degrees=degrees)
         return eular
+    
+    @classmethod
+    def from_vecs(cls, src_vec:np.ndarray, dst_vec:np.ndarray):
+        ### 转换为旋转向量
+        rvec = Rotation.get_rvec_from_destination(dst_vec, src_vec)
+        return cls(rvec=rvec)
 
 class Rotation:
     def __init__(self) -> None:
         self.vecs = np.array([])
 
     @staticmethod
-    def get_rvec_from_destination(dest, base = [0,0,1]):
+    def get_rvec_from_destination(dest:np.ndarray, base:Union[np.ndarray, list] = [0,0,1]):
+        if len(dest.shape) == 1:
+            dest = np.expand_dims(dest, 0)
         ### 转换为旋转向量
         base = np.tile(base, [dest.shape[0],1]).astype(np.float32)
         times = np.sum( dest * base, axis=-1)

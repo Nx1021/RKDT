@@ -8,11 +8,14 @@ from typing import Any
 import time
 import io
 import re
+import pickle
 import warnings
+import cv2
 
-from typing import Generic, TypeVar, Union, Callable, Iterable, Type
+from typing import Generic, TypeVar, Union, Callable, Iterable, Type, Mapping
 import types
 from collections import OrderedDict
+
 
 def get_bbox_connections(bbox_3d_proj:np.ndarray):
     '''
@@ -69,6 +72,48 @@ def extract_doc(doc:str, title:str):
     sub_doc = sub_doc[:idx]
     return sub_doc
 
+def serialize_object(file_path, obj):
+    # if os.path.splitext(file_path)[1] == '.pkl':
+    #     file_path = os.path.splitext(file_path)[0] + ".npz"
+    # np.savez(file_path, **obj)
+    with open(file_path, 'wb') as file:
+        pickle.dump(obj, file)
+
+# 从文件反序列化对象
+def deserialize_object(serialized_file_path):
+    with open(serialized_file_path, 'rb') as file:
+        elements = pickle.load(file)
+        return elements
+
+def is_image(array):
+    if not isinstance(array, np.ndarray):
+        return False
+    if array.ndim not in [2, 3]:
+        return False
+    if array.dtype not in [np.uint8, np.uint16, np.float32, np.float64]:
+        return False
+    return True
+
+def test_pickleable(obj):
+    temp_path = "./__pickle_test__.temp"
+    try:
+        serialize_object(temp_path, obj)
+    except:
+        pickleable = False
+    else:
+        pickleable = True
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+    return pickleable
+
+def read_file_as_str(file_path):
+    with open(file_path, 'r') as file:
+        return file.read()
+    
+def write_str_to_file(file_path, string):
+    with open(file_path, 'w') as file:
+        file.write(string)
 
 def _ignore_warning(func, category = Warning):
     def warpper(*args, **kwargs):
@@ -366,21 +411,43 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
     print(table.get_row("Row1"))  # 输出: {'Name': ['Alice'], 'Age': []}
 
     '''
-    def __init__(self, row_names:list[ROWKEYT] = None, col_names:list[COLKETT] = None, default_value_type:type[ITEM] = None,
-                 *, 
+
+    KW_EMPTY = "empty"
+    KW_row_names = "row_names"
+    KW_col_names = "col_names"
+    KW_default_value_type = "default_value_type"
+    KW_row_name_type = "row_name_type"
+    KW_col_name_type = "col_name_type"
+    KW_data = "data"
+
+    def __init__(self, data:dict = None, *, 
+                 row_names:list[ROWKEYT] = None, 
+                 col_names:list[COLKETT] = None, 
+                 default_value_type:type[ITEM] = None,
                  row_name_type = str, 
                  col_name_type = str):
         self.__data:dict[ROWKEYT, dict[COLKETT, ITEM]] = {}
         self.__row_names:list[ROWKEYT] = []
         self.__col_names:list[COLKETT] = []
         self.__default_value_type = default_value_type
-        self.__row_name_type:Type[ROWKEYT] = row_name_type
-        self.__col_name_type:Type[COLKETT] = col_name_type
+        data = {} if data is None else data
+        assert isinstance(data, (Mapping, Table)), "data must be a dict"
+        if isinstance(data, Table):
+            data = data.to_dict()
+        data = dict(data)
+        if len(data) > 0:
+            row_name_type, col_name_type = self.get_type(data, row_name_type, col_name_type)
+            self.__row_name_type:Type[ROWKEYT] = row_name_type
+            self.__col_name_type:Type[COLKETT] = col_name_type
+            self.update(data)
+        else:
+            self.__row_name_type:Type[ROWKEYT] = row_name_type
+            self.__col_name_type:Type[COLKETT] = col_name_type
 
-        for row_name in row_names or []:
-            self.add_row(row_name)
-        for col_name in col_names or []:
-            self.add_column(col_name)
+            for row_name in row_names or []:
+                self.add_row(row_name)
+            for col_name in col_names or []:
+                self.add_column(col_name)
 
     @staticmethod
     def __type_process(self, value:Union[str, type], orig_list:list, orig_flag):
@@ -430,9 +497,10 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
     
     @default_value_type.setter
     def default_value_type(self, value):
-        assert callable(value), "default_value_type must be callable"
+        assert isinstance(value, type)
+        if self.__default_value_type is not None:
+            warnings.warn(f"default_value_type has been set from {self.__default_value_type} to {value}, but it is not recommended")
         self.__default_value_type = value
-
 
     @property
     def row_name_type(self):
@@ -459,6 +527,9 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
             return self.__default_value_type()
         return None
 
+    def assert_default_value_type(self, value):
+        if self.__default_value_type is not None:
+            assert isinstance(value, self.__default_value_type), "value must be an instance of default_value_type"
 
     def _row_name_filter(self, row_name:ROWKEYT) -> ROWKEYT:
         return self.__name_filter(row_name, self.__row_name_type, self.__row_names)
@@ -471,12 +542,16 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
         if self.__key_assert(row_name, self.__row_names, False, ignore=exist_ok):
             self.__row_names.append(row_name)
             self.__data[row_name] = {col_name: self.gen_default_value() for col_name in self.__col_names}
+            return True
+        return False
 
     def remove_row(self, row_name:Union[int,str], not_exist_ok=False):
         row_name = self._row_name_filter(row_name)
         if self.__key_assert(row_name, self.__row_names, True, ignore=not_exist_ok):
             del self.__data[row_name]
             self.__row_names.remove(row_name)
+            return True
+        return False
 
     def add_column(self, col_name:COLKETT, exist_ok=False):
         assert isinstance(col_name, self.col_name_type)
@@ -484,6 +559,8 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
             self.__col_names.append(col_name)
             for row_name in self.__row_names:
                 self.__data[row_name][col_name] = self.gen_default_value()
+            return True
+        return False
 
     def remove_column(self, col_name:Union[int,str], not_exist_ok=False):
         col_name = self._col_name_filter(col_name)
@@ -491,6 +568,8 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
             for row_name in self.__row_names:
                 del self.__data[row_name][col_name]
             self.__col_names.remove(col_name)
+            return True
+        return False
 
     def resort_row(self, new_row_names:list[Union[int,str]]):
         new_row_names = [self._row_name_filter(row_name) for row_name in new_row_names]
@@ -515,15 +594,39 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
             self.__data[row_name] = new_row
         self.__col_names = new_col_names
 
-    def get_row(self, row_name:Union[int,str]):
+    def move_row(self, row_name:Union[int,str], new_name:Union[int,str]):
+        row = self.get_row(row_name)
+        self.remove_row(row_name)
+        self.add_row(new_name)
+        self.set_row(new_name, row)
+
+    def move_column(self, col_name:Union[int,str], new_name:Union[int,str]):
+        col = self.get_column(col_name)
+        self.remove_column(col_name)
+        self.add_column(new_name)
+        self.set_column(new_name, col)
+
+    def get_row(self, row_name:Union[int,str]) -> dict[COLKETT, ITEM]:
         row_name = self._row_name_filter(row_name)
         if self.__key_assert(row_name, self.__row_names, True):
             return types.MappingProxyType(self.__data[row_name])
 
-    def get_column(self, col_name:Union[int,str]):
+    def get_column(self, col_name:Union[int,str]) -> dict[ROWKEYT, ITEM]:
         col_name = self._col_name_filter(col_name)
         if self.__key_assert(col_name, self.__col_names, True):
             return {row_name: self.__data[row_name][col_name] for row_name in self.__row_names}
+
+    def set_row(self, row_name:Union[int,str], row:dict[COLKETT, ITEM]):
+        row_name = self._row_name_filter(row_name)
+        if self.__key_assert(row_name, self.__row_names, True):
+            for col_name, value in row.items():
+                self.__data[row_name][col_name] = value
+
+    def set_column(self, col_name:Union[int,str], col:dict[ROWKEYT, ITEM]):
+        col_name = self._col_name_filter(col_name)
+        if self.__key_assert(col_name, self.__col_names, True):
+            for row_name, value in col.items():
+                self.__data[row_name][col_name] = value
 
     def tranverse(self, with_key=False):
         for row_name in self.__row_names:
@@ -533,20 +636,30 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
                 else:
                     yield self.__data[row_name][col_name]
 
-    def update(self, other:dict[ROWKEYT, dict[COLKETT, ITEM]]):
+    def update(self, other:Union[dict[ROWKEYT, dict[COLKETT, ITEM]], "Table[ROWKEYT, COLKETT, ITEM]"]):
         for row_name, row in other.items():
             self.add_row(row_name, exist_ok=True)
             for col_name, value in row.items():
                 self.add_column(col_name, exist_ok=True)
                 self.__data[row_name][col_name] = value
+    
+    def clear(self):
+        self.__data.clear()
+        self.__row_names.clear()
 
-    def merge(self, other:dict[str, dict[str, ITEM]], merge_func:Callable):
+    def sort(self, key:Callable = None, reverse:bool = False):
+        self.__row_names.sort(key=key, reverse=reverse)
+        self.__data = {row_name: self.__data[row_name] for row_name in self.__row_names}
+
+    def merge(self, other:dict[str, dict[str, ITEM]], merge_func:Callable = None):
+        merge_func = lambda x, y: True
         assert callable(merge_func)
         for row_name, row in other.items():
             self.add_row(row_name, exist_ok=True)
             for col_name, value in row.items():
                 self.add_column(col_name, exist_ok=True)
-                self.__data[row_name][col_name] = merge_func(self.__data[row_name][col_name], value)
+                if merge_func(self.__data[row_name][col_name], value):
+                    self.__data[row_name][col_name] = value
 
     def clean_invalid(self, judge_invalid_func:Callable):
         assert callable(judge_invalid_func)
@@ -555,32 +668,79 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
                 if judge_invalid_func(self.__data[row_name][col_name]):
                     self.__data[row_name][col_name] = self.gen_default_value()
 
-    def __getitem__(self, keys:Union[int, str, tuple[Union[int, str]]]):
-        if isinstance(keys, (int, str)):
-            row_name = keys
-            return self.get_row(row_name)
-        elif isinstance(keys, tuple):
-            assert len(keys) == 2, "Keys must be a tuple of length 2"
-            row_name, col_name = keys
-            col_name:COLKETT = self._col_name_filter(col_name)
-            row = self.get_row(row_name)
-            return row[col_name]
-        else:
-            raise ValueError
+    def __process_item(self, keys:Union[int, str, tuple[Union[int, str]], slice]):
+        def get_key_list(key, names, filter_func:Callable):
+            if isinstance(key, slice):
+                key_list = names[key]
+            elif isinstance(key, (list, tuple, range)):
+                key_list = [filter_func(x) for x in key]
+            else:
+                key_list = [filter_func(key)]
+            return key_list
         
-    def __setitem__(self, keys:tuple[Union[int, str]], value:ITEM = None):
-        assert isinstance(keys, tuple), "Keys must be a tuple"
-        if len(keys) == 2:
-            row_name, col_name = keys
-            row_name = self._row_name_filter(row_name)            
-            col_name = self._col_name_filter(col_name)
-            self.__data[row_name][col_name]= value
+        if not isinstance(keys, tuple):
+            # if keys is a row_name, convert it to a tuple
+            assert isinstance(keys, self.__row_name_type), f"key must be a tuple or {self.__row_name_type.__name__}"
+            keys = (keys, slice(None, None, None))
         else:
-            raise ValueError("Keys must be a tuple of length 2")
+            assert len(keys) == 2, "Keys must be a tuple of length 2"
+        row_key, col_key = keys
+        if isinstance(row_key, (int, str)) and isinstance(col_key, (int, str)):
+            row_key = self._row_name_filter(row_key)
+            col_key = self._col_name_filter(col_key)
+            return row_key, col_key, False
+        elif isinstance(row_key, (list, tuple, range, slice)) or isinstance(col_key, (list, tuple, range, slice)):
+            row_key_list = get_key_list(row_key, self.__row_names, self._row_name_filter)
+            col_key_list = get_key_list(col_key, self.__col_names, self._col_name_filter)
+            return row_key_list, col_key_list, True
+        else:
+            raise TypeError("invalid key type for Table")
+
+    def __assert_keys_list(self, row_key_list, col_key_list):
+        for row_name in row_key_list:
+            assert row_name in self.__row_names, f"row_name '{row_name}' does not exist"
+        for col_name in col_key_list:
+            assert col_name in self.__col_names, f"col_name '{col_name}' does not exist"
+
+    def __getitem__(self, keys:Union[int, str, tuple[Union[int, str]]]):
+        row_key, col_key, table_mode = self.__process_item(keys)
+        if table_mode:
+            self.__assert_keys_list(row_key, col_key)
+            table_dict:dict[ROWKEYT, dict[COLKETT, ITEM]] = {}
+            for rn in row_key:
+                table_dict[rn] = {}
+                for cn in col_key:
+                    table_dict[rn][cn] = self.__data[rn][cn]
+            return table_dict
+        else:                
+            return self.__data[row_key][col_key]
+        
+    def __setitem__(self, 
+                    keys:tuple[Union[int, str]], 
+                    value:Union[ITEM, dict[ROWKEYT, dict[COLKETT, ITEM]], "Table[ROWKEYT, COLKETT, ITEM]"]  = None):
+        row_key, col_key, table_mode = self.__process_item(keys)
+        if table_mode:
+            self.__assert_keys_list(row_key, col_key)
+            # check value
+            table_dict = {}
+            for rn in row_key:
+                table_dict[rn] = {}
+                for cn in col_key:
+                    _v = self.__data[rn][cn]
+                    self.assert_default_value_type(_v)
+                    table_dict[rn][cn] = self.__data[rn][cn]
+            self.update(table_dict)
+        else:              
+            self.assert_default_value_type(value)
+            self.__data[row_key][col_key] = value
         
     def __str__(self) -> str:
         if len(self.__data) == 0:
-            return "Empty Table"
+            return f"Empty Table :" + \
+                f"row_name{self.row_names}, col_name{self.col_names} " + \
+                f"default_value_type:{self.default_value_type.__name__} " + \
+                f"row_name_type:{self.row_name_type.__name__} " + \
+                f"col_name_type:{self.col_name_type.__name__} "
 
         max_col_widths = {col_name: len(col_name) for col_name in self.__col_names}
         str_data = {}
@@ -616,15 +776,87 @@ class Table(Generic[ROWKEYT, COLKETT, ITEM]):
 
         return table_str
 
+    def keys(self):
+        return self.__data.keys()
+    
+    def values(self):
+        return self.__data.values()
+    
+    def items(self):
+        return self.__data.items()
+
+    def __len__(self):
+        return len(self.__data)
+    
+    def __iter__(self):
+        return self.__data.__iter__()
+    
+    def __contains__(self, item):
+        return self.__data.__contains__(item)
+
     @staticmethod
-    def from_json(path):
+    def get_type(table_dict, default_row_type = str, default_col_type = str):
+        try:
+            row_type = table_dict.keys().__iter__().__next__().__class__
+        except StopIteration:
+            row_type = default_row_type
+        try:
+            col_type = table_dict.values().__iter__().__next__().keys().__iter__().__next__().__class__
+        except StopIteration:
+            col_type = default_col_type
+        return row_type, col_type
+
+    @classmethod
+    def from_json(cls, path):
         table_dict:dict[ROWKEYT, dict[COLKETT, ITEM]] = JsonIO.load_json(path)
-        row_type = table_dict.keys().__iter__().__next__().__class__
-        col_type = table_dict.values().__iter__().__next__().keys().__iter__().__next__().__class__
-        table = Table(row_name_type=row_type, col_name_type=col_type)
-        table.update(table_dict)
+        # row_type, col_type = Table.get_type(table_dict)
+        # table = Table(row_name_type=row_type, col_name_type=col_type)
+        # table.update(table_dict)
+        table = cls.from_dict(table_dict)
         return table
     
-    def save(self, path):
-        JsonIO.dump_json(path, self.__data)
+    @classmethod
+    def to_json(cls, path, table:"Table"):
+        table_dict = table.to_dict()
+        JsonIO.dump_json(path, table_dict)
 
+    def to_dict(self):
+        dict_ = {}
+        dict_[self.KW_EMPTY]                = self.empty
+        dict_[self.KW_row_names]            = self.row_names
+        dict_[self.KW_col_names]            = self.col_names
+        dict_[self.KW_default_value_type]   = self.default_value_type.__name__
+        dict_[self.KW_row_name_type]        = self.row_name_type.__name__
+        dict_[self.KW_col_name_type]        = self.col_name_type.__name__
+        dict_[self.KW_data] = dict(self.data)
+        return dict_
+
+    @classmethod
+    def from_dict(cls:type["Table"], dict_:dict):
+        table = cls(data        = dict_[cls.KW_data],
+                    row_names   = dict_[cls.KW_row_names], 
+                    col_names   = dict_[cls.KW_col_names], 
+                    default_value_type  = eval(dict_[cls.KW_default_value_type]),
+                    row_name_type       = eval(dict_[cls.KW_row_name_type]), 
+                    col_name_type       = eval(dict_[cls.KW_col_name_type]))
+        return table
+
+    def save(self, path):
+        JsonIO.dump_json(path, self.to_dict())
+
+def rebind_methods(obj, method_name:Union[str, Callable], new_func:Callable):
+    if isinstance(method_name, Callable):
+        # search for the method name
+        found = False
+        for name in dir(obj):
+            if getattr(obj, name) == method_name:
+                method_name = name
+                found = True
+                break
+        if not found:
+            raise ValueError(f"method {method_name} not found")
+    else:
+        # check if the method exists
+        assert hasattr(obj, method_name), f"method {method_name} not found"
+    assert isinstance(method_name, str), f"method {method_name} not found"
+    setattr(obj, method_name, types.MethodType(new_func, obj))

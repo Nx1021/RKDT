@@ -6,7 +6,6 @@ from ultralytics import YOLO
 import torch
 import platform
 from utils.yaml import load_yaml, dump_yaml
-from posture_6d.data.dataset_format import Mix_VocFormat
 import os
 
 if __name__ == "__main__":

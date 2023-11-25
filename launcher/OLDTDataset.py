@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import Dataset
 from models.results import ObjPosture, ImagePosture
 from models.utils import normalize_bbox
-from posture_6d.data.dataset_format import VocFormat
+from posture_6d.data.dataset_example import VocFormat_6dPosture
 from posture_6d.data.viewmeta import  ViewMeta
 from posture_6d.core.posture import Posture
 
@@ -25,17 +25,18 @@ def transpose_data(batch_data) -> tuple[list]:
 
 def collate_fn(batch_data):
     return batch_data
-
+_ONLY_REAL = False
 class OLDTDataset(Dataset):
-    def __init__(self, data_folder:str, set_:str, formattype = VocFormat):
+    def __init__(self, data_folder:str, set_:str, formattype = VocFormat_6dPosture):
         '''
         set must be "trian" or "val"
         '''
         self.data_folder = data_folder
         self.vocformat = formattype(data_folder)
+        # self.vocformat.rebuild(force= True)
         self.vocformat.depth_elements.close()
         self.vocformat.bbox_3ds_elements.close()
-        self.vocformat.visib_fract_elements.close()
+        self.vocformat.visib_fracts_element.close()
         self.vocformat.depth_scale_elements.close()
         # self.vocformat.masks_elements.close()
         # self.vocformat.intr_elements.close()
@@ -47,18 +48,21 @@ class OLDTDataset(Dataset):
         self.trans_vecs_folder  = os.path.join(data_folder, 'trans_vecs', set_)
         
         # self.data_files = len(self.idx_array)
-        self.data_files = self.vocformat.data_num
+        self.data_files = self.vocformat.num
 
         self.set_augment_para(1,0)
 
     @property
     def idx_array(self):
-        if self.set == self.vocformat.KW_TRAIN:
-            return self.vocformat.train_idx_array
-        elif self.set == self.vocformat.KW_VAL:
+        if self.set == self.vocformat.DEFAULT_SUBSETS[0]:
+            array = self.vocformat.train_idx_array
+            if _ONLY_REAL:
+                array = np.intersect1d(array, self.vocformat.real_idx_array)
+            return array
+        elif self.set == self.vocformat.DEFAULT_SUBSETS[1]:
             return self.vocformat.val_idx_array
         else:
-            raise ValueError("parameter set must be {} or {}".format(self.vocformat.KW_TRAIN, self.vocformat.KW_VAL))
+            raise ValueError("parameter set must be {} or {}".format(self.vocformat.DEFAULT_SUBSETS[0], self.vocformat.DEFAULT_SUBSETS[1]))
 
     def set_augment_para(self, data_inflation: int, max_rotate_angle:float):
         self.data_inflation = int(max(data_inflation, 1))
@@ -104,7 +108,7 @@ class OLDTDataset(Dataset):
         if_aug = idx % self.data_inflation > 0
         orig_idx = int(idx / self.data_inflation)
         data_i = self.idx_array[orig_idx]
-        viewmeta = self.vocformat.read_one(data_i)   
+        viewmeta = self.vocformat.read(data_i)   
         viewmeta.calc_bbox2d_from_mask(viewmeta.masks)
         if if_aug:
             viewmeta = self.augment(viewmeta)
