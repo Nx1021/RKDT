@@ -74,6 +74,9 @@ class MeshManager:
         return cls._instance
     
     def __init__(self, root, model_names: dict[int, str] = {}, load_all = False, modify_class_id_pairs:list[tuple[int]]=[]) -> None:
+        if hasattr(self, "_inited"):
+            return
+        
         self.root = root
         self.model_names: dict[int, str] = model_names
         self.__model_name_json = os.path.join(self.root, "models_name.json")
@@ -109,6 +112,8 @@ class MeshManager:
                     self.load_model(key)
         if len(modify_class_id_pairs)>0:
             self.modify_class_id(modify_class_id_pairs)
+        
+        self._inited = True
 
     @property
     def class_num(self):
@@ -275,7 +280,7 @@ class MeshManager:
         return MeshMeta(mesh, bbox_3d, symmetries, diameter, ldmk_3d, name = name, class_id = class_id)
     
     def get_meta_dict(self):
-        meta_dict = {}
+        meta_dict:dict[int, MeshMeta] = {}
         for key in self.model_dirs:
             meta = self.export_meta(key)
             meta_dict[key] = meta

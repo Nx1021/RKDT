@@ -31,6 +31,7 @@ normalize_before: false
 landmark_num: 24
 decoder_num_queries: 96
 transformer_d: 384
+input_d: 320
 calc_intermediate: false
 
 ### loss
