@@ -68,6 +68,7 @@ class ObjectPcd(MeshMeta):
         绘制所有夹持姿态
         '''
         for ggp in self.candi_coord_parameter:
+            print(ggp[7])
             self.draw(gripper, Posture(rvec=ggp[:3], tvec=ggp[3:6]), ggp[6])
 
     def draw(self, gripper:MyThreeFingerGripper = None, gripper_posture_O:Posture = None, u = None):

@@ -20,16 +20,22 @@ from grasp_coord.calculator import CandiCoordCalculator, Triangle_Hough
 
 
 if __name__ == "__main__":
-    sa = SphereAngle(5000)
-    ax = plt.axes(projection='3d')  # 设置三维轴
-    ax.scatter(sa.vecs[:,0], sa.vecs[:,1], sa.vecs[:,2], s=5, marker="o", c='r')
-    plt.show()
-    hough = Triangle_Hough(1, 30, 0, 2)
-    image = cv2.imread("hough_test.png", cv2.IMREAD_GRAYSCALE)
-    hough.run(image, ifplot=True)
-
+    # sa = SphereAngle(5000)
+    # ax = plt.axes(projection='3d')  # 设置三维轴
+    # ax.scatter(sa.vecs[:,0], sa.vecs[:,1], sa.vecs[:,2], s=5, marker="o", c='r')
+    # plt.show()
+    # hough = Triangle_Hough(1, 30, 0, 2)
+    # image = cv2.imread("hough_test.png", cv2.IMREAD_GRAYSCALE)
+    # hough.run(image, ifplot=True)
 
     gripper = MyThreeFingerGripper() 
-    for i in range(0, 9):
+    for i in range(0, 1):
         calc = CandiCoordCalculator(create_ObjectPcd_from_file(i), gripper)
-        calc.calc_candidate_coord(False, True)
+        calc.calc_candidate_coord(False, False)
+        # calc._voxelize_test()
+
+    # gripper = MyThreeFingerGripper() 
+    # for i in range(0, 9):
+    #     calc = CandiCoordCalculator(create_ObjectPcd_from_file(i), gripper)
+    #     # calc.calc_candidate_coord(False, True)
+    #     calc._voxelize_test()

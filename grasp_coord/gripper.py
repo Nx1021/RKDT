@@ -47,7 +47,7 @@ class Gripper():
 
     def get_u(self, r):
         r_list = np.tile(self.r_list, (1, len(r)))
-        ok_index = np.sum(r_list < r, axis=0)
+        ok_index = np.sum(r_list < r, axis=0) - 1
         # if ok_index.size == 0:
         #     u_index = -1
         # else:
