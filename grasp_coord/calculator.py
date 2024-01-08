@@ -93,8 +93,8 @@ class SphereAngle(InitAngle):
     '''
     在球面上大致均匀分布的角度序列
     '''
-    def __init__(self) -> None:
-        nums_points = 500
+    def __init__(self, nums_points = 500) -> None:
+        nums_points = nums_points
         radius = 1
         loc = np.zeros((nums_points, 3))
         ii = np.arange(1, nums_points+1, 1)
@@ -1384,6 +1384,10 @@ class CandiCoordCalculator():
             voxel_size = int(self.modelinfo.pointcloud_size.min() / 30) + 1
         self.voxel_size = voxel_size
 
+        self.rot_num = 500
+
+        self.save_name = "_candi_grasp_posture"
+
         # calculate Centroid
         voxelized = Voxelized.from_mesh(self.modelinfo.mesh, voxel_size)
         voxelized_centroid = np.mean(voxelized.entity_indices, axis=0) # [3]
@@ -1416,10 +1420,10 @@ class CandiCoordCalculator():
                                         gripper_origin)
             
             rg.score = min(h_score, v_score)
-            if (h_score < v_score):
-                print("h_score", rg.score)
-            else:
-                print("v_score", rg.score)
+            # if (h_score < v_score):
+            #     print("h_score", rg.score)
+            # else:
+            #     print("v_score", rg.score)
             scores.append(rg.score)
         return scores
 
@@ -1547,7 +1551,7 @@ class CandiCoordCalculator():
             o3d.io.write_triangle_mesh(f"{LOGS_DIR}/grasp_illustration/rot_mesh.stl", rot_mesh)
 
         print("start to calculate for {}".format(self.modelinfo.name))
-        ia = SphereAngle()
+        ia = SphereAngle(self.rot_num)
         voxel_size = self.voxel_size
         found_num = 0
         global_grasp_poses = []
@@ -1600,7 +1604,7 @@ class CandiCoordCalculator():
 
         ### 保存结果
         global_grasp_poses = np.concatenate(global_grasp_poses, 0) # 合并
-        save_path = os.path.join(MODELS_DIR, self.modelinfo.name + "_candi_grasp_posture" + ".npy")
+        save_path = os.path.join(MODELS_DIR, self.modelinfo.name + self.save_name + ".npy")
         np.save(save_path, global_grasp_poses, allow_pickle= True)
         print("saved at {}".format(save_path))
         

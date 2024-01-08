@@ -1071,7 +1071,10 @@ class PostProcesser():
         for class_id, mesh in self.mesh_manager.get_meta_dict().items():
             name = mesh.name
             path = os.path.join(self.mesh_manager.root, "std_posture", str(class_id).rjust(6, '0') + "_" + name + ".npy")
-            self.std_posture[class_id] = Posture(homomat= np.load(path))
+            if os.path.exists(path):
+                self.std_posture[class_id] = Posture(homomat= np.load(path))
+            else:
+                self.std_posture[class_id] = Posture()
 
     def parse_exclusively(self, probs:torch.Tensor, coords:torch.Tensor):
         '''

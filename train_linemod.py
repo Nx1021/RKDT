@@ -19,7 +19,7 @@ from utils.yaml import load_yaml, dump_yaml
 if __name__ == "__main__":
     cfg_file = f"{CFG_DIR}/oldt_linemod_mix.yaml"
     # torch.cuda.set_device("cuda:0")
-    for i in [2, 14]:
+    for i in [0]:
         setup_paras = load_yaml(cfg_file)["setup"]
 
         sys = platform.system()
@@ -33,7 +33,10 @@ if __name__ == "__main__":
         setup_paras["batch_size"] = batch_size
         setup_paras["sub_data_dir"] = f"linemod_mix/{str(i).rjust(6, '0')}"
 
-        trainer = setup("train", **setup_paras)
+        trainer = setup("train", 
+                        detection_base_weight=f"{WEIGHTS_DIR}/linemod_mix/{str(i).rjust(6, '0')}_best.pt" ,
+                        **setup_paras)
+        trainer.train_dataset.vocformat.spliter_group.split_mode = "aug_posture"
         trainer.train()
 
         trainer = None

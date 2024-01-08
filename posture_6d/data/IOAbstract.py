@@ -34,7 +34,6 @@ from . import Posture, JsonIO, JSONDecodeError, Table, extract_doc, search_in_di
       serialize_object, deserialize_object, test_pickleable, read_file_as_str, write_str_to_file
 from .mesh_manager import MeshMeta
 
-# TODO 删除 next_valid_i，
 
 DEBUG = False
 
@@ -89,6 +88,25 @@ class ClusterNotRecommendWarning(ClusterWarning):
 
 # region functions ###
 def method_exit_hook_decorator(cls, func:Callable, exit_hook_func, enter_condition_func = None):
+    """
+    Decorator function that adds an exit hook to a method based on an enter condition.
+
+    Parameters
+    ----------
+    cls : class
+        The class to which the method belongs.
+    func : callable
+        The method to be decorated.
+    exit_hook_func : callable
+        The exit hook function to be called after the method execution.
+    enter_condition_func : callable, optional
+        The enter condition function to determine if the method should be executed. Defaults to None.
+
+    Returns
+    -------
+    callable
+        The decorated method.
+    """
     enter_condition_func = (lambda x : True) if enter_condition_func is None else enter_condition_func
     def wrapper(self, *args, **kw):
         if enter_condition_func(self):
@@ -103,6 +121,19 @@ def method_exit_hook_decorator(cls, func:Callable, exit_hook_func, enter_conditi
     return wrapper
 
 def parse_kw(**kwargs) -> list[dict[str, Any]]:
+    """
+    Parses keyword arguments into a list of dictionaries.
+
+    Parameters
+    ----------
+    **kwargs : dict[str, Any]
+        The keyword arguments to be parsed.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The parsed keyword arguments.
+    """
     if len(kwargs) == 0:
         return []
     assert all([isinstance(v, list) for v in kwargs.values()])
@@ -118,18 +149,60 @@ def parse_kw(**kwargs) -> list[dict[str, Any]]:
     return kws
 
 def is_subpath(child_path, parent_path):
+    """
+    Check if a path is a subpath of another path.
+
+    Parameters
+    ----------
+    child_path : str
+        The path to check if it is a subpath.
+    parent_path : str
+        The parent path to compare against.
+
+    Returns
+    -------
+    bool
+        True if the child_path is a subpath of the parent_path, False otherwise.
+    """
     relative_path:str = os.path.relpath(child_path, parent_path)
     return not relative_path.startswith('..')
 
-def get_with_priority(*args:Union[T, None]) -> T:
+def get_with_priority(*args:Optional[T]) -> T:
+    """
+    Returns the first non-None argument from the given arguments.
+
+    Parameters
+    ----------
+    *args : Optional[T]
+        The arguments to check for non-None values.
+
+    Returns
+    -------
+    T
+        The first non-None argument, or None if all arguments are None.
+    """
     assert len(args) > 0, "at least one parameter is needed"
     for arg in args:
         if arg is not None:
             return arg
-    # raise ValueError("at least one parameter is needed")
-    return None
+    return None # type: ignore
         
 def get_func_name(obj, func):
+    """
+    Get the name of a function within an object.
+
+    Parameters
+    ----------
+    obj : object
+        The object containing the function.
+    func : function
+        The function to get the name of.
+
+    Returns
+    -------
+    str or None
+        The name of the function if found, None otherwise.
+    """
     func_name = func.__name__
     if hasattr(obj, func_name):
         return func_name
@@ -140,8 +213,23 @@ def get_func_name(obj, func):
         return None
             
 def get_function_args(function, *exclude:str):
+    """
+    Get the arguments of a function, excluding specified arguments.
+
+    Parameters
+    ----------
+    function : function
+        The function to get the arguments of.
+    *exclude : str
+        The arguments to exclude.
+
+    Returns
+    -------
+    rlt
+        The signature of the function, excluding specified arguments.
+    """
     signature = inspect.signature(function)
-    rlt = []
+    rlt:list[str] = []
     ok_kind = [inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_ONLY]
     for param in signature.parameters.values():
         if param.kind in ok_kind and param.name not in exclude:
@@ -150,6 +238,41 @@ def get_function_args(function, *exclude:str):
 # endregion functions ###
 
 class IOStatusManager():
+    """
+    Manages the status and operations related to input/output (IO) operations.
+
+    Attributes
+    -----
+    WRITING_MARK: str
+        The file extension used to mark a writing operation.
+    LOG_READ: int
+        Log type for read operation.
+    LOG_ADD: int
+        Log type for add operation.
+    LOG_REMOVE: int
+        Log type for remove operation.
+    LOG_CHANGE: int
+        Log type for change operation.
+    LOG_MOVE: int
+        Log type for move operation.
+    LOG_OPERATION: int
+        Log type for generic operation.
+    LOG_KN: list
+        List of valid log types.
+    _DEBUG: bool
+        Flag to enable debug mode.
+    __closed: bool
+        Flag indicating if the IOStatusManager object is closed.
+    __readonly: bool
+        Flag indicating if the IOStatusManager object is read-only.
+    __wait_writing: bool
+        Flag indicating if the IOStatusManager object is waiting for writing or a writing process is executing.
+    __overwrite_allowed: bool
+        Flag indicating if overwriting is allowed.
+    __writer: _Writer
+        The writer object for performing IO operations.
+    """
+
     WRITING_MARK = '.writing'
 
     LOG_READ = 0
@@ -163,6 +286,18 @@ class IOStatusManager():
     _DEBUG = False
 
     def __init__(self) -> None:
+        """
+        Initializes the IOStatusManager object.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+
+        """
         self.__closed = True
         self.__readonly = True
         self.__wait_writing = True
@@ -172,11 +307,45 @@ class IOStatusManager():
 
     # region context and writer ###
     class _IOContext():
+        """
+        Context manager for managing the IO context.
+
+        Attributes
+        ----------
+        DEFAULT_INPUT_OPEN : bool
+            Default value for input open flag.
+        DEFAULT_INPUT_WRITABLE : bool
+            Default value for input writable flag.
+        DEFAULT_INPUT_OVERWRITE_ALLOWED : bool
+            Default value for input overwrite allowed flag.
+
+        Methods
+        -------
+        __init__ : 
+            Initializes the _IOContext object.
+        reset_input : 
+            Resets the input flags to their default values.
+        set_input : 
+            Sets the input flags to the specified values.
+        enter_hook : 
+            Hook method called when entering the context.
+        exit_hook : 
+            Hook method called when exiting the context.
+        """
+
         DEFAULT_INPUT_OPEN                  = False
         DEFAULT_INPUT_WRITABLE              = False
         DEFAULT_INPUT_OVERWRITE_ALLOWED     = False
-        def __init__(self, 
-                     obj:"IOStatusManager") -> None:
+
+        def __init__(self, obj:"IOStatusManager") -> None:
+            """
+            Initializes the _IOContext object.
+
+            Parameters
+            ----------
+            obj : IOStatusManager
+                The IOStatusManager object associated with this context.
+            """
             self.obj:IOStatusManager = obj
             
             self.orig_closed:bool               = True
@@ -187,18 +356,41 @@ class IOStatusManager():
 
             self.working = False
 
-        def reset_input(self):
+        def reset_input(self) -> None:
+            """
+            Resets the input flags to their default values.
+            """ 
             self.input_open                 = self.DEFAULT_INPUT_OPEN                  
             self.input_writable             = self.DEFAULT_INPUT_WRITABLE              
             self.input_overwrite_allowed    = self.DEFAULT_INPUT_OVERWRITE_ALLOWED     
 
         def set_input(self, open = False, writable = False, overwrite_allowed = False):
+            """
+            Sets the input flags to the specified values.
+
+            Parameters
+            ----------
+            open : bool
+                Flag indicating if the input should be opened.
+            writable : bool
+                Flag indicating if the input should be writable.
+            overwrite_allowed : bool
+                Flag indicating if overwriting is allowed.
+
+            Returns
+            -------
+            _IOContext
+                The _IOContext object.
+            """
             self.input_open                 = open
             self.input_writable             = writable
             self.input_overwrite_allowed    = overwrite_allowed
             return self
 
-        def enter_hook(self):
+        def enter_hook(self) -> None:
+            """
+            Hook method called when entering the context.
+            """
             self.orig_closed                = self.obj.closed
             self.orig_readonly              = self.obj.readonly
             self.orig_overwrite_allowed     = self.obj.overwrite_allowed
@@ -210,6 +402,14 @@ class IOStatusManager():
             self.obj.set_overwrite_allowed(self.input_overwrite_allowed)
 
         def exit_hook(self):
+            """
+            Hook method called when exiting the context.
+
+            Returns
+            -------
+            bool
+                Indicates successful exit from the context.
+            """
             self.obj.set_overwrite_allowed(self.orig_overwrite_allowed)
             if self.obj.is_writing:
                 self.obj.stop_writing()
@@ -218,6 +418,14 @@ class IOStatusManager():
             return True   
 
         def __enter__(self):
+            """
+            Called when entering the context.
+
+            Returns
+            -------
+            _IOContext
+                The _IOContext object.
+            """
             if self.working:
                 raise RuntimeError(f"the IOContext of {self.obj.identity_string()} is already working")
             
@@ -232,6 +440,23 @@ class IOStatusManager():
             return self
         
         def __exit__(self, exc_type, exc_value, traceback):
+            """
+            Called when exiting the context.
+
+            Parameters
+            ----------
+            exc_type : type
+                The type of exception that caused the context to be exited, if any.
+            exc_value : Exception
+                The instance of the exception that caused the context to be exited, if any.
+            traceback : traceback
+                A traceback object encapsulating the call stack at the point where the exception was raised, if any.
+
+            Returns
+            -------
+            bool
+                Indicates successful exit from the context.
+            """
             if exc_type is not None:
                 raise exc_type(exc_value).with_traceback(traceback)
             else:
@@ -243,21 +468,118 @@ class IOStatusManager():
                 return rlt
 
     class _Writer(_IOContext):
+        """
+        Context manager for managing the writer context.
+
+        Attributes
+        ----------
+        DEFAULT_INPUT_OPEN : bool
+            Default value for input open flag.
+        DEFAULT_INPUT_WRITABLE : bool
+            Default value for input writable flag.
+
+        Methods
+        -------
+        allow_overwriting(self, overwrite_allowed:bool=True) -> "_Writer"
+            Sets the input overwrite allowed flag.
+        """
+
         DEFAULT_INPUT_OPEN                  = True
         DEFAULT_INPUT_WRITABLE              = True
+
         def allow_overwriting(self, overwrite_allowed = True):
+            """
+            Sets the input overwrite allowed flag.
+
+            Parameters
+            ----------
+            overwrite_allowed : bool, optional
+                Flag indicating if overwriting is allowed. Default is True.
+
+            Returns
+            -------
+            _Writer
+                The _Writer object.
+            """
             self.input_overwrite_allowed = overwrite_allowed
             return self
 
     class _Empty_Writer(_Writer):
+        """
+        A subclass of _Writer that represents an empty writer.
+
+        Attributes
+        ----------
+        None
+
+        Methods
+        -------
+        None
+        """
+
         def __enter__(self):
+            """
+            A subclass of _Writer that represents an empty writer.
+
+            Attributes
+            ----------
+            None
+
+            Methods
+            -------
+            None
+            """
             pass
 
         def __exit__(self, exc_type, exc_value, traceback):
+            """
+            Called when exiting the empty writer context.
+
+            Parameters
+            ----------
+            exc_type : type
+                The type of the exception raised, if any.
+            exc_value : Exception
+                The exception raised, if any.
+            traceback : traceback
+                The traceback object associated with the exception.
+
+            Returns
+            -------
+            None
+
+            Raises
+            ------
+            Exception
+                If an exception was raised.
+            """
             if exc_type is not None:
                 raise exc_type(exc_value).with_traceback(traceback)
-     
+
     def get_writer(self, valid = True):
+        """
+        Returns a writer object for performing IO operations.
+
+        Parameters
+        ----------
+        valid : bool, optional
+            Flag indicating if the writer is valid. If valid is True, return self.__writer, 
+            else return self._Empty_Writer(self). An _Empty_Writer will do nothing when entering 
+            and exiting the context. Default is True.
+
+        Returns
+        -------
+        _Writer or _Empty_Writer
+            The writer object.
+
+        Examples
+        --------
+        >>> with self.get_writer() as writer:
+        >>>     for ...:
+        >>>         ...
+        >>> with self.get_writer().allow_overwriting() as writer:
+        >>>     ...
+        """
         ok = False
         if valid:
             ok = not self.is_writing
@@ -271,20 +593,83 @@ class IOStatusManager():
     # region mark file ###
     @abstractmethod
     def get_writing_mark_file(self) -> str:
+        """
+        Returns the file path for the writing mark file.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        str
+            The file path for the writing mark file.
+        """
         pass
 
     @abstractmethod
     def identity_string(self) -> str:
+        """
+        Returns a string representation of the IOStatusManager object.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        str
+            The string representation of the IOStatusManager object.
+        """
         pass
 
     def mark_exist(self):
+        """
+        Checks if the writing mark file exists.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True if the writing mark file exists, False otherwise.
+        """
         return os.path.exists(self.get_writing_mark_file())
 
     def remove_mark(self):
+        """
+        Removes the writing mark file.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
         if self.mark_exist():
             os.remove(self.get_writing_mark_file())
 
     def load_from_mark_file(self):
+        """
+        Loads data from the writing mark file.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        result (list): 
+            The loaded data from the writing mark file.
+
+        Raises
+        ------
+        AssertionError: If the format of the mark file is incorrect.
+        """
         file_path = self.get_writing_mark_file()
         if os.path.exists(file_path):
             result = []
@@ -310,7 +695,20 @@ class IOStatusManager():
             return []
 
     def log_to_mark_file(self, log_type, src=None, dst=None, value=None):
-        ## TODO
+        """
+        Log the specified information to a mark file.
+
+        Parameters
+        ----------
+        log_type (str): 
+            The type of log, should be one of [LOG_READ, LOG_ADD, LOG_REMOVE, LOG_CHANGE, LOG_MOVE, LOG_OPERATION]
+        src (str, optional): 
+            The source of the log. Defaults to None.
+        dst (str, optional): 
+            The destination of the log. Defaults to None.
+        value (Any, optional): 
+            The value associated with the log. Defaults to None.
+        """
         if src is None and dst is None and value is None:
             return 
         assert log_type in self.LOG_KN, f"log_type must be in {self.LOG_KN}"
@@ -323,34 +721,79 @@ class IOStatusManager():
     # region IOStatus ###
     @property
     def closed(self):
+        """
+        Flag indicating if the IOStatusManager object is closed.
+        Any IO operation will not be executed if the IOStatusManager object is closed.
+        """
         return self.__closed
     
     @property
     def opened(self):
+        """
+        Flag indicating if the IOStatusManager object is opened.
+        """
         return not self.__closed
 
     @property
     def readonly(self):
+        """
+        Flag indicating if the IOStatusManager object is read-only.
+        Any write operation will not be executed if the IOStatusManager object is read-only.
+        """
         return not self.writable # self.__readonly and not self.closed
     
     @property
     def writable(self):
+        """
+        Flag indicating if the IOStatusManager object is writable.
+        """
         return not self.__readonly and not self.closed
 
     @property
     def wait_writing(self):
+        """
+        Flag indicating if the IOStatusManager object is wait_writing.
+
+        see :link:`is_writing`, :link:`stop_writing`, :link:`start_writing`
+
+        Examples
+        -----
+        >>> object = FilesCluster(...)
+        >>> object.wait_writing # True
+        True
+        >>> with object.get_writer() as writer:
+        >>>    object.wait_writing # False
+        >>>    ...
+        >>> object.wait_writing # True
+        True
+        """
         return not self.is_writing  #self.__wait_writing and not self.readonly and not self.closed
 
     @property
     def is_writing(self):
+        """
+        Flag indicating if the IOStatusManager object is writing.
+
+        See :link:`wait_writing`, :link:`stop_writing`, :link:`start_writing`
+        """
         return not self.__wait_writing and not self.readonly and not self.closed
 
     @property
     def overwrite_allowed(self):
+        """
+        Flag indicating if the IOStatusManager object allows overwriting.
+        
+        See :link:`set_overwrite_allowed`, :link:`set_overwrite_forbidden`, :link:`overwrite_forbidden`
+        """
         return not self.overwrite_forbidden # not self.__overwrite_allowed and not self.readonly and not self.closed
     
     @property
     def overwrite_forbidden(self):
+        """
+        Flag indicating if the IOStatusManager object doesn't allow overwriting.
+        
+        See :link:`set_overwrite_allowed`, :link:`set_overwrite_forbidden`, :link:`overwrite_allowed`
+        """
         return not self.__overwrite_allowed and not self.readonly and not self.closed
     
     def __close_core(self, closed:bool = True):
@@ -396,33 +839,153 @@ class IOStatusManager():
             self.set_overwrite_forbidden_hook()
         self.__overwrite_allowed = overwrite_allowed
 
-    def close(self, closed:bool = True):
+    def close(self, closed: bool = True):
+        """
+        Close the IOAbstract object. all the io operation will not be executed.
+
+        Parameters
+        ----
+        closed (bool, optional): 
+            Flag indicating whether the object should be closed. 
+            Defaults to True.
+        """
         self.__close_core(closed)
 
-    def open(self, opened:bool = True):
+    def open(self, opened: bool = True):
+        """
+        Open the IOAbstract object.
+
+        Parameters
+        ----
+        opened (bool): 
+            If True, opens the object. If False, closes the object. Defaults to True.
+
+        Returns
+        -----
+            None
+        """
         self.__close_core(not opened)
 
     def reopen(self):
+        """
+        Reopens the file or resource for reading or writing.
+        This method first closes the file or resource using the `close()` method,
+        and then opens it again using the `open()` method.
+        """
         self.close()
         self.open()
 
     def set_readonly(self, readonly:bool = True):
+        """
+        Set the readonly flag for the object.
+        
+        Parameters
+        -----
+        readonly (bool): 
+            Whether the object should be set as readonly or not. Default is True.
+        
+        Examples
+        -----
+        >>> object = FilesCluster(...)
+        >>> object.set_readonly() # set readonly
+        >>> object.read(0) # OK
+        >>> object.write(0, ...) # raise ClusterIONotExecutedWarning
+        """
         self.__set_readonly_core(readonly)
         
     def set_writable(self, writable:bool = True):
+        """
+        Set the writable flag for the object.
+
+        Parameters
+        -----
+        writable (bool):
+            Whether the object should be set as writable or not. Default is True.
+
+        Warns
+        ----
+        NOT recommend to use this method. use `get_writer` instead.
+
+        Examples
+        ----
+        NOT recommend:
+        >>> object = FilesCluster(...)
+        >>> object.set_writable() # set writable
+        >>> object.read(0) # OK
+        >>> object.write(0, ...) # OK
+        >>> object.set_readonly() # set readonly
+
+        recommend:
+        >>> object = FilesCluster(...)
+        >>> with object.get_writer() as writer:
+        >>>     object.read(0) # OK
+        >>>     object.write(0, ...) # OK
+        """
         self.__set_readonly_core(not writable)    
 
     def stop_writing(self, stop_writing:bool = True):
+        """
+        Set the stop_writing flag for the object.
+        `stop_writing_hook` wiil be called
+
+        see :link:`start_writing`, :link:`wait_writing`, :link:`is_writing`
+
+        Examples
+        ----
+        NOT recommend:
+        >>> object = FilesCluster(...)
+        >>> object.set_writable() # set writable
+        >>> object.start_writing() # set start_writing
+        >>> object.read(0) # OK
+        >>> object.write(0, ...) # OK
+        >>> object.stop_writing() # set stop_writing
+        >>> object.set_readonly() # set readonly
+
+        recommend:
+        >>> object = FilesCluster(...)
+        >>> with object.get_writer() as writer:
+        >>>     object.read(0) # OK
+        >>>     object.write(0, ...) # OK
+        """
         self.__stop_writing_core(stop_writing)
 
     def start_writing(self, start_writing:bool = True, overwrite_allowed:bool = False):
+        """
+        `start_writing_hook` wiil be called
+
+        see :link:`stop_writing`, :link:`wait_writing`, :link:`is_writing`
+
+        """
         self.set_overwrite_allowed(overwrite_allowed)
         self.__stop_writing_core(not start_writing)
 
     def set_overwrite_allowed(self, overwrite_allowed:bool = True):
+        """
+        set the overwrite_allowed flag for the object.
+
+        See :link:`set_overwrite_forbidden`, :link:`overwrite_allowed`, :link:`overwrite_forbidden`
+
+        Examples
+        -----
+        >>> object = FilesCluster(...)
+        >>> object.set_overwrite_forbidden() # set overwrite_forbidden
+        >>> with object.get_writer() as writer:
+        >>>     object.write(0, ...) # OK
+        >>>     object.write(0, ...) # raise ClusterIONotExecutedWarning
+
+        >>> object.set_overwrite_allowed() # set overwrite_allowed
+        >>> with object.get_writer() as writer:
+        >>>     object.write(0, ...) # OK
+        >>>     object.write(0, ...) # OK
+        """
         self.__set_overwrite_allowed_core(overwrite_allowed)
 
     def set_overwrite_forbidden(self, overwrite_forbidden:bool = True):
+        """
+        set the overwrite_forbidden flag for the object.
+
+        See :link:`set_overwrite_allowed`, :link:`overwrite_allowed`, :link:`overwrite_forbidden`
+        """
         self.__set_overwrite_allowed_core(not overwrite_forbidden)
     
     def is_closed(self, with_warning = False):
@@ -440,31 +1003,77 @@ class IOStatusManager():
         return self.readonly
     
     def close_hook(self):
+        """
+        called when `close` is called
+        * recommend to override this method
+        """
         pass
 
     def open_hook(self):
+        """
+        called when `open` is called
+        * recommend to override this method
+        """
         pass
 
     def readonly_hook(self):
+        """
+        called when `set_readonly` is called
+        * recommend to override this method
+        """
         pass
 
     def writable_hook(self):
+        """
+        called when `set_writable` is called
+        * recommend to override this method
+        """
         pass
 
     def stop_writing_hook(self):
+        """
+        called when `stop_writing` is called
+        * recommend to override this method
+        """
         pass
 
     def start_writing_hook(self):
+        """
+        called when `start_writing` is called
+        * recommend to override this method
+        """
         pass
 
     def set_overwrite_allowed_hook(self):
+        """
+        called when `set_overwrite_allowed` is called
+        * recommend to override this method
+        """
         pass
 
     def set_overwrite_forbidden_hook(self):
+        """
+        called when `set_overwrite_forbidden` is called
+        * recommend to override this method
+        """
         pass
     # endregion IOStatus ###
 
 class _RegisterInstance(ABC, Generic[RGSITEM]):
+    """
+    A base class for registering instances with unique identities.
+
+    * Every instance of a subclass of _RegisterInstance will be registered in 
+    `_RegisterInstance._registry` with its identity_string.
+
+    Attributes
+    -----
+    _registry (dict[str, RGSITEM])
+        A dictionary to store registered instances.
+    INDENTITY_PARA_NAMES (list)
+        A list of parameter names that define the identity of an instance.
+    """
+
     _registry:dict[str, RGSITEM] = {}
     INDENTITY_PARA_NAMES = []
 
@@ -472,7 +1081,7 @@ class _RegisterInstance(ABC, Generic[RGSITEM]):
     def __new__(cls, *args, **kwargs):
         obj = super().__new__(cls)
         obj.init_identity(*args, **kwargs)  # initialize identity_paras
-        obj._lock_identity_paras()          # lock it
+        obj.__lock_identity_paras()          # lock it
         obj._identity_string = obj.identity_string()
         obj._identity_name   = obj.identity_name()
         id_str = obj.identity_string()
@@ -485,14 +1094,29 @@ class _RegisterInstance(ABC, Generic[RGSITEM]):
     @classmethod
     @abstractmethod
     def register(cls, identity_string, obj):
+        """
+        register an instance with its identity_string.
+        
+        * the strategy of registering is defined by the subclass
+        """
         pass
 
     @classmethod
     @abstractmethod
     def get_instance(cls, identity_string, obj):
+        """
+        get an instance by identity_string.
+        
+        * the strategy of getting is defined by the subclass
+        """
         pass
 
     def identity_string(self):
+        """
+        Note
+        ----
+        `identity_string` returns a string that can uniquely identify an instance
+        """
         try:
             return self._identity_string
         except:
@@ -500,6 +1124,12 @@ class _RegisterInstance(ABC, Generic[RGSITEM]):
             return self._identity_string
 
     def identity_name(self):
+        """
+        Note
+        ----
+        `indentity_string()` might be too long, so sometime we need a short name to represent it.
+        If you are sure there will be no ambiguity, you can use `identity_name()` to distinguish different instances.
+        """
         try:
             return self._identity_name
         except:
@@ -508,10 +1138,16 @@ class _RegisterInstance(ABC, Generic[RGSITEM]):
 
     @abstractmethod
     def gen_identity_string(self):
+        """
+        generate the identity_string of an instance
+        """
         pass
 
     @abstractmethod
     def gen_identity_name(self):
+        """
+        generate the identity_name of an instance
+        """
         pass
 
     @abstractmethod
@@ -523,67 +1159,265 @@ class _RegisterInstance(ABC, Generic[RGSITEM]):
 
     @classmethod
     def has_instance(cls, obj:"_RegisterInstance"):
+        """
+        if an instance has been registered
+
+        Parameters
+        -----
+        obj (_RegisterInstance):
+            the instance to be checked
+        """
         identity_string = obj.identity_string()
         return identity_string in cls._registry
 
-    def _lock_identity_paras(self, lock = True):
-        self._identity_paras_locked = lock  
+    def __lock_identity_paras(self, lock = True):
+        self.__identity_paras_locked = lock  
     # endregion _RegisterInstance ###
 
     # region __setattr__###
     def __setattr__(self, name: str, value) -> Any:
-        _identity_paras_locked = self._identity_paras_locked if hasattr(self, "_identity_paras_locked") else False 
-        if _identity_paras_locked and name in self.INDENTITY_PARA_NAMES:
+        __identity_paras_locked = self.__identity_paras_locked if hasattr(self, "__identity_paras_locked") else False 
+        if __identity_paras_locked and name in self.INDENTITY_PARA_NAMES:
             raise AttributeError(f"cannot set {name}")
         super().__setattr__(name, value)
     # endregion __setattr__###
 
 class _Prefix(dict[str, str]):
+    """
+    A class representing a prefix configuration with options for prefix and joiner.
+
+    Parameters
+    ----------
+    prefix : str, optional
+        The prefix to be used, by default an empty string.
+    joiner : Any, optional
+        The joiner to be used, by default an empty string.
+
+    Attributes
+    ----------
+    KW_PREFIX : str
+        Keyword for the prefix attribute.
+    KW_JOINER : str
+        Keyword for the joiner attribute.
+
+    Methods
+    -------
+    prefix : str
+        Getter and setter for the prefix attribute.
+    joiner : Any
+        Getter and setter for the joiner attribute.
+    get_with_joiner() -> str
+        Returns the concatenation of prefix and joiner.
+    __repr__() -> str
+        Returns a string representation of the Prefix object.
+    as_dict() -> dict
+        Returns the Prefix object as a dictionary.
+    from_dict(dict_) -> _Prefix
+        Creates a Prefix object from a dictionary.
+
+    Examples
+    --------
+    >>> prefix_instance = _Prefix(prefix="abc", joiner="-")
+    >>> print(prefix_instance.get_with_joiner())
+    "abc-"
+
+    >>> prefix_dict = {'prefix': 'xyz', 'joiner': '_'}
+    >>> new_prefix_instance = _Prefix.from_dict(prefix_dict)
+    >>> print(new_prefix_instance)
+    "Prefix(xyz, _)"
+    """
+
     KW_PREFIX = "prefix"
     KW_JOINER = "joiner"
-    def __init__(self, prefix:str = "", joiner = "") -> None:
+
+    def __init__(self, prefix: str = "", joiner: str = "") -> None:
+        """
+        Initialize the Prefix object.
+
+        Parameters
+        ----------
+        prefix : str, optional
+            The prefix to be used, by default an empty string.
+        joiner : Any, optional
+            The joiner to be used, by default an empty string.
+        """
         super().__init__()
         self[self.KW_PREFIX] = prefix
         self[self.KW_JOINER] = joiner
 
     @property
-    def prefix(self):
+    def prefix(self) -> str:
+        """
+        Getter for the prefix attribute.
+
+        Returns
+        -------
+        str
+            The current prefix value.
+        """
         return self[self.KW_PREFIX]
-    
+
     @prefix.setter
-    def prefix(self, value):
+    def prefix(self, value: str) -> None:
+        """
+        Setter for the prefix attribute.
+
+        Parameters
+        ----------
+        value : str
+            The new value for the prefix.
+        """
         assert isinstance(value, str), f"prefix must be a str"
         self[self.KW_PREFIX] = value
 
     @property
-    def joiner(self):
+    def joiner(self) -> str:
+        """
+        Getter for the joiner attribute.
+
+        Returns
+        -------
+        str
+            The current joiner value.
+        """
         return self[self.KW_JOINER]
-    
+
     @joiner.setter
-    def joiner(self, value):
-        return self[self.KW_JOINER]
-    
-    def get_with_joiner(self):
+    def joiner(self, value: str) -> None:
+        """
+        Setter for the joiner attribute.
+
+        Parameters
+        ----------
+        value : str
+            The new value for the joiner.
+        """
+        self[self.KW_JOINER] = value
+
+    def get_with_joiner(self) -> str:
+        """
+        Returns the concatenation of prefix and joiner.
+
+        Returns
+        -------
+        str
+            The result of concatenating prefix and joiner.
+        """
         return self.prefix + self.joiner
-    
+
     def __repr__(self) -> str:
+        """
+        Returns a string representation of the Prefix object.
+
+        Returns
+        -------
+        str
+            A string representation of the Prefix object.
+        """
         return f"Prefix({self.prefix}, {self.joiner})"
-    
-    def as_dict(self):
+
+    def as_dict(self) -> dict:
+        """
+        Returns the Prefix object as a dictionary.
+
+        Returns
+        -------
+        dict
+            A dictionary representation of the Prefix object.
+        """
         return dict(self)
-    
+
     @classmethod
-    def from_dict(cls, dict_):
+    def from_dict(cls, dict_: dict) -> "_Prefix":
+        """
+        Creates a Prefix object from a dictionary.
+
+        Parameters
+        ----------
+        dict_ : dict
+            The dictionary containing the prefix and joiner values.
+
+        Returns
+        -------
+        _Prefix
+            A new Prefix object created from the provided dictionary.
+        """
         prefix = dict_[cls.KW_PREFIX]
         joiner = dict_[cls.KW_JOINER]
         return cls(prefix, joiner)
 
-class _AppendNames(dict[str, Union[list[str], str]]):
+
+from typing import Union, List, Iterable
+
+class _AppendNames(dict[str, Union[List[str], str]]):
+    """
+    A class representing a configuration for appending names with options for a list of appendable names and a joiner.
+
+    Parameters
+    ----------
+    appendnames : list of str, optional
+        The list of names to be appended, by default an empty list.
+    joiner : str, optional
+        The joiner to be used, by default "_".
+
+    Attributes
+    ----------
+    KW_APPENDNAMES : str
+        Keyword for the appendnames attribute.
+    KW_JOINER : str
+        Keyword for the joiner attribute.
+
+    Methods
+    -------
+    joiner : str
+        Getter for the joiner attribute.
+    appendnames : list of str
+        Getter for the appendnames attribute.
+    get_with_joiner() -> list of str
+        Returns a list of names with the joiner added.
+    extend(names: Union[str, Iterable[str]]) -> None
+        Extends the appendnames attribute with new names.
+    add_appendname(appendname: str) -> bool
+        Adds an appendname to the list if it does not already exist.
+    remove_appendname(appendname: str) -> bool
+        Removes an appendname from the list if it exists.
+    conditional_return(mutil_file: bool, list_like: list of str) -> Union[str, List[str]]
+        Conditionally returns either the list of names or the first name based on the value of mutil_file.
+    __repr__() -> str
+        Returns a string representation of the AppendNames object.
+    from_dict(dict_: dict) -> _AppendNames
+        Creates an AppendNames object from a dictionary.
+    as_dict() -> dict
+        Returns the AppendNames object as a dictionary.
+
+    Examples
+    --------
+    >>> append_names_instance = _AppendNames(appendnames=["name1", "name2"], joiner="-")
+    >>> print(append_names_instance.get_with_joiner())
+    ["-name1", "-name2"]
+
+    >>> append_names_dict = {'appendnames': ['item1', 'item2'], 'joiner': '+'}
+    >>> new_append_names_instance = _AppendNames.from_dict(append_names_dict)
+    >>> print(new_append_names_instance)
+    "AppendNames({'appendnames': ['item1', 'item2'], 'joiner': '+'})"
+
+    """
+
     KW_APPENDNAMES = "appendnames"
     KW_JOINER = "joiner"
 
-    def __init__(self, appendnames:list[str] = None, joiner:str = '_') -> None:  # type: ignore
-        super().__init__()   
+    def __init__(self, appendnames: List[str] = None, joiner: str = "_") -> None:  # type: ignore
+        """
+        Initialize the AppendNames object.
+
+        Parameters
+        ----------
+        appendnames : list of str, optional
+            The list of names to be appended, by default an empty list.
+        joiner : str, optional
+            The joiner to be used, by default "_".
+        """
+        super().__init__()
         assert isinstance(appendnames, list) or appendnames is None, f"appendnames must be a list or None"
         assert isinstance(joiner, str), f"joiner must be a str"
         appendnames = appendnames if appendnames is not None else []
@@ -592,101 +1426,279 @@ class _AppendNames(dict[str, Union[list[str], str]]):
 
     @property
     def joiner(self) -> str:
-        return self[self.KW_JOINER] # type: ignore
+        """
+        Getter for the joiner attribute.
+
+        Returns
+        -------
+        str
+            The current joiner value.
+        """
+        return self[self.KW_JOINER]  # type: ignore
 
     @property
-    def appendnames(self) -> list[str]:
-        return self[self.KW_APPENDNAMES] # type: ignore
- 
-    def get_with_joiner(self):
-        rlt_list:list[str] = []
+    def appendnames(self) -> List[str]:
+        """
+        Getter for the appendnames attribute.
+
+        Returns
+        -------
+        list of str
+            The current list of appendable names.
+        """
+        return self[self.KW_APPENDNAMES]  # type: ignore
+
+    def get_with_joiner(self) -> List[str]:
+        """
+        Returns a list of names with the joiner added.
+
+        Returns
+        -------
+        list of str
+            The result of concatenating the joiner with each name in the appendnames list.
+        """
+        rlt_list: List[str] = []
         for x in self.appendnames:
             x = self.joiner + x
             rlt_list.append(x)
         return rlt_list
-    
-    def extend(self, names):
+
+    def extend(self, names: Union[str, Iterable[str]]) -> None:
+        """
+        Extends the appendnames attribute with new names.
+
+        Parameters
+        ----------
+        names : str or iterable of str
+            The names to be added to the appendnames list.
+        """
         if isinstance(names, str):
             names = [names]
-        assert isinstance(names, Iterable), f"names must be a iterable"
+        assert isinstance(names, Iterable), f"names must be an iterable"
         assert all([isinstance(x, str) for x in names]), f"names must be a list of str"
         self.appendnames.clear()
         self.appendnames.extend(names)
 
-    def add_appendname(self, appendname):
+    def add_appendname(self, appendname: str) -> bool:
+        """
+        Adds an appendname to the list if it does not already exist.
+
+        Parameters
+        ----------
+        appendname : str
+            The name to be added to the appendnames list.
+
+        Returns
+        -------
+        bool
+            True if the name was added, False if it already existed.
+        """
         if appendname not in self:
             self.appendnames.append(appendname)
             return True
+        return False
 
-    def remove_appendname(self, appendname):
+    def remove_appendname(self, appendname: str) -> bool:
+        """
+        Removes an appendname from the list if it exists.
+
+        Parameters
+        ----------
+        appendname : str
+            The name to be removed from the appendnames list.
+
+        Returns
+        -------
+        bool
+            True if the name was removed, False if it did not exist.
+        """
         if appendname in self:
             self.appendnames.remove(appendname)
             return True
-        else:
-            return False
+        return False
 
     @staticmethod
-    def conditional_return(mutil_file, list_like:list[str]):
+    def conditional_return(mutil_file: bool, list_like: List[str]) -> Union[str, List[str]]:
+        """
+        Conditionally returns either the list of names or the first name based on the value of mutil_file.
+
+        Parameters
+        ----------
+        mutil_file : bool
+            A boolean flag indicating whether to return the full list or just the first item.
+        list_like : list of str
+            The list of names.
+
+        Returns
+        -------
+        Union[str, List[str]]
+            Either the full list or the first item based on the value of mutil_file.
+        """
         if mutil_file:
             return list_like
-        else:
-            return list_like[0]
+        return list_like[0]
 
     def __repr__(self) -> str:
+        """
+        Returns a string representation of the AppendNames object.
+
+        Returns
+        -------
+        str
+            A string representation of the AppendNames object.
+        """
         return f"AppendNames({self})"
-        
+
     @classmethod
-    def from_dict(cls, dict_:dict):
+    def from_dict(cls, dict_: dict) -> "_AppendNames":
+        """
+        Creates an AppendNames object from a dictionary.
+
+        Parameters
+        ----------
+        dict_ : dict
+            The dictionary containing the appendnames and joiner values.
+
+        Returns
+        -------
+        _AppendNames
+            A new AppendNames object created from the provided dictionary.
+        """
         appendnames = dict_[cls.KW_APPENDNAMES]
         joiner = dict_[cls.KW_JOINER]
         return cls(appendnames, joiner)
-    
-    def as_dict(self):
-        return dict(self)
 
+    def as_dict(self) -> dict:
+        """
+        Returns the AppendNames object as a dictionary.
+
+        Returns
+        -------
+        dict
+            A dictionary representation of the AppendNames object.
+        """
+        return dict(self)
 class CacheProxy(Generic[VDMT]):
+    """
+    A generic class representing a cache proxy with options for the cache, value type, and initialization function.
+
+    Parameters
+    ----------
+    cache : VDMT or any
+        The cache to be used.
+    value_type : type[VDMT], optional
+        The type of values stored in the cache, by default None.
+    value_init_func : Callable, optional
+        The initialization function for the cache, by default None.
+
+    Attributes
+    ----------
+    KW_cache : str
+        Keyword for the cache attribute.
+    KW_value_type : str
+        Keyword for the value_type attribute.
+
+    Methods
+    -------
+    value_type : type[VDMT]
+        Getter for the value_type attribute.
+    cache : VDMT or None
+        Getter and setter for the cache attribute.
+    as_dict() -> dict
+        Returns the CacheProxy object as a dictionary.
+    from_dict(dict_: dict) -> CacheProxy
+        Creates a CacheProxy object from a dictionary.
+    init_cache() -> bool
+        Initializes the cache using the specified initialization function.
+    
+    Examples
+    --------
+    >>> cache_instance = CacheProxy(cache=SomeCache(), value_type=int)
+    >>> print(cache_instance.value_type)
+    <class 'int'>
+
+    >>> cache_dict = {'cache': SomeCache(), 'value_type': int}
+    >>> new_cache_instance = CacheProxy.from_dict(cache_dict)
+    >>> print(new_cache_instance)
+    "CacheProxy({'cache': SomeCache(), 'value_type': int})"
+
+    """
+
     KW_cache = "cache"
     KW_value_type = "value_type"
 
-    _unpickleable_type  = []
-    _pickleable_type    = []
+    _unpickleable_type = []
+    _pickleable_type = []
 
-    def __init__(self, cache, value_type:Optional[type[VDMT]] = None, value_init_func:Optional[Callable] = None) -> None:
-        self.__cache:Optional[VDMT] = None
+    def __init__(self, cache, value_type: Optional[type[VDMT]] = None, value_init_func: Optional[Callable] = None) -> None:
+        """
+        Initialize the `CacheProxy` object.
+
+        Parameters
+        ----------
+        cache : `VDMT` or any
+            The cache to be used.
+        value_type : type[`VDMT`], optional
+            The type of values stored in the cache, by default None.
+        value_init_func : Callable, optional
+            The initialization function for the cache, by default None.
+        """
+        self.__cache: Optional[VDMT] = None
         self.synced = False
-        self.__value_type:Optional[type[VDMT]] = value_type
-        self.__value_init_func:Optional[Callable] = value_init_func if value_init_func is not None else value_type
+        self.__value_type: Optional[type[VDMT]] = value_type
+        self.__value_init_func: Optional[Callable[..., VDMT]] = value_init_func if value_init_func is not None else value_type
 
         self.cache = cache
         self.init_cache()
-        
+
     @property
     def value_type(self) -> type[VDMT]:
-        return self.__value_type # type: ignore
-    
-    # @value_type.setter
-    # def value_type(self, value_type):
-    #     assert isinstance(value_type, type), f"value_type must be a type"
-    #     if value_type is not None:
-    #         if self.cache is not None:
-    #             assert type(self.cache) == value_type, f"the type of cache must be {value_type}, not {type(self.cache)}"
-    #         else:
-    #             self.__value_type = value_type
-    #     else:
-    #         self.__value_type = None
+        """
+        Getter for the value_type attribute.
+
+        Returns
+        -------
+        type[`VDMT`]
+            The current value_type.
+        """
+        return self.__value_type  # type: ignore
 
     @property
     def cache(self) -> Union[VDMT, None]:
+        """
+        Getter for the cache attribute.
+
+        Returns
+        -------
+        `VDMT` or None
+            The current cache value.
+        """
         return self.__cache
-    
+
     @cache.setter
-    def cache(self, cache):
+    def cache(self, cache: Union[VDMT, Any]):
+        """
+        Setter for the cache attribute.
+
+        Parameters
+        ----------
+        cache : `VDMT` or any
+            The new cache value.
+        """
         if self.value_type is not None and cache is not None:
-            if not isinstance(cache, self.value_type): #, f"the type of cache must be {self.value_type}, not {type(cache)}"
+            if not isinstance(cache, self.value_type) and self.__value_init_func is not None:
                 cache = self.__value_init_func(cache)
         self.__cache = copy.deepcopy(cache)
 
-    def as_dict(self):
+    def as_dict(self) -> dict:
+        """
+        Returns the `CacheProxy` object as a dictionary.
+
+        Returns
+        -------
+        dict
+            A dictionary representation of the `CacheProxy` object.
+        """
         dict_ = {}
 
         cache = self.__cache
@@ -707,15 +1719,36 @@ class CacheProxy(Generic[VDMT]):
         dict_[self.KW_cache] = cache
         dict_[self.KW_value_type] = self.__value_type
         return dict_
-    
+
     @classmethod
-    def from_dict(cls, dict_:dict):
+    def from_dict(cls, dict_: dict) -> "CacheProxy":
+        """
+        Creates a `CacheProxy` object from a dictionary.
+
+        Parameters
+        ----------
+        dict_ : dict
+            The dictionary containing the cache and value_type values.
+
+        Returns
+        -------
+        `CacheProxy`
+            A new `CacheProxy` object created from the provided dictionary.
+        """
         cache = dict_[cls.KW_cache]
         value_type = dict_[cls.KW_value_type]
         return cls(cache, value_type)
-    
-    def init_cache(self):
-        if self.value_type is not None and self.cache is None:
+
+    def init_cache(self) -> bool:
+        """
+        Initializes the cache using the specified initialization function.
+
+        Returns
+        -------
+        bool
+            True if initialization was successful, False otherwise.
+        """
+        if self.value_type is not None and self.cache is None and self.__value_init_func is not None:
             try:
                 init_cache = self.__value_init_func()
             except Exception as e:
@@ -730,20 +1763,57 @@ class CacheProxy(Generic[VDMT]):
 
 class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     '''
-    immutable object, once created, it can't be changed.
+    Note
+    -----
+    A class representing a file handle for input/output operations. 
+
+    * Its instance manages some attributes of one file or a group of files, depending on the value of the `multi_files` attribute.
+
+    * Its instance is immutable object, once created, it can't be changed.
+
+    Parameters
+    -----
+    cluster (FilesCluster):
+        The cluster to which the file handle belongs.
+    data_path (str): 
+        The top path to the file or directory.
+    sub_dir (str):
+        The subdirectory of the file or directory. Defaults to "".
+    corename (str):
+        The corename of the file or directory. Defaults to "".
+    suffix (str):
+        The suffix of the file or directory. Defaults to "".
+    _appendnames_obj (`_AppendNames`):
+        The `_AppendNames` object. Defaults to None.
+    _prefix_obj (`_Prefix`):
+        The `_Prefix` object. Defaults to None.
+    read_func (Callable):
+        The function to be used for reading the file. Defaults to None.
+    write_func (Callable):
+        The function to be used for writing the file. Defaults to None.
+    cache_proxy (CacheProxy):
+        The cache proxy to be used. Defaults to None.
+
+    Examples
+    -----
+    >>> cluster = FilesCluster("./top")
+    >>> fh = FilesHandle(cluster, sub_dir="sub", corename="core", suffix=".txt")
+    >>> fh.get_path()
+    "./top/sub/core.txt"
+    >>> fh2 = FilesHandle(cluster, sub_dir="sub", corename="core", suffix=".txt", prefix="prefix", appendnames=["append1", "append2"], prefix_joiner="-", appendnames_joiner="_")
+    >>> fh2.get_path()
+    ['./top/sub/prefix-core_append1.txt', './top/sub/prefix-core_append2.txt']
     '''
+
     # region class variables ###
     KW_data_path         = "data_path"
     KW_sub_dir           = "sub_dir"
     KW_corename          = "corename"
     KW_suffix            = "suffix"
-
     KW_appendnames       = "appendnames"   
     KW_prefix            = "prefix" 
-
     KW_read_func         = "read_func"
     KW_write_func        = "write_func"
-
     KW_cache             = "cache"  
 
     DEFAULT_FILE_TYPE = {
@@ -758,28 +1828,48 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         ".bmp":  [cv2.imread, cv2.imwrite, None],
         ".tif":  [cv2.imread, cv2.imwrite, None],
     }
+    """
+    some default file type and their read/write functions
+    """
 
     DEFAULT_SUFFIX = None
+    """can be overrided by subclass"""
     DEFAULT_PREFIX = None
+    """can be overrided by subclass"""
     DEFAULT_PREFIX_JOINER = None
+    """can be overrided by subclass"""
     DEFAULT_APPENDNAMES = None
+    """can be overrided by subclass"""
     DEFAULT_APPENDNAMES_JOINER = None
+    """can be overrided by subclass"""
     DEFAULT_READ_FUNC = None
+    """can be overrided by subclass"""
     DEFAULT_WRITE_FUNC = None
+    """can be overrided by subclass"""
     DEFAULT_VALUE_TYPE = None
+    """can be overrided by subclass"""
     DEFAULT_VALUE_INIT_FUNC = None
+    """can be overrided by subclass"""
 
     LOAD_CACHE_ON_INIT = False
+    """
+    * can be overrided by subclass
+    * if True, load cache from disk when init
+    """
 
     KW_INIT_WITHOUT_CACHE = "INIT_WITHOUT_CACHE"
 
     GET_INSTANCE_STRATEGY = 0 
-    # 0: return the inited instance, 
-    # 1: return the original instance and cover the inited instance
-    # 2: return the original instance and not register it
+    """
+    control the strategy of `get_instance`
 
-    _unpickleable_func = []
-    _pickleable_func   = []
+    * 0: return the inited instance, 
+    * 1: return the original instance and cover the inited instance
+    * 2: return the original instance and not register it
+    """
+
+    __unpickleable_func = []
+    __pickleable_func   = []
     KW_FUNC_NAME        = "func_name"
     KW_FUNC_MODULE      = "func_module"
     KW_FUNC_BIND_ARGS   = "func_bind_args"
@@ -790,22 +1880,40 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     INDENTITY_PARA_NAMES = ["sub_dir", "corename", "suffix", "prefix", "appendnames", 
                             "prefix_joiner", "appendnames_joiner", "data_path"]
 
-    # @staticmethod
-    # def _get_register_cluster_key(obj:"FilesHandle"):
-    #     cluster:FilesCluster = obj.cluster
-    #     cluster_id = f"FilesHandle of {cluster.identity_string()}:"
-    #     return cluster_id
-
     @classmethod
     def register(cls, identity_string, obj:"FilesHandle"):
-        # cluster_key = cls._get_register_cluster_key(obj)
-        # cls._registry.setdefault(cluster_key, {})
-        # cls._registry[cluster_key][identity_string] = obj
         cls._registry[identity_string] = obj
 
     @classmethod
     def get_instance(cls, identity_string, orig_obj:"FilesHandle"):
-        # cluster_key = cls._get_register_cluster_key(orig_obj)
+        """
+        Get an instance of the class based on the specified identity string and original object.
+
+        Note
+        -----
+        the strategy is controled by `GET_INSTANCE_STRATEGY`
+
+        * 0: return the inited instance, 
+        * 1: return the original instance and cover the inited instance
+        * 2: return the original instance and not register it
+
+        Parameters
+        -----
+        identity_string (str): 
+            The identity string.
+        orig_obj (FilesHandle): 
+            The original object.
+
+        Returns
+        -----
+        FilesHandle: 
+            The instance of the class.
+
+        Raises
+        -----
+        ValueError: 
+            If `GET_INSTANCE_STRATEGY` is not 0, 1, or 2.
+        """
         if cls.GET_INSTANCE_STRATEGY == 0:
             obj:FilesHandle = cls._registry[identity_string]
             if obj.multi_files:
@@ -822,12 +1930,9 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         else:
             raise ValueError(f"GET_INSTANCE_STRATEGY must be 0, 1 or 2, not {cls.GET_INSTANCE_STRATEGY}")
 
-    # @classmethod
-    # def has_instance(cls, obj:"FilesHandle"):
-    #     cluster_key = cls._get_register_cluster_key(obj)
-    #     return (cluster_key in cls._registry) and (obj.identity_string() in cls._registry[cluster_key])
-
     def gen_identity_string(self):
+        """
+        """
         if not self.multi_files:
             return self.get_path()
         else:
@@ -836,11 +1941,13 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
             return os.path.join(dir_, name)
 
     def gen_identity_name(self):
+        """
+        """
         return self.corename
 
     def init_identity(self, cluster:FCT, sub_dir:str, corename:str, suffix:str, * ,
                  prefix:Optional[str] = None, appendnames:Optional[Union[str, list[str]]] = None,  # type: ignore
-                 prefix_joiner:Optional[str] = None, appendnames_joiner:Optional[str] = None,
+                 prefix_joiner:Optional[str] = None, appendnames_joiner:Optional[str] = None, # type: ignore
                  data_path = "",
                  read_func:Optional[Callable] = None, write_func:Optional[Callable] = None, 
                  cache = None, value_type:Optional[type] = None):
@@ -849,16 +1956,16 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         '''
         self.cluster:FCT = cluster
 
-        sub_dir             = get_with_priority(sub_dir)
-        corename            = get_with_priority(corename)
-        suffix              = get_with_priority(suffix, self.DEFAULT_SUFFIX)
+        # sub_dir             = get_with_priority(sub_dir)
+        # corename            = get_with_priority(corename)
+        suffix              = get_with_priority(suffix, self.DEFAULT_SUFFIX) # type: ignore
 
-        prefix              = get_with_priority(prefix,             cluster.DEFAULT_PREFIX,             self.DEFAULT_PREFIX,             '')
-        appendnames         = get_with_priority(appendnames,        cluster.DEFAULT_APPENDNAMES,        self.DEFAULT_APPENDNAMES,        [''])
+        prefix:str              = get_with_priority(prefix,             cluster.DEFAULT_PREFIX,             self.DEFAULT_PREFIX,             '') # type: ignore
+        appendnames:list[str]         = get_with_priority(appendnames,        cluster.DEFAULT_APPENDNAMES,        self.DEFAULT_APPENDNAMES,        ['']) # type: ignore
         if isinstance(appendnames, str):
             appendnames = [appendnames]
-        prefix_joiner       = get_with_priority(prefix_joiner,      cluster.DEFAULT_PREFIX_JOINER,      self.DEFAULT_PREFIX_JOINER,      '')
-        appendnames_joiner  = get_with_priority(appendnames_joiner, cluster.DEFAULT_APPENDNAMES_JOINER, self.DEFAULT_APPENDNAMES_JOINER, '')
+        prefix_joiner:str       = get_with_priority(prefix_joiner,      cluster.DEFAULT_PREFIX_JOINER,      self.DEFAULT_PREFIX_JOINER,      '') # type: ignore
+        appendnames_joiner:str  = get_with_priority(appendnames_joiner, cluster.DEFAULT_APPENDNAMES_JOINER, self.DEFAULT_APPENDNAMES_JOINER, '') # type: ignore
 
         if len(suffix) == 0 or suffix[0] != '.':
             suffix = '.' + suffix
@@ -900,33 +2007,72 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     # region init and create instance
 
     # region - init
-    def __init__(self, cluster:FCT, sub_dir:str, corename:str, suffix:str, * ,
-                 prefix:Optional[str] = None, appendnames:Union[str, list[str]] = None,  # type: ignore
-                 prefix_joiner:Optional[str] = None, appendnames_joiner:Optional[str] = None,
-                 data_path = "",
-                 read_func:Optional[Callable] = None, write_func:Optional[Callable] = None, 
-                 cache = None, value_type:Optional[type[VDMT]] = None) -> None: #type: ignore
-        super().__init__()
-        ### init_identity has been called ###
-        (   sub_dir, corename, suffix, 
-            prefix, appendnames, prefix_joiner, appendnames_joiner, 
-            data_path, 
-            read_func, write_func, 
-            cache, value_type) =\
-            self.init_input_hook(sub_dir = sub_dir, corename = corename, suffix = suffix, 
-                                prefix = prefix, appendnames = appendnames, 
-                                prefix_joiner = prefix_joiner, appendnames_joiner = appendnames_joiner,
-                                data_path = data_path,
-                                read_func = read_func, write_func = write_func,
-                                cache = cache, value_type = value_type)
+    def __init__(self, cluster: FCT, sub_dir: str, corename: str, suffix: str, *,
+                 prefix: Optional[str] = None, appendnames: Union[str, list[str]] = None,
+                 prefix_joiner: Optional[str] = None, appendnames_joiner: Optional[str] = None,
+                 data_path: str = "",
+                 read_func: Optional[Callable] = None, write_func: Optional[Callable] = None,
+                 cache=None, value_type: Optional[type[VDMT]] = None) -> None:
+        """
+        Initialize the IOAbstract class.
 
+        Parameters
+        ----
+        cluster (FCT): 
+            The cluster object.
+        sub_dir (str): 
+            The sub-directory.
+        corename (str): 
+            The core name.
+        suffix (str): 
+            The suffix.
+        prefix (Optional[str], optional): 
+            The prefix. Defaults to None.
+        appendnames (Union[str, list[str]], optional): 
+            The append names. Defaults to None.
+        prefix_joiner (Optional[str], optional): 
+            The prefix joiner. Defaults to None.
+        appendnames_joiner (Optional[str], optional): 
+            The append names joiner. Defaults to None.
+        data_path (str, optional): 
+            The data path. Defaults to "".
+        read_func (Optional[Callable], optional): 
+            The read function. Defaults to None.
+        write_func (Optional[Callable], optional): 
+            The write function. Defaults to None.
+        cache (Any, optional): 
+            The cache. Defaults to None.
+        value_type (Optional[type[VDMT]], optional): 
+            The value type. Defaults to None.
+
+        Returns
+        -----
+        None
+        """
+        super().__init__()
+
+        # Call init_input_hook and assign the returned values to variables
+        (sub_dir, corename, suffix,
+         prefix, appendnames, prefix_joiner, appendnames_joiner,
+         data_path,
+         read_func, write_func,
+         cache, value_type) = \
+            self.init_input_hook(sub_dir=sub_dir, corename=corename, suffix=suffix,
+                                 prefix=prefix, appendnames=appendnames,
+                                 prefix_joiner=prefix_joiner, appendnames_joiner=appendnames_joiner,
+                                 data_path=data_path,
+                                 read_func=read_func, write_func=write_func,
+                                 cache=cache, value_type=value_type)
+
+        # Check if read_func and write_func are lambda functions
         for func in [read_func, write_func]:
             if hasattr(func, "__code__"):
-                assert not func.__code__.co_name == '<lambda>', "function shuold not be lambda"
+                assert not func.__code__.co_name == '<lambda>', "function should not be lambda"
 
-        self.read_func = read_func 
-        self.write_func = write_func 
+        self.read_func = read_func
+        self.write_func = write_func
 
+        # Set cache based on the LOAD_CACHE_ON_INIT flag and all_file_exist condition
         if cache == self.KW_INIT_WITHOUT_CACHE:
             cache = None
         else:
@@ -934,11 +2080,16 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                 cache = self.read()
             else:
                 cache = cache
-        default_value_type = get_with_priority(self.cluster.DEFAULT_VALUE_INIT_FUNC, 
+
+        # Get the default value type based on priority
+        default_value_type = get_with_priority(self.cluster.DEFAULT_VALUE_INIT_FUNC,
                                                self.DEFAULT_VALUE_INIT_FUNC,
                                                self.DEFAULT_VALUE_TYPE)
-        self.cache_proxy:CacheProxy[VDMT] = CacheProxy[VDMT](cache, value_type, default_value_type)
 
+        # Create a CacheProxy object
+        self.cache_proxy: CacheProxy[VDMT] = CacheProxy[VDMT](cache, value_type, default_value_type)
+
+        # Call init_additional_hook
         self.init_additional_hook()
 
     def init_input_hook(self, *, sub_dir, corename, suffix, 
@@ -946,6 +2097,42 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                              data_path, 
                              read_func, write_func, 
                              cache, value_type):
+        """
+        Initializes the input hook with the specified parameters.
+
+        * This method can be overridden by subclasses to customize the input hook.
+
+        Args
+        -----
+        sub_dir (str): 
+            The sub-directory where the data is located.
+        corename (str): 
+            The core name of the data file.
+        suffix (str): 
+            The suffix of the data file.
+        prefix (str): 
+            The prefix of the data file.
+        appendnames (List[str]): 
+            The list of names to append to the data file.
+        prefix_joiner (str): 
+            The joiner used to concatenate the prefix and appendnames.
+        appendnames_joiner (str): 
+            The joiner used to concatenate the appendnames.
+        data_path (str): 
+            The top dir to the data file.
+        read_func (callable): 
+            The function used to read the data file.
+        write_func (callable): 
+            The function used to write the data file.
+        cache (bool): 
+            Flag indicating whether to cache the data.
+        value_type (type): 
+            The type of the data values.
+
+        Returns
+        -----
+        Tuple[str, str, str, str, List[str], str, str, str, callable, callable, bool, type]: The initialized input hook parameters.
+        """
         return (sub_dir, corename, suffix, 
                 prefix, appendnames, prefix_joiner, appendnames_joiner, 
                 data_path, 
@@ -964,19 +2151,33 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     # region - export and import func
     @classmethod
-    def export_func(cls, func:Union[Callable, None]):
+    def export_func(cls, func: Union[Callable, None]):
+        """
+        Export a function for serialization. If the function is unpickleable, it returns a dictionary containing
+
+        Args
+        -----
+        func (Callable or None): 
+            The function to be exported.
+
+        Returns
+        -----
+        Union[dict, Callable, None]: 
+            If the function is unpickleable, it returns a dictionary containing
+            information about the function. Otherwise, it returns the function itself.
+        """
         if func is None:
             return None
-        if func in cls._unpickleable_func:
+        if func in cls.__unpickleable_func:
             unpickleable = True
-        elif func in cls._pickleable_func:
+        elif func in cls.__pickleable_func:
             unpickleable = False
         else:
             unpickleable = not test_pickleable(func)
             if unpickleable:
-                cls._unpickleable_func.append(func)
+                cls.__unpickleable_func.append(func)
             else:
-                cls._pickleable_func.append(func)
+                cls.__pickleable_func.append(func)
         if unpickleable:
             if isinstance(func, partial):
                 raw_func = func.func
@@ -986,20 +2187,40 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
             else:
                 bind_args = tuple()
                 bind_kwargs = {}
-            func_info = {cls.KW_FUNC_NAME: func.__name__, 
-                         cls.KW_FUNC_MODULE: func.__module__,
-                         cls.KW_FUNC_BIND_ARGS: bind_args,
-                         cls.KW_FUNC_BIND_KWARGS: bind_kwargs}
+            func_info = {
+                cls.KW_FUNC_NAME: func.__name__,
+                cls.KW_FUNC_MODULE: func.__module__,
+                cls.KW_FUNC_BIND_ARGS: bind_args,
+                cls.KW_FUNC_BIND_KWARGS: bind_kwargs
+            }
             return func_info
         else:
             return func
 
     @classmethod
     def import_func(cls, import_obj):
+        """
+        Import and return a function based on the given import object.
+
+        Parameters
+        -----
+        import_obj: 
+            The import object, which can be a dictionary or a callable.
+
+        Returns
+        -----
+        The imported function.
+
+        Raises
+        -----
+        ValueError: 
+            If the import object is not a dictionary or a callable.
+            It suggests installing the module if the module name is provided in the import object.
+        """
         if isinstance(import_obj, dict):
             module = importlib.import_module(import_obj[cls.KW_FUNC_MODULE])
             func = getattr(module, import_obj[cls.KW_FUNC_NAME])
-            bind_args   = import_obj[cls.KW_FUNC_BIND_ARGS]
+            bind_args = import_obj[cls.KW_FUNC_BIND_ARGS]
             bind_kwargs = import_obj[cls.KW_FUNC_BIND_KWARGS]
             if len(bind_args) > 0 or len(bind_kwargs) > 0:
                 func = partial(func, *bind_args, **bind_kwargs)
@@ -1013,6 +2234,13 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     # region - export and import dict
     def as_dict(self):
+        """
+        convert the FilesHandle to a dict
+
+        Returns
+        -----
+        dict
+        """
         dict_ = {}
         dict_[self.KW_data_path]     = self.data_path
         dict_[self.KW_sub_dir]       = self.sub_dir
@@ -1027,7 +2255,14 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     @classmethod
     def from_dict(cls, cluster:FCT, dict_:dict):
-        data_path       = get_with_priority(cluster.data_path, dict_[cls.KW_data_path])
+        """
+        create a FilesHandle from a dict
+
+        Returns
+        -----
+        FilesHandle
+        """
+        data_path:str       = get_with_priority(cluster.data_path, dict_[cls.KW_data_path]) # type: ignore
         sub_dir         = dict_[cls.KW_sub_dir]
         corename        = dict_[cls.KW_corename]
         suffix          = dict_[cls.KW_suffix]      
@@ -1054,6 +2289,20 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     # region - create instance
     @classmethod
     def get_default_file_type(cls, file:str):
+        """
+        Get the default file type for a given file. If the file type is not found in the `DEFAULT_FILE_TYPE` dictionary, None is returned.
+
+        Parameters
+        -----
+        file (str): 
+            The file name or path.
+
+        Returns
+        -----
+        tuple: 
+            A tuple containing the read function, write function, and value type associated with the file type.
+            If the file type is not found in the DEFAULT_FILE_TYPE dictionary, None is returned for all three values.
+        """
         if file.startswith('.'):
             suffix = file
         else:
@@ -1067,16 +2316,83 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     
     @classmethod
     def create_temp(cls):
+        """
+        Creates a temporary instance of the class. This method sets the `GET_INSTANCE_STRATEGY` attribute of the class to `2` and returns the modified class.
+        `GET_INSTANCE_STRATEGY` will automatically be reset to `0` after a new instance is created.
+
+        * the new instance will not be registered.
+
+        Returns
+        ----
+        cls: 
+            The modified class with the `GET_INSTANCE_STRATEGY` attribute set to `2`.
+
+        Examples
+        ----
+        >>> path = "./sub/core.txt"
+        >>> cluster = FilesCluster("./top")
+        >>> fh = FilesHandle.from_path(cluster, path) # OK
+        >>> fh2 = FilesHandle.from_path(cluster, path) # OK, fh and fh2 are the same instance
+        >>> fh3 = FilesHandle.create_temp().from_path(cluster, path) # OK, fh3 is a new instance, and it is not registered.
+        """
         cls.GET_INSTANCE_STRATEGY = 2
         return cls
 
     @classmethod
     def create_new_and_cover(cls):
+        """
+        Creates a new instance of the class by setting the `GET_INSTANCE_STRATEGY` to `1`.
+        `GET_INSTANCE_STRATEGY` will automatically be reset to `0` after a new instance is created.
+
+        * the new instance will cover the old instance with the same identity_string.
+
+        Returns
+        ----
+        cls: 
+            The modified class with the `GET_INSTANCE_STRATEGY` attribute set to `1`.
+
+        Examples
+        -----
+        >>> path = "./sub/core.txt"
+        >>> cluster = FilesCluster("./top")
+        >>> fh = FilesHandle.from_path(cluster, path) # OK
+        >>> fh2 = FilesHandle.from_path(cluster, path) # OK, fh and fh2 are the same instance
+        >>> fh3 = FilesHandle.create_new_and_cover().from_path(cluster, path) # OK, fh3 is a new instance, and it is registered and covers the old instance.
+        >>> FilesHandle.has_instance(fh3)
+        True
+        >>> FilesHandle.has_instance(fh)
+        False
+        """
         cls.GET_INSTANCE_STRATEGY = 1
         return cls
 
     @staticmethod
-    def _parse_path_to_name(cluster:"FilesCluster", path:T_MUITLSTR)->T_MUITLSTR:
+    def _parse_path_to_name(cluster: "FilesCluster", path: T_MUITLSTR) -> T_MUITLSTR:
+        """
+        Parses the given path or list of paths to extract the filename(s) relative to the data_path of the cluster.
+
+        see :link:`_parse_one_path_to_paras`
+        see :link:`_parse_one_path_to_paras` and :link:`_default_parse_file_name`, 
+
+        Parameters
+        -----
+        cluster (FilesCluster): 
+            The FilesCluster object.
+        path (str or list[str]): 
+            The path(s) to be parsed.
+
+        Returns
+        -----
+        T_MUITLSTR: 
+            The filename(s) relative to the data_path of the cluster.
+
+        Raises
+        -----
+        AssertionError: 
+            If the path is not a subpath of the data_path.
+        AssertionError: 
+            If the path is not a string or a list of strings.
+        """
         datapath = cluster.data_path
         if isinstance(path, str):
             assert is_subpath(path, datapath), "cannot create a fileshandle object which is not in the data_path"
@@ -1089,7 +2405,39 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
             return filename
 
     @staticmethod
-    def _default_parse_file_name(file_name:str, prefix_joiner, appendnames_joiner, _extract_corename_func = None):
+    def _default_parse_file_name(file_name:str, prefix_joiner:str, appendnames_joiner:str, _extract_corename_func:Optional[Callable] = None):
+        """
+        Parses the given file name and extracts corename
+
+        see :link:`_parse_one_path_to_paras`, :link:`_parse_path_to_name`
+        
+        Parameters
+        -----
+        file_name (str): 
+            The file name to be parsed.
+        prefix_joiner: 
+            The character or string used to join the prefix with the rest of the file name.
+        appendnames_joiner: 
+            The character or string used to join the core name with the append name.
+        _extract_corename_func: 
+            Optional function to extract the core name from the file name. Used for custom parsing.
+
+        Returns
+        ------
+        tuple: A tuple containing the following components:
+            - sub_dir (str): The sub-directory of the file.
+            - corename (str): The core name of the file.
+            - suffix (str): The file suffix.
+            - prefix (str): The prefix of the file name.
+            - appendname (str): The append name of the file.
+            - _prefix_joiner: The prefix joiner used.
+            - _appendnames_joiner: The append names joiner used.
+        
+        Examples
+        -----
+        >>> FilesHandle._default_parse_file_name("sub_dir/pre_corename-append.txt", "_", "-")
+        >>> ('sub_dir', 'corename', '.txt', 'pre', 'append', '_', '-')
+        """
         splitlist = file_name.split(os.sep, 2)
         if len(splitlist) == 1:
             sub_dir, file_name = "", splitlist[0]
@@ -1115,7 +2463,35 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         return sub_dir, corename, suffix, prefix, appendname, _prefix_joiner, _appendnames_joiner
     
     @staticmethod
-    def _parse_one_path_to_paras(cluster:"FilesCluster", path:str, prefix_joiner, appendnames_joiner):
+    def _parse_one_path_to_paras(cluster:"FilesCluster", path:str, prefix_joiner:str, appendnames_joiner:str):
+        """
+        Parses a single path to extract various parameters.
+        
+        see :link:`_parse_path_to_name` and :link:`_default_parse_file_name` for more details.
+
+        Parameters
+        -----
+        cluster (FilesCluster): 
+            The FilesCluster object.
+        path (str): 
+            The path to be parsed.
+        prefix_joiner: 
+            The prefix joiner.
+        appendnames_joiner: 
+            The append names joiner.
+
+        Returns
+        -----
+        tuple: 
+            A tuple containing the following parameters:
+            - sub_dir (str): The sub directory.
+            - corename (str): The core name.
+            - suffix (str): The suffix.
+            - prefix (str): The prefix.
+            - appendname (str): The append name.
+            - prefix_joiner: The prefix joiner.
+            - appendnames_joiner: The append names joiner.
+        """
         name:str = FilesHandle._parse_path_to_name(cluster, path)
         sub_dir, corename, suffix, prefix, appendname, prefix_joiner, appendnames_joiner =\
             FilesHandle._default_parse_file_name(name, prefix_joiner, appendnames_joiner)
@@ -1127,54 +2503,96 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                       read_func:Optional[Callable] = None, write_func:Optional[Callable] = None, 
                       cache:Optional = None, value_type:Optional[type] = None,  #type: ignore
                       _extract_corename_func:Optional[Callable[[str], tuple[str, str, str, str, str]]] = None) -> Any:
-            """
-            Create a fileshandle object from a file path or a list of file paths.
+        """
+        Create a fileshandle object from a file path or a list of file paths.
 
-            Args:
-                cluster (FCT): The cluster object.
-                path (Union[str, list[str]]): The file path or a list of file paths.
-                prefix_joiner (str, optional): The prefix joiner. Defaults to None.
-                appendnames_joiner (str, optional): The append names joiner. Defaults to None.
-                read_func (Callable, optional): The read function. Defaults to None.
-                write_func (Callable, optional): The write function. Defaults to None.
-                cache (Any, optional): The cache object. Defaults to None.
-                value_type (Callable, optional): The value type. Defaults to None.
-                _extract_corename_func (Callable[[str], tuple[str, str, str, str, str]], optional): The extract core name function. Defaults to None.
+        Parameters
+        -----
+        cluster (FCT): 
+            The cluster object.
+        path (Union[str, list[str]]): 
+            The file path or a list of file paths.
+        prefix_joiner (str, optional): 
+            The prefix joiner. Defaults to None.
+        appendnames_joiner (str, optional): 
+            The append names joiner. Defaults to None.
+        read_func (Callable, optional): 
+            The read function. Defaults to None.
+        write_func (Callable, optional): 
+            The write function. Defaults to None.
+        cache (Any, optional): 
+            The cache object. Defaults to None.
+        value_type (Callable, optional): 
+            The value type. Defaults to None.
+        _extract_corename_func (Callable[[str], tuple[str, str, str, str, str]], optional): 
+            The extract core name function. Defaults to None.
 
-            Returns:
-                Any: The fileshandle object.
-            """
-            datapath = cluster.data_path
-            if isinstance(path, str):
-                assert is_subpath(path, datapath), "cannot create a fileshandle object which is not in the data_path"
-                filename = os.path.relpath(path, datapath)
-            else:
-                assert len(path) > 0, f"path must be a str or a list of str"
-                assert all([datapath in p for p in path]), "cannot create a fileshandle object which is not in the data_path"
-                filename = [os.path.relpath(p, datapath) for p in path]
-            return cls.from_name(cluster, filename,
-                                    prefix_joiner = prefix_joiner, appendnames_joiner = appendnames_joiner,
-                                    read_func = read_func, write_func = write_func, 
-                                    cache = cache, value_type = value_type,  #type: ignore
-                                    _extract_corename_func = _extract_corename_func)
+        Returns
+        ------
+        Any: The fileshandle object.
+        """
+        datapath = cluster.data_path
+        if isinstance(path, str):
+            assert is_subpath(path, datapath), "cannot create a fileshandle object which is not in the data_path"
+            filename = os.path.relpath(path, datapath)
+        else:
+            assert len(path) > 0, f"path must be a str or a list of str"
+            assert all([datapath in p for p in path]), "cannot create a fileshandle object which is not in the data_path"
+            filename = [os.path.relpath(p, datapath) for p in path]
+        return cls.from_name(cluster, filename,
+                                prefix_joiner = prefix_joiner, appendnames_joiner = appendnames_joiner,
+                                read_func = read_func, write_func = write_func, 
+                                cache = cache, value_type = value_type,  #type: ignore
+                                _extract_corename_func = _extract_corename_func)
+
     @classmethod
     def from_name(cls, cluster:FCT, filename:Union[str, list[str]], *,
                   prefix_joiner:Optional[str] = None, appendnames_joiner:Optional[str] = None, 
                   read_func:Optional[Callable] = None, write_func:Optional[Callable] = None, 
                   cache = None, value_type:Optional[type] = None,  #type: ignore
                   _extract_corename_func:Optional[Callable[[str], tuple[str, str, str, str, str]]] = None):
-        '''
-        cluster: the FilesCluster object
-        filename: the name of the file, can be a str or a list of str
-        prefix_joiner: the joiner between prefix and corename
-        appendnames_joiner: the joiner between appendnames
-        read_func: the function to read the file
-        write_func: the function to write the file
-        cache: the cache object
-        value_type: the type of the cache object
-        _extract_corename_func: the function to extract the corename, the function should return a tuple:
-                                (sub_dir, corename, suffix, prefix, appendname, _prefix_joiner, _appendnames_joinerr)
-        '''
+        """
+        Create an instance of the class using the given file name.
+
+        Parameters
+        ----------
+        cluster : FCT
+            The FilesCluster object.
+        filename : Union[str, List[str]]
+            The name of the file, can be a string or a list of strings.
+        prefix_joiner : Optional[str], default: None
+            The joiner between prefix and corename.
+        appendnames_joiner : Optional[str], default: None
+            The joiner between appendnames.
+        read_func : Optional[Callable], default: None
+            The function to read the file.
+        write_func : Optional[Callable], default: None
+            The function to write the file.
+        cache : any, default: None
+            The cache object.
+        value_type : Optional[type], default: None
+            The type of the cache object.
+        _extract_corename_func : Optional[Callable[[str], tuple[str, str, str, str, str]]], default: None
+            The function to extract the corename,
+            the function should return a tuple:
+            (sub_dir, corename, suffix, prefix, appendname, _prefix_joiner, _appendnames_joiner)
+
+        Returns
+        -------
+        FilesHandle
+            An instance of the class.
+
+        Raises
+        ------
+        AssertionError
+            If the filename is not a string or a list of strings.
+            If the sub_dir, corename, suffix, prefix, or appendname are not the same for all filenames in the list.
+
+        Examples
+        --------
+        >>> instance = FilesHandle.from_name(cluster, "filename.txt")
+        >>> instance = FilesHandle.from_name(cluster, ["file_1.txt", "file_2.txt"], appendnames_joiner="_")
+        """
         prefix_joiner       = get_with_priority(prefix_joiner,      cluster.DEFAULT_PREFIX_JOINER,      cls.DEFAULT_PREFIX_JOINER,      '')
         appendnames_joiner  = get_with_priority(appendnames_joiner, cluster.DEFAULT_APPENDNAMES_JOINER, cls.DEFAULT_APPENDNAMES_JOINER, '')
 
@@ -1202,7 +2620,7 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
             corename = corenames[0]
             suffix = suffixes[0]
             prefix = prefixes[0]
-
+        
         suffix              = get_with_priority(suffix, cluster.DEFAULT_SUFFIX, cls.DEFAULT_SUFFIX)
         prefix              = get_with_priority(prefix, cluster.DEFAULT_PREFIX, cls.DEFAULT_PREFIX)
 
@@ -1224,6 +2642,43 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                         prefix:Optional[str] = None, appendnames:Union[str, list[str]] = None, prefix_joiner:Optional[str] = None, appendnames_joiner:Optional[str] = None, #type: ignore
                         read_func:Optional[Callable] = None, write_func:Optional[Callable] = None, 
                         cache = None, value_type:Optional[type] = None): #type: ignore
+        """
+        Create an instance of the class from another fileshandle object.
+
+        Parameters
+        ----------
+        cluster : FCT
+            The cluster object.
+        file_handle : FilesHandle
+            The file handle object.
+        sub_dir : str, optional
+            The sub-directory path. Defaults to None.
+        corename : str, optional
+            The core name. Defaults to None.
+        suffix : str, optional
+            The file suffix. Defaults to None.
+        prefix : str, optional
+            The file prefix. Defaults to None.
+        appendnames : str or list[str], optional
+            The append names. Defaults to None.
+        prefix_joiner : str, optional
+            The joiner for prefix and append names. Defaults to None.
+        appendnames_joiner : str, optional
+            The joiner for append names. Defaults to None.
+        read_func : Callable, optional
+            The read function. Defaults to None.
+        write_func : Callable, optional
+            The write function. Defaults to None.
+        cache : optional
+            The cache object. Defaults to None.
+        value_type : type, optional
+            The value type. Defaults to None.
+
+        Returns
+        -------
+        FilesHandle
+            An instance of the class.
+        """
         sub_dir             = get_with_priority(sub_dir, file_handle.sub_dir)
         corename            = get_with_priority(corename, file_handle.corename)
         suffix              = get_with_priority(suffix, file_handle.suffix, cluster.DEFAULT_SUFFIX, cls.DEFAULT_SUFFIX)
@@ -1246,7 +2701,20 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                     cache = cache, value_type = value_type)
 
     @classmethod
-    def create_not_exist_fileshandle(cls, cluster:FCT):
+    def create_not_exist_fileshandle(cls, cluster: FCT):
+        """
+        Create a file handle for a non-existent file.
+
+        Parameters
+        ----------
+        cluster (FCT): 
+            The cluster object.
+
+        Returns
+        -------
+        FilesHandle
+            An instance of the class for the non-existent file.
+        """
         return cls(cluster, "", "notexist", ".fhnotexist")
     # endregion - create instance
 
@@ -1254,24 +2722,55 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     # region make immutable
     def __hash__(self):
+        '''
+        hash(self.identity_string())
+        '''
         return hash(self.identity_string()) # + id(self)
     
     def __eq__(self, o: object) -> bool:
+        """
+        compare the identity_string of two FilesHandle objects
+        """
         if isinstance(o, FilesHandle):
             return hash(self) == hash(o)
         else:
             return False
 
-    def immutable_attr_same_as(self, o: "FilesHandle") -> bool:
-        rlt = self.data_path == o.data_path and \
-                self.sub_dir == o.sub_dir and \
-                self.corename == o.corename and \
-                self.suffix == o.suffix and \
-                self.prefix == o.prefix and \
-                self.appendnames == o.appendnames and \
-                self.read_func == o.read_func and \
-                self.write_func == o.write_func and \
-                self.value_type == o.value_type
+    def immutable_attr_same_as(self, object: "FilesHandle") -> bool:
+        """
+        Check if the immutable attributes of the current object are the same as another FilesHandle object.
+
+        Immutable attributes include
+        ----
+        * data_path
+        * sub_dir
+        * corename
+        * suffix
+        * prefix
+        * appendnames
+        * read_func
+        * write_func
+        * value_type
+
+        Parameters
+        ----------
+        object : FilesHandle
+            The FilesHandle object to compare with.
+
+        Returns
+        -----
+        bool: 
+            True if the immutable attributes are the same, False otherwise.
+        """
+        rlt = self.data_path == object.data_path and \
+                self.sub_dir == object.sub_dir and \
+                self.corename == object.corename and \
+                self.suffix == object.suffix and \
+                self.prefix == object.prefix and \
+                self.appendnames == object.appendnames and \
+                self.read_func == object.read_func and \
+                self.write_func == object.write_func and \
+                self.value_type == object.value_type
         return rlt
 
     def __setattr__(self, name, value):
@@ -1283,22 +2782,45 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     # region property from cluster
     @property
     def valid(self):
+        """
+        `self.cluster` is not None
+        """
         return self.cluster is not None
 
     @property
     def multi_files(self):
+        """
+        Code
+        ----
+        `self.cluster.MULTI_FILES`
+
+        Note
+        ----
+        `multi_files` is decided by `self.cluster`. It indicates how to deal with the appendnames.
+
+        * see :link:`FilesCluster.MULTI_FILES`, :link:`FilesHandle.get_name`, :link:`FilesHandle.get_path`
+        """
         return self.cluster.MULTI_FILES
 
     @property
     def is_closed(self):
+        """
+        `self.cluster.closed`
+        """
         return self.cluster.closed
 
     @property
     def is_readonly(self):
+        """
+        `self.cluster.readonly`
+        """
         return self.cluster.readonly
 
     @property
     def overwrite_forbidden(self):
+        """
+        `self.cluster.readonly`
+        """
         return self.cluster.overwrite_forbidden
     # endregion IO status    
 
@@ -1323,6 +2845,36 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     @property
     def synced(self):
+        """
+        Whether the cache is synced with the file(s).
+
+        Note
+        -----
+
+        Each FilesHandle instance corresponds to one (or more) files. 
+        When performing IO operations, you can directly perform IO operations on the files, 
+        or you can modify the `cache` of the FilesHandle instance in memory. 
+
+        * See :link:`IO_CTRL_STRATEGY` for details.
+
+        When only files are written, or only cache is modified, the data in file(s) and cache are asynchronous,
+        and `synced` is False. To make `synced` be `True`, there are the following 3 methods:
+
+        1. 
+            Call `cache_to_file` or `file_to_cache` of the FilesCluster instance (hereinafter referred to as `cluster`)
+            to which the FilesHandle instance belongs to manually synchronize data.
+
+        2. 
+            Inherit `FilesCluster` and `FilesCluster._write` (assumed the subclasses to be named `NewFC`, `NewFC._write`), 
+            and rewrite the `W_SYNC` parameter of `NewFC._write` to True. This will modify the IO operation logic. 
+            When NewFC.write is called, `file(s)` and `cache` are written/modified synchronously. 
+            But please pay special attention: Frequent IO operations will consume a lot of resources, 
+            especially when the file is large. Therefore, when a large amount of data needs to be written, 
+            it is still recommended to modify `cache` first and then call `cache_to_file`.
+
+        3. 
+            (Not recommended) When writing data, call set_io_ctrl_strategy of `cluster`.
+        """
         return self.cache_proxy.synced
     
     @property
@@ -1331,7 +2883,10 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     @property
     def full_directory(self):
-        return os.path.join(self.data_path, self.sub_dir)
+        """
+        the full directory of the file(s)
+        """
+        return self.get_dir()
 
     @property
     def all_file_exist(self):
@@ -1367,37 +2922,88 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     @property
     def empty(self):
+        """
+        Check if the object does not have cache and all files do not exist.
+
+        Returns
+        -----
+        bool: True if the object is empty, False otherwise.
+        """
         return not (self.any_file_exist or self.has_cache)
 
     @property
     def file_exist_status(self) -> list[bool]:
+        """
+        Returns
+        -----
+        list[bool]: 
+            A list of boolean values indicating whether each file exists.
+        """
         paths = self.get_path(get_list=True)
         return [os.path.exists(x) for x in paths]
 
-    def get_name(self, get_list = False) -> Union[list[str], str]:
+    def get_name(self, get_list:bool=False) -> Union[list[str], str]:
+        """
+        Returns the name of the file(s).
+
+        Parameters
+        -----
+        get_list (bool, optional): 
+            If True, returns a list of names. Defaults to False.
+            If `multi_files` is True, returns a list of names regardless of the value of `get_list`.
+
+        Returns:
+        -----
+        Union[list[str], str]: 
+            The name(s) of the file(s).
+        """
         if self.multi_files or get_list:
-            awu_list:list[str] = self._appendnames_obj.get_with_joiner() 
+            awu_list: list[str] = self._appendnames_obj.get_with_joiner() 
             return [self.prefix_with_joiner + self.corename + x + self.suffix for x in awu_list]
         else:
-            awu:str = self.appendnames_with_joiner # type: ignore
-            return self.prefix_with_joiner + self.corename + awu + self.suffix 
+            awu: str = self.appendnames_with_joiner # type: ignore
+            return self.prefix_with_joiner + self.corename + awu + self.suffix
 
     def get_dir(self):
+        """
+        the full directory of the file(s)
+        """
         try:
             return self.__dir
         except AttributeError:
             self.__dir = os.path.join(self.data_path, self.sub_dir)
             return self.__dir
 
-    def get_path(self, get_list = False) -> Union[list[str], str]:
-        file_name = self.get_name(get_list = get_list)
-        dir_ = self.get_dir()
-        if isinstance(file_name, str):
-            return os.path.join(dir_, file_name)
-        else:
+    def get_path(self, get_list=False) -> Union[list[str], str]:
+        """
+        Returns the path of the file(s) associated with the object.
+
+        Parameters
+        -----
+        get_list (bool): 
+            If True, returns a list of paths. Defaults to False.
+            If `multi_files` is True, returns a list of paths regardless of the value of `get_list`.
+
+        Returns
+        -----
+        Union[list[str], str]: 
+            The path(s) of the file(s).
+        """
+        if self.multi_files or get_list:
+            file_name: list[str] = self.get_name(get_list=True)  # type: ignore 
+            dir_ = self.get_dir()
             return [os.path.join(dir_, x) for x in file_name]
+        else:
+            if not hasattr(self, "_path") or self._path is None:
+                file_name: str = self.get_name(get_list=False)  # type: ignore 
+                dir_ = self.get_dir()
+                self._path = os.path.join(dir_, file_name)
+            return self._path
             
     def get_key(self):
+        """
+        Get its key in the `self.cluster.MemoryData`
+        """
         return self.cluster.MemoryData._reverse_dict[self] # type: ignore
 
     # endregion path, dir, name
@@ -1405,19 +3011,36 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     # region cache
     @property
     def cache(self) -> Union[VDMT, None]:
-        # if not self.is_closed:
-        #     if not self.is_readonly:
-        #         return self.cache_proxy.cache
-        #     else:
-        #         return copy.copy(self.cache_proxy.cache)
-        # else:
-        #     return None
+        """
+        Returns the cache of the instance.
+
+        * If `is_readonly == True`, returns a shallow copy of the cache object. Else, returns the cache object.
+        
+        Returns
+        -----
+        Union[VDMT, None]: The cache object or a shallow copy of the cache object.
+        """
         if not self.is_readonly:
             return self.cache_proxy.cache
         else:
             return copy.copy(self.cache_proxy.cache)
 
     def set_cache(self, cache):
+        """
+        Set the cache for the IOAbstract object.
+
+        Parameters
+        -----
+        cache (object): The cache object to be set.
+
+        Note
+        -----
+        If `is_readonly == True` or `is_closed == True`, the cache will not be set.
+
+        Returns
+        -----
+        None
+        """
         if not self.is_closed and not self.is_readonly:
             if cache is None:
                 self.erase_cache()
@@ -1425,16 +3048,34 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                 self.cache_proxy.cache = cache
 
     def erase_cache(self):
+        """
+        Erase the cache.
+
+        Note
+        -----
+        If `self.is_readonly == True` or `self.is_closed == True`, the cache will not be erased.
+        """
         if not self.is_closed and not self.is_readonly:
             self.cache_proxy.cache = None    
 
     def _unsafe_get_cache(self) -> Union[VDMT, None]:
         '''
-        not recommended, use with caution
+        Get cache without any check
+
+        * NOT recommended, use with caution
         '''
         return self.cache_proxy.cache
 
     def read(self) -> Union[VDMT, list[VDMT], None]:
+        """
+        Reads data from the specified path using the read function.
+        If `self.read_func` is `None`, returns `None`.
+
+        Returns
+        -----
+        Union[VDMT, list[VDMT], None]: 
+            The read data, or None if the path does not exist.
+        """
         if self.read_func is not None:
             path = self.get_path()
             if isinstance(path, str):
@@ -1450,7 +3091,21 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                 return rlts
         return None
 
-    def set_synced(self, synced:bool = True):
+    def _set_synced(self, synced:bool = True):
+        """
+        Set the synchronization status of the cache.
+
+        Parameters
+        -----
+        synced (bool): The synchronization status. Default is True.
+
+        Note
+        -----
+        DO NOT call this function directly, use `cache_to_file` or `file_to_cache` instead.
+
+        Returns:
+        None
+        """
         if self.has_cache and self.all_file_exist:
             pass
         elif not self.has_cache and self.all_file_not_exist:
@@ -1462,6 +3117,9 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
 
     # region other
     def clear_notfound(self):
+        """
+        clear those files which are not found
+        """
         new_appendnames = []
         for i, e in enumerate(self.file_exist_status):
             if e:
@@ -1479,28 +3137,121 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
     # endregion other
 
 class BinDict(dict[_KT, _VT], Generic[_KT, _VT]):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    """
+    A dictionary subclass that supports bidirectional mapping between keys and values.
+
+    Parameters
+    ----------
+    dict_ : dict, optional
+        The initial dictionary to populate the BinDict with.
+
+    Attributes
+    ----------
+    _reverse_dict : dict
+        A dictionary that stores the reverse mapping of values to keys.
+
+    Methods
+    -------
+    gen_reverse_dict(dict_)
+        Generates the reverse dictionary from the given dictionary.
+    init_reverse_dict()
+        Initializes the `_reverse_dict` attribute.
+    __getitem__(key)
+        Returns the value associated with the given key.
+    __del_item(key)
+        Deletes the item with the given key and its corresponding reverse mapping.
+    __setitem__(key, value)
+        Sets the value associated with the given key and updates the reverse mapping.
+    update(*args, **kwargs)
+        Updates the BinDict with the key-value pairs from other dictionaries.
+    pop(key, default=None)
+        Removes and returns the value associated with the given key.
+    popitem()
+        Removes and returns the last key-value pair in the BinDict.
+    clear()
+        Removes all items from the BinDict.
+    setdefault(key, default=None)
+        Returns the value associated with the given key, or sets it to the default value if the key is not present.
+    __delitem__(key)
+        Deletes the item with the given key and its corresponding reverse mapping.
+    __repr__()
+        Returns a string representation of the BinDict.
+
+    Examples
+    --------
+    >>> bin_dict = BinDict({'a': 1, 'b': 2})
+    >>> print(bin_dict['a'])
+    1
+    >>> bin_dict.update({'c': 3})
+    >>> print(bin_dict)
+    BinDict({'a': 1, 'b': 2, 'c': 3})
+    >>> bin_dict._reverse_dict[3]
+    'c'
+    """
+
+    def __init__(self, dict_: Optional[dict[_KT, _VT]] = None, *args, **kwargs):
+        super().__init__(dict_, *args, **kwargs)
         self.init_reverse_dict()
 
     @staticmethod
-    def gen_reverse_dict(dict_:dict[_KT, _VT]):
+    def gen_reverse_dict(dict_: dict[_KT, _VT]) -> dict[_VT, _KT]:
+        """
+        Generates a reverse dictionary from the given dictionary.
+
+        Parameters
+        ----------
+        dict_ : dict
+            The dictionary to generate the reverse dictionary from.
+
+        Returns
+        -------
+        dict
+            The reverse dictionary.
+        """
         def reverse_entry(entry):
             key, value = entry
             return value, key
-        
+
         reverse_entries = list(map(reverse_entry, dict_.items()))
 
         return dict(reverse_entries)
-        # return {value:key for key, value in dict_.items()}
 
     def init_reverse_dict(self):
+        """
+        Initializes the `_reverse_dict` attribute by generating the reverse dictionary from the current dictionary.
+        """
         self._reverse_dict = self.gen_reverse_dict(self)
 
     def __getitem__(self, __key: _KT) -> _VT:
+        """
+        Returns the value associated with the given key.
+
+        Parameters
+        ----------
+        __key : _KT
+            The key to retrieve the value for.
+
+        Returns
+        -------
+        _VT
+            The value associated with the key.
+        """
         return super().__getitem__(__key)
 
-    def __del_item(self, key):
+    def __del_item(self, key) -> _VT:
+        """
+        Deletes the item with the given key and its corresponding reverse mapping.
+
+        Parameters
+        ----------
+        key : _KT
+            The key of the item to delete.
+
+        Returns
+        -------
+        _VT
+            The value of the deleted item.
+        """
         value = self[key]
         super().__delitem__(key)
         if value in self._reverse_dict:
@@ -1508,27 +3259,41 @@ class BinDict(dict[_KT, _VT], Generic[_KT, _VT]):
         return value
 
     def __setitem__(self, key, value):
+        """
+        Sets the value associated with the given key and updates the reverse mapping.
+
+        Parameters
+        ----------
+        key : _KT
+            The key to set the value for.
+        value : _VT
+            The value to associate with the key.
+        """
         if key in self:
-            # 如果key已存在，则先删除旧的反向映射
+            # If key already exists, delete the old reverse mapping
             old_value = self[key]
             if old_value in self._reverse_dict:
                 del self._reverse_dict[old_value]
         if value in self._reverse_dict:
-            # 如果value已存在于反向映射中，则删除旧的key
+            # If value already exists in the reverse mapping, delete the old key
             old_key = self._reverse_dict[value]
             del self[old_key]
         super().__setitem__(key, value)
         self._reverse_dict[value] = key
 
-    def update(self, *args:dict, **kwargs):
-        # for other_dict in args:
-        #     for key, value in other_dict.items():
-        #         self[key] = value
-        # for key, value in kwargs.items():
-        #     self[key] = value
+    def update(self, *args: dict[_KT, _VT], **kwargs):
+        """
+        Updates the BinDict with the key-value pairs from other dictionaries.
 
+        Parameters
+        ----------
+        *args : dict
+            Other dictionaries to update the BinDict with.
+        **kwargs : key-value pairs
+            Key-value pairs to update the BinDict with.
+        """
         for other_dict in args:
-            reverse_dict = self.gen_reverse_dict(other_dict) # {value:key for key, value in other_dict.items()}
+            reverse_dict = self.gen_reverse_dict(other_dict)
 
             if len(self) > 0:
                 reverse_same_keys = set(reverse_dict.keys()) & set(self._reverse_dict.keys())
@@ -1536,64 +3301,130 @@ class BinDict(dict[_KT, _VT], Generic[_KT, _VT]):
                 for rev_k in reverse_same_keys:
                     self.pop(self._reverse_dict[rev_k])
                 for k in origin_same_keys:
-                    self._reverse_dict.pop(self[k])    
+                    self._reverse_dict.pop(self[k])
 
             super().update(other_dict)
             self._reverse_dict.update(reverse_dict)
         for key, value in kwargs.items():
             self[key] = value
 
-    def pop(self, key, default=None):
+    def pop(self, key, default=None) -> _VT:
+        """
+        Removes and returns the value associated with the given key.
+
+        Parameters
+        ----------
+        key : _KT
+            The key of the item to remove.
+        default : any, optional
+            The value to return if the key is not found, by default None.
+
+        Returns
+        -------
+        _VT
+            The value associated with the key, or the default value if the key is not found.
+        """
         if key in self:
             value = self.__del_item(key)
             return value
         else:
             return default
 
-    def popitem(self):
+    def popitem(self) -> tuple[_KT, _VT]:
+        """
+        Removes and returns the last key-value pair in the BinDict.
+
+        Returns
+        -------
+        tuple
+            The last key-value pair in the BinDict.
+        """
         key, value = super().popitem()
         if value in self._reverse_dict:
             del self._reverse_dict[value]
         return key, value
 
     def clear(self):
+        """
+        Removes all items from the BinDict.
+        """
         super().clear()
         self._reverse_dict.clear()
 
-    def setdefault(self, key, default=None):
+    def setdefault(self, key, default=None) -> _VT:
+        """
+        Returns the value associated with the given key, or sets it to the default value if the key is not present.
+
+        Parameters
+        ----------
+        key : _KT
+            The key to retrieve the value for.
+        default : any, optional
+            The default value to set if the key is not present, by default None.
+
+        Returns
+        -------
+        _VT
+            The value associated with the key, or the default value if the key is not present.
+        """
         if key not in self:
             self[key] = default
         return self[key]
 
     def __delitem__(self, key):
+        """
+        Deletes the item with the given key and its corresponding reverse mapping.
+
+        Parameters
+        ----------
+        key : _KT
+            The key of the item to delete.
+        """
         if key in self:
             self.__del_item(key)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """
+        Returns a string representation of the BinDict.
+
+        Returns
+        -------
+        str
+            A string representation of the BinDict.
+        """
         return f"{self.__class__.__name__}({super().__repr__()})"
 
 class Node(Generic[NODE]):
-    PARENT_TYPE = None
-    CHILD_TYPE = None
+    """
+    A class representing a node in a tree structure.
+    """
 
-    KW_FORWARD = "fwd"
-    KW_BACKWARD = "bwd"
-    KW_BI_DIRECTION = "bid"
+    PARENT_TYPE: Optional[type["Node"]] = None
+    CHILD_TYPE: Optional[type["Node"]] = None
 
     def __init__(self) -> None:
-        self.__parent:list[Optional[NODE]] = [None]
-        self.__children:list[NODE] = []
+        """
+        Initializes a Node object.
+        """
+        self.__parent: list[Optional[NODE]] = [None]
+        self.__children: list[NODE] = []
 
         self.linked_with_children = True
         self.follow_parent = True
 
     @staticmethod
-    def __backward(obj:"Node[NODE]", funcname, *args, **kwargs):
+    def __backward(obj: "Node", funcname, *args, **kwargs):
+        """
+        Helper method to propagate a function call to the parent node and its ancestors in a backward direction.
+        """
         if obj.parent is not None and obj.linked_with_children and hasattr(obj.parent, funcname):
             getattr(obj.parent, funcname)(*args, **kwargs)
 
     @staticmethod
-    def __forward(obj:"Node[NODE]", funcname, *args, **kwargs):
+    def __forward(obj: "Node", funcname, *args, **kwargs):
+        """
+        Helper method to propagate a function call to the child nodes in a forward direction.
+        """
         for child in obj._children:
             if child.follow_parent and hasattr(child, funcname):
                 getattr(child, funcname)(*args, **kwargs)
@@ -1601,16 +3432,12 @@ class Node(Generic[NODE]):
     @staticmethod
     def downward_preorder_propagate(func):
         '''
-        all the func of the leaves of this node will be called.
-        Preorder traversal: the func of root will be called first
+        Decorator to propagate a function call to the leaves of the node in a downward preorder traversal.
         '''
-        # propagating = False
         @functools.wraps(func)
-        def forward_propagate_wrapper(obj:Node[NODE], *args, **kwargs):
-            # nonlocal propagating
+        def forward_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
             funcname = get_func_name(obj, func)
             func(obj, *args, **kwargs)
-            # if not propagating:
             if funcname is not None:
                 Node.__forward(obj, funcname, *args, **kwargs)
             else:
@@ -1621,12 +3448,10 @@ class Node(Generic[NODE]):
     @staticmethod
     def downward_postorder_propagate(func):
         '''
-        root -> leaf
-        but the func will be called backward, the func of leaf will be called first
+        Decorator to propagate a function call to the leaves of the node in a downward postorder traversal.
         '''
-        # propagating = False
         @functools.wraps(func)
-        def forward_propagate_wrapper(obj:Node[NODE], *args, **kwargs):
+        def forward_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
             funcname = get_func_name(obj, func)
             if funcname is not None:
                 Node.__forward(obj, funcname, *args, **kwargs)
@@ -1637,72 +3462,83 @@ class Node(Generic[NODE]):
         return forward_propagate_wrapper
 
     @staticmethod
-    def backtracking_preorder_propagate(func):
+    def upward_preorder_propagate(func):
         '''
-        leaf -> root
+        Decorator to propagate a function call to the ancestors of the node in a backtracking preorder traversal.
         '''
         @functools.wraps(func)
-        def backtracking_preorder_propagate_wrapper(obj:Node[NODE], *args, **kwargs):
+        def upward_preorder_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
             funcname = get_func_name(obj, func)
             if funcname is not None:
                 Node.__backward(obj, funcname, *args, **kwargs)
             else:
                 warnings.warn(f"can't find function {func} in {obj}, propagate ends")
             func(obj, *args, **kwargs)
-        return backtracking_preorder_propagate_wrapper
+        return upward_preorder_propagate_wrapper
     
     @staticmethod
-    def backtracking_postorder_propagate(func):
-        def backtracking_postorder_propagate_wrapper(obj:Node[NODE], *args, **kwargs):
+    def upward_postorder_propagate(func):
+        '''
+        Decorator to propagate a function call to the ancestors of the node in a backtracking postorder traversal.
+        '''
+        def upward_postorder_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
             funcname = get_func_name(obj, func)
             func(obj, *args, **kwargs)
             if funcname is not None:
                 Node.__backward(obj, funcname, *args, **kwargs)
             else:
                 warnings.warn(f"can't find function {func} in {obj}, propagate ends")
-        return backtracking_postorder_propagate_wrapper
-    # @staticmethod
-    # def bi_direction_propagate(func:Callable):
-    #     '''
-    #     root -> leaf -> root
-    #     '''
-    #     def bi_direction_propagate_wrapper(obj:Node[NODE], *args, _propagat_direction = Node.KW_BI_DIRECTION, **kwargs):
-    #         funcname = get_func_name(obj, func)
-            
-    #         if _propagat_direction == Node.KW_BI_DIRECTION or _propagat_direction == Node.KW_BACKWARD:
-    #             Node.__backward(obj, funcname, *args, **kwargs)
-    #         func(obj, *args, **kwargs)
-    #         if _propagat_direction == Node.KW_BI_DIRECTION or _propagat_direction == Node.KW_FORWARD:
-    #             Node.__forward(obj, funcname, *args, **kwargs)
-    #     return bi_direction_propagate_wrapper
+        return upward_postorder_propagate_wrapper
 
     @property
     def parent(self) -> Union[NODE, None]:
+        """
+        Get the parent node of the current node.
+        """
         return self.__parent[0]
     
     @property
     def _children(self) -> tuple[NODE]:
+        """
+        Get the children nodes of the current node.
+        """
         return tuple(self.__children)
 
     def _set_parent(self, parent):
+        """
+        Set the parent node of the current node.
+        """
         self.__parent[0] = parent
 
-    def _add_child(self, child_node:"Node"):
+    def _add_child(self, child_node: "Node"):
+        """
+        Add a child node to the current node.
+        """
         child_type = self.CHILD_TYPE if self.CHILD_TYPE is not None else Node
         assert isinstance(child_node, child_type), f"child_node must be Node, not {type(child_node)}"
         if child_node in self._children:
             return
         child_node._set_parent(self)
-        self.__children.append(child_node)
+        self.__children.append(child_node) # type: ignore
 
-    def _remove_child(self, child_node:"Node"):
+    def _remove_child(self, child_node: "Node"):
+        """
+        Parameters
+        -----
+        child_node: Node
+
+        Remove a child node from the current node.
+        """
         child_type = self.CHILD_TYPE if self.CHILD_TYPE is not None else Node
         assert isinstance(child_node, child_type), f"child_node must be Node, not {type(child_node)}"
         if child_node in self._children:
             child_node._set_parent(None)
-            self.__children.remove(child_node)
+            self.__children.remove(child_node) # type: ignore
 
-    def _move_node(self, new_parent:NODE):
+    def _move_node(self, new_parent: NODE):
+        """
+        Move the current node to a new parent node.
+        """
         parent_type = self.PARENT_TYPE if self.PARENT_TYPE is not None else Node
         assert isinstance(new_parent, parent_type) or new_parent is None, f"new_parent must be Node, not {type(new_parent)}"
         if self.parent is not None:
@@ -1710,20 +3546,104 @@ class Node(Generic[NODE]):
         if new_parent is not None:
             new_parent._add_child(self)
 
-class IO_CTRL_STRATEGY(enumerate):
+class IO_CTRL_STRATEGY():
+    """
+    Enum representing different IO control strategies.
+
+    Note
+    -----
+    there are 3 control flags for `DataMapping`: `cache_priority`, `strict_priority_mode`, `write_synchronous`
+
+    * `cache_priority`
+
+        IO operations have 2 destinations: cache and file(s). Cache is in memory, and file(s) is on disk.
+        You can read from(write to) cache or file(s). They each have their own advantages under different conditions.
+        
+        When the file is large, such as an image or a video, it is recommended to read from(write to) the file(s) directly. 
+        Because reading from(writing to) the file(s) directly will not consume memory.
+        `cache_priority` is recommended to be `False` in this case.
+            
+        When the file is small, such as a configuration file, it is recommended to read from(write to) the cache.
+        Because reading from(writing to) the cache is faster than reading from(writing to) the file(s). 
+        Or if the file contains a large amounts of pieces of data, like a json/xml file, 
+        If the file is written to the disk when each piece of data is written, a lot of resources will be consumed.
+        In this case, it is recommended to write to the cache first, and then write to the file(s) in batches.
+        `cache_priority` is recommended to be `True` in this case.
+
+    * `strict_priority_mode`
+
+        When `strict_priority_mode` is `False`. If the one set as priority fails to perform a read (or write) operation, 
+        it will try to perform a read (or write) operation on the other one. If failed again, it will raise an exception.
+
+        When `strict_priority_mode` is `True`. When the priority fails, it will raise an exception without trying the other one.
+
+    * `write_synchronous`
+
+        When `write_synchronous` is `False`. If the cache is modified, it will not be written to the file immediately. 
+        The same goes for files.
+
+        When `write_synchronous` is `True`. If the cache is modified, it will be written to the file immediately. The same goes for files.
+
+    Attributes
+    ------
+    CACHE_PRIORITY: 
+        Set Cache as Priority
+    FILE_PRIORITY: 
+        Set File as Priority
+    STRICT_PRIORITY_MODE: 
+        Set `strict_priority_mode`
+    NON_STRICT_PRIORITY_MODE: 
+        Clear `strict_priority_mode`
+    WRITE_SYNCHRONOUS: 
+        Set `write_synchronous`
+    WRITE_ASYNCHRONOUS: 
+        Clear `write_synchronous`
+
+    Methods
+    ------
+    get_ctrl_flag(strategy: int) -> Tuple[bool, bool, bool]: 
+        Get control flags based on the strategy.
+    get_ctrl_strategy(cache_priority: bool, strict_priority_mode: bool, write_synchronous: bool) -> int: 
+        Get strategy based on control flags.
+    """
+
     FILE_IDPNDT             = 0
+    """FILE_PROIRITY, NON_STRICT_PRIORITY_MODE, WRITE_ASYNCHRONOUS"""
     FILE_SYNC               = 1
+    """FILE_PROIRITY, NON_STRICT_PRIORITY_MODE, WRITE_SYNCHRONOUS"""
     FILE_STRICK_IDPNDT      = 2
+    """FILE_PROIRITY, STRICT_PRIORITY_MODE, WRITE_ASYNCHRONOUS"""
     FILE_STRICK_SYNC        = 3
+    """FILE_PROIRITY, STRICT_PRIORITY_MODE, WRITE_SYNCHRONOUS"""
     CACHE_IDPNDT            = 4
+    """CACHE_PRIORITY, NON_STRICT_PRIORITY_MODE, WRITE_ASYNCHRONOUS"""
     CACHE_SYNC              = 5
+    """CACHE_PRIORITY, NON_STRICT_PRIORITY_MODE, WRITE_SYNCHRONOUS"""
     CACHE_STRICK_IDPNDT     = 6
+    """CACHE_PRIORITY, STRICT_PRIORITY_MODE, WRITE_ASYNCHRONOUS"""
     CACHE_STRICK_SYNC       = 7
+    """CACHE_PRIORITY, STRICT_PRIORITY_MODE, WRITE_SYNCHRONOUS"""
+
+    CACHE_PRIORITY          = 4
+    FILE_PROIRITY           = 0
+
+    STRICT_PRIORITY_MODE    = 2
+    NON_STRICT_PRIORITY_MODE= 0
+
+    WRITE_SYNCHRONOUS       = 1
+    WRITE_ASYNCHRONOUS      = 0
 
     @classmethod
-    def get_ctrl_flag(cls, strategy):
+    def get_ctrl_flag(cls, strategy:int):
         '''
-            return cache_priority, strict_priority_mode, write_synchronous
+        return cache_priority, strict_priority_mode, write_synchronous
+
+        Examples
+        -----
+        >>> IO_CTRL_STRATEGY.get_ctrl_flag(IO_CTRL_STRATEGY.CACHE_IDPNDT)
+        (True, False, False)
+        >>> IO_CTRL_STRATEGY.get_ctrl_flag(IO_CTRL_STRATEGY.CACHE_PRIORITY | IO_CTRL_STRATEGY.STRICT_PRIORITY_MODE | IO_CTRL_STRATEGY.WRITE_SYNCHRONOUS)
+        (True, True, True)
         '''
         if strategy == cls.CACHE_IDPNDT:
             return True, False, False
@@ -1745,10 +3665,181 @@ class IO_CTRL_STRATEGY(enumerate):
             raise ValueError(f"strategy must be IO_CTRL_STRATEGY, not {strategy}")
         
     @classmethod
-    def get_ctrl_strategy(cls, cache_priority, strict_priority_mode, write_synchronous):
+    def get_ctrl_strategy(cls, cache_priority:bool, strict_priority_mode:bool, write_synchronous:bool):
+        """
+        Get the control strategy based on the given parameters.
+
+        Parameters
+        -----
+        cache_priority :bool
+            The priority of cache.
+        strict_priority_mode :bool
+            The mode of strict priority.
+        write_synchronous :bool
+            The mode of write synchronization.
+
+        Returns
+        -----
+        int: 
+            The control strategy calculated based on the given parameters.
+        """
         return int(cache_priority) * 4 + int(strict_priority_mode) * 2 + int(write_synchronous)
 
 class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataMapping"], ABC, Generic[_VT, DMT, VDMT]):
+    """
+    An abstract class representing bidirectional mapping between data and files.
+
+    Attributes
+    ------
+    MEMORY_DATA_FILE (str): 
+        
+        The default filename for storing memory data.
+    MEMORY_DATA_TYPE (type): 
+        The default data type for memory data storage (BinDict).
+    KEY_TYPE (type): 
+        The type of keys used in the mapping (int).
+    FILESHANDLE_TYPE (type): 
+        The type of files handle used (FilesHandle).
+
+    Methods
+    -----
+    try_open(): 
+        Tries to open the data mapping for operation.
+    has_not_inited(): 
+        Checks if the data mapping has not been initialized.
+    _clear_empty_dir(): 
+        Clears empty directories in the data mapping.
+    _rebuild_done(): 
+        Handles actions after the rebuild operation is completed.
+    init_identity(parent_like, mapping_name, *args, flag_name="", **kwargs): 
+        Initializes the identity of the data mapping.
+    get_child(name): 
+        Gets the child node with the specified name.
+    save_memory_func(path, data): 
+        Serializes and saves the memory data to a file.
+    load_memory_func(path): 
+        Loads and deserializes memory data from a file.
+    register(identity_string, obj): 
+        Registers a data mapping instance with a unique identity string.
+    get_instance(identity_string, _obj): 
+        Retrieves a registered data mapping instance based on its identity string.
+    identity_string(): 
+        Returns the identity string of the data mapping.
+    identity_name(): 
+        Returns the identity name of the data mapping.
+    gen_identity_string(): 
+        Generates a new identity string for the data mapping.
+    gen_identity_name(): 
+        Generates a new identity name for the data mapping.
+    make_path(): 
+        Creates the necessary directory structure for the data mapping.
+    set_parent(parent): 
+        Sets the parent node of the data mapping.
+    open_hook(): 
+        Hook method called during the open operation.
+    stop_writing_hook(): 
+        Hook method called when writing is stopped.
+    get_writing_mark_file(): 
+        Returns the path to the writing mark file.
+    close(closed=True): 
+        Closes the data mapping.
+    open(opened=True): 
+        Opens the data mapping.
+    set_readonly(readonly=True): 
+        Sets the data mapping to readonly mode.
+    set_writable(writable=True): 
+        Sets the data mapping to writable mode.
+    stop_writing(stop_writing=True): 
+        Stops writing to the data mapping.
+    start_writing(start_writing=True): 
+        Starts writing to the data mapping.
+    set_overwrite_forbidden(overwrite_forbidden=True): 
+        Forbids overwriting in the data mapping.
+    set_overwrite_allowed(overwrite_allowed=True): 
+        Allows overwriting in the data mapping.
+    remove_mark(): 
+        Removes the mark file associated with the data mapping.
+    _set_MemoryData_modified(): 
+        Sets the flag indicating modification in memory data.
+    _reset_MemoryData_modified(): 
+        Resets the flag indicating modification in memory data.
+    MemoryData_modified: 
+        Property indicating whether memory data has been modified.
+    MemoryData: 
+        Property representing the memory data of the mapping.
+    MemoryData_path: 
+        Property representing the path to the memory data file.
+    pickle_MemoryData_path: 
+        Property representing the path to the pickled memory data file.
+    data_path: 
+        Property representing the data path of the mapping.
+    save_preprecess(): 
+        Hook method for preprocessing data before saving.
+    load_postprocess(data): 
+        Hook method for post-processing data after loading.
+    remove_memory_data_file(): 
+        Removes the memory data file.
+    rebuild(force=False): 
+        Abstract method for rebuilding the data mapping.
+    merge_MemoryData(MemoryData: dict): 
+        Abstract method for merging memory data.
+    sort(): 
+        Sorts the memory data.
+    num: 
+        Property representing the number of items in the mapping.
+    i_upper: 
+        Property representing the upper limit of indices in the mapping.
+    next_valid_i: 
+        Property representing the next valid index in the mapping.
+    continuous: 
+        Property indicating whether the indices in the mapping are continuous.
+    set_io_ctrl_strategy(strategy): 
+        Sets the I/O control strategy based on the provided strategy.
+    get_io_ctrl_strategy(): 
+        Gets the I/O control strategy.
+    read(src): 
+        Abstract method for reading data from the mapping.
+    write(dst, value, force=False, **other_paras): 
+        Abstract method for writing data to the mapping.
+    modify_key(src, dst, force=False, **other_paras): 
+        Abstract method for modifying keys in the mapping.
+    remove(dst, force=False, **other_paras): 
+        Abstract method for removing data from the mapping.
+    merge_from(src: DMT, force=False): 
+        Abstract method for merging data from another mapping.
+    copy_from(src: DMT, cover=False, force=False): 
+        Abstract method for copying data from another mapping.
+    append(value, force=False, **other_paras): 
+        Appends a value to the mapping.
+    clear(force=False): 
+        Clears the data mapping.
+    make_continuous(force=False): 
+        Makes the indices in the mapping continuous.
+    cache_to_file(data_i=None, force=False, **other_paras): 
+        Caches data to files.
+    file_to_cache(data_i=None, save=True, force=False, **other_paras): 
+        Reads data from files and updates the cache.
+    clear_files(force=False): 
+        Clears the files associated with the data mapping.
+    clear_cache(force=False): 
+        Clears the cache associated with the data mapping.
+    _set_unfinished_operation(unfinished_operation): 
+        Sets the unfinished operation flag.
+    _get_unfinished_operation(): 
+        Gets the unfinished operation flag.
+    _set_last_write_unfinished(): 
+        Sets the flag indicating the last write operation was unfinished.
+    _reset_last_write_unfinished(): 
+        Resets the flag indicating the last write operation was unfinished.
+    _get_last_write_unfinished(): 
+        Gets the flag indicating the last write operation was unfinished.
+    choose_unfinished_operation(): 
+        Asks the user to choose an operation to continue when an operation is unfinished.
+    process_unfinished(): 
+        Processes unfinished operations in the data mapping.
+
+    """
+
     _DMT = TypeVar('_DMT', bound="DataMapping")
     _VDMT = TypeVar('_VDMT')
 
@@ -1770,6 +3861,9 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     
     @classmethod
     def register(cls, identity_string, obj:"DataMapping"):
+        """
+        see :link:`RegisterInstance.register`
+        """
         for other_obj in cls._registry.values():
             if isinstance(other_obj, DataMapping) and obj.MemoryData_path == other_obj.MemoryData_path:
                 raise ValueError(f"{obj} and {other_obj} has the same MemoryData_path, try set 'flag_name' to distinguish them")
@@ -1777,19 +3871,38 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
 
     @classmethod
     def get_instance(cls, identity_string, _obj):
+        """
+        see :link:`RegisterInstance.get_instance`
+        """
         obj = cls._registry[identity_string]
         return obj
 
     def identity_string(self):
+        """
+        see :link:`RegisterInstance.identity_string`
+        """
         return _RegisterInstance.identity_string(self)
 
     def identity_name(self):
+        """
+        see :link:`RegisterInstance.identity_name`
+        """
         return _RegisterInstance.identity_name(self)
 
     def gen_identity_string(self):
+        """
+        see :link:`RegisterInstance.gen_identity_string`
+        """
         return f"{self.__class__.__name__}:{self.data_path}|{self.flag_name}"
 
     def gen_identity_name(self):
+        """
+        see :link:`RegisterInstance.gen_identity_name`
+
+        Note
+        ----
+        if `self.flag_name` is not empty, return `self.flag_name`, otherwise return `self.mapping_name`
+        """
         if self.flag_name != "":
             return self.flag_name
         else:
@@ -1797,7 +3910,23 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
 
     def init_identity(self, parent_like:Union[str, "DatasetNode"], mapping_name: str, *args, flag_name = "", **kwargs):
         '''
-        principle: the parameter of identity can not be changed once it has been inited
+        Initializes the identity of the data mapping.
+
+        Parameters
+        -----
+        parent_like: 
+            A string or DatasetNode representing the parent of the data mapping.
+        mapping_name: 
+            A string representing the name of the data mapping.
+        flag_name: 
+            A string representing the flag name.
+
+        Raises
+        -----
+        TypeError: 
+            If `parent_like` is not a string or DatasetNode.
+
+        * see :link:`DataMapping.__init__` for more information.
         '''
         if isinstance(parent_like, str):
             self._top_directory = parent_like
@@ -1815,9 +3944,15 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
 
     @property
     def children_names(self):
+        """
+        get the identity names of the children nodes
+        """
         return [x.identity_name() for x in self._children]
 
-    def get_child(self, name):
+    def get_child(self, name:str):
+        """
+        get the child node with the specified name
+        """
         for child in self._children:
             if child.identity_name() == name:
                 return child
@@ -1828,10 +3963,10 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     # region DataMapping ####
     def __init_subclass__(cls, **kwargs):
         '''
-        add hook to some methods
+        Adds hooks to some methods.
         '''
         ### __init__ ###
-        cls._orig_init = cls.__init__
+        cls._orig_init = cls.__init__ # type: ignore
         cls.__init__ = method_exit_hook_decorator(cls, cls.__init__, cls.try_open, cls.has_not_inited)
         ### clear ###
         cls.clear = method_exit_hook_decorator(cls, cls.clear, cls._clear_empty_dir)
@@ -1841,7 +3976,18 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
 
     def __init__(self, top_directory:Union[str, "DatasetNode"], mapping_name: str = "", *args, flag_name:str = "", **kwargs) -> None:
         '''
-        Initialize the data cluster with the provided top_directory, mapping_name, and registration flag.
+        Initializes the data mapping with the provided top_directory, mapping_name, and registration flag.
+
+        Parameters
+        ----
+        top_directory: 
+            A string or DatasetNode representing the top directory of the data mapping.
+        mapping_name: 
+            A string representing the name of the data mapping.
+            It's used as sub directory name under `top_directory`.for `FilesCluster`(the subclass of `DataMapping`)
+        flag_name: 
+            A string representing the registration flag. 
+            It's used to distinguish different instances of the same data mapping.
         '''
         IOStatusManager.__init__(self)
         Node.__init__(self)
@@ -1863,6 +4009,11 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
             self._set_last_write_unfinished()
 
     def try_open(self):
+        '''
+        Tries to open the data mapping for operation.
+        If the data path exists, it opens the data mapping.
+        Otherwise, it closes the data mapping.
+        '''
         if os.path.exists(self.data_path):
             self.open()  # Opens the cluster for operation.
         else:
@@ -1881,6 +4032,14 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
         self._inited = True
 
     def has_not_inited(self):
+        '''
+        Checks if the data mapping has not been initialized.
+
+        Returns
+        ----
+        bool: 
+            True if the data mapping has not been initialized, False otherwise.
+        '''
         try:
             self._inited
         except AttributeError:
@@ -1889,6 +4048,9 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
             return False
 
     def _clear_empty_dir(self):
+        '''
+        remove empty directories in the data mapping.
+        '''
         for r, d, f in os.walk(self.data_path):
             for dir_ in d:
                 if len(os.listdir(os.path.join(r, dir_))) == 0:
@@ -1907,6 +4069,11 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
         return None
 
     def make_path(self):
+        """
+        Create the directory path specified by `self.data_path` if it does not exist.
+        If `self.data_path` ends with a file extension, create the parent directory and an empty file.
+        If `self.data_path` does not end with a file extension, create the directory recursively.
+        """
         if not os.path.exists(self.data_path):
             if '.' in os.path.basename(self.data_path):
                 dir_ = os.path.dirname(self.data_path)
@@ -1916,7 +4083,7 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
             else:
                 os.makedirs(self.data_path, exist_ok=True)
     
-    def set_parent(self, parent):
+    def set_parent(self, parent:"DataMapping"):
         if isinstance(parent, DataMapping) or parent is None:
             self._move_node(parent)
     # endregion DataMapping new methods ####
@@ -1939,44 +4106,107 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
 
     @Node.downward_preorder_propagate
     def close(self, closed = True):
+        """
+        see :link:`IOStatusManager.close`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().close(closed)    
 
     @Node.downward_preorder_propagate
     def open(self, opened = True):
+        """
+        see :link:`IOStatusManager.open`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().open(opened)
 
     @Node.downward_preorder_propagate
     def set_readonly(self, readonly = True):
+        """
+        see :link:`IOStatusManager.set_readonly`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().set_readonly(readonly)
 
     @Node.downward_preorder_propagate
     def set_writable(self, writable = True):
+        """
+        see :link:`IOStatusManager.set_writable`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().set_writable(writable)
 
     @Node.downward_preorder_propagate
     def stop_writing(self, stop_writing = True):
+        """
+        see :link:`IOStatusManager.stop_writing`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().stop_writing(stop_writing)
 
     @Node.downward_preorder_propagate
     def start_writing(self, start_writing = True):
+        """
+        see :link:`IOStatusManager.start_writing`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().start_writing(start_writing)
 
     @Node.downward_preorder_propagate
     def set_overwrite_forbidden(self, overwrite_forbidden = True):
+        """
+        see :link:`IOStatusManager.set_overwrite_forbidden`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().set_overwrite_forbidden(overwrite_forbidden)
 
     @Node.downward_preorder_propagate
     def set_overwrite_allowed(self, overwrite_allowed = True):
+        """
+        see :link:`IOStatusManager.set_overwrite_allowed`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().set_overwrite_allowed(overwrite_allowed)
 
     @Node.downward_preorder_propagate
     def remove_mark(self):
+        """
+        see :link:`IOStatusManager.remove_mark`
+
+        this operation will be propagated to all children nodes in preorder traversal
+        """
         super().remove_mark()
     # endregion DataMapping override for IOStatusManager####
     
     # region Memorydata operation ####
-    @Node.backtracking_preorder_propagate
+    @Node.upward_preorder_propagate
     def _set_MemoryData_modified(self):
+        """
+        this operation will be propagated to all parent nodes in preorder traversal.
+
+        Examples
+        ------
+        - dm
+          - dm_child1
+          - dm_child2
+            - dm_child3
+
+        >>> dm_child3._set_MemoryData_modified()
+        >>> dm_child2.MemoryData_modified
+        True
+        >>> dm.MemoryData_modified
+        True
+        >>> dm_child1.MemoryData_modified
+        False        
+        """
         self._MemoryData_modified = True
 
     def _reset_MemoryData_modified(self):
@@ -1984,10 +4214,16 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     
     @property
     def MemoryData_modified(self):
+        """
+        DO NOT use `_MemoryData_modified` directly, use this property instead.
+        """
         return self._MemoryData_modified
 
     @property
     def MemoryData(self):
+        """
+        DO NOT use `_MemoryData` directly, use this property instead.
+        """
         return self._MemoryData
     
     @property
@@ -2002,12 +4238,25 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     @property
     def data_path(self):
         # return os.path.join(self.top_directory, self.mapping_name).replace('\\', '/')
+        """
+        top directory of the data mapping
+        """
         return os.path.join(self.top_directory).replace('\\', '/')
 
     def save_preprecess(self):
+        """
+        the opertions to do before saving memory data
+
+        * recommend to override this method in subclass
+        """
         return self.MemoryData
 
     def load_postprocess(self, data):
+        """
+        the opertions to do after loading memory data
+
+        * recommend to override this method in subclass
+        """
         return data
 
     def remove_memory_data_file(self):
@@ -2015,10 +4264,19 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
             os.remove(self.MemoryData_path)
 
     @abstractmethod
-    def rebuild(self, force = False):
+    def rebuild(self, force=False):
+        """
+        Rebuilds `self.MemoryData` by the files.
+        if `MemoryData_path` does not exist or `load_postprocess` fails, this method will be called.
+
+        * must override this method in subclass
+        """
         pass
 
     def save(self, force = False):
+        """
+        save `self.MemoryData` to file
+        """
         if self.MemoryData_modified or force:
             self.make_path()
             self.__class__.save_memory_func(self.MemoryData_path, self.save_preprecess())
@@ -2036,6 +4294,9 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
             os.remove(self.pickle_MemoryData_path)
 
     def load(self):
+        """
+        load `self.MemoryData` from file
+        """
         if os.path.exists(self.pickle_MemoryData_path):
             with open(self.pickle_MemoryData_path, 'rb') as f:
                 MemoryData = pickle.load(f)
@@ -2043,11 +4304,13 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
         if os.path.exists(self.MemoryData_path):
             try:
                 MemoryData = self.load_postprocess(self.__class__.load_memory_func(self.MemoryData_path))
-                rebuild = False
             except:
                 rebuild = True
             else:
                 self.merge_MemoryData(MemoryData) ## TODO
+                rebuild = False
+        else:
+            rebuild = True
         if not os.path.exists(self.MemoryData_path) or rebuild:
             if len(self.MemoryData) > 0:
                 if DEBUG:
@@ -2189,11 +4452,11 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
                 self.modify_key(key, i)
 
     @abstractmethod
-    def cache_to_file(self, data_i:int = None, *, force = False, **other_paras):
+    def cache_to_file(self, data_i:Optional[int] = None, *, force = False, **other_paras):
         pass
 
     @abstractmethod 
-    def file_to_cache(self, data_i:int = None, *, save = True, force = False, **other_paras):
+    def file_to_cache(self, data_i:Optional[int] = None, *, save = True, force = False, **other_paras):
         pass
 
     @abstractmethod 
@@ -2215,7 +4478,7 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     def _get_unfinished_operation(self):
         return self.__unfinished_operation
 
-    @Node.backtracking_preorder_propagate
+    @Node.upward_preorder_propagate
     def _set_last_write_unfinished(self):
         self.__last_write_unfinished = True
 
@@ -2275,14 +4538,71 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     
 class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
     '''
-        src_handle, dst_handle = self.get_FilesHandle(src = src, dst = dst, **other_paras)
-        preprocessed_value = self.preprogress_value(value, **other_paras)
-        rlt = self.io(src_handle, dst_handle, preprocessed_value)
-                  - preprocessed_value = self.format_value(preprocessed_value)
-                    ...
-                    rlt = self.inv_format_value(rlt)
-        postprocessed_value = self.postprogress_value(rlt, **other_paras)
-        self.progress_FilesHandle(src_handle, dst_handle, **other_paras)
+    This class represents the abstract base class for input/output (IO) operations.
+    Pre-process/post-process input and output, format conversion, and perform IO operations. 
+    Need to be used in combination with `FilesCluster.io_decorator`
+
+    Attributes:
+        READ (bool): Flag indicating if the IO operation is a read operation.
+        PATH_EXISTS_REQUIRED (bool): Flag indicating if the existence of paths is required.
+        LOG_TYPE: The log type for IO operations.
+        WARNING_INFO (str): Information about the warning.
+
+        W_SYNC (bool): Flag indicating if the write operation should be synchronous.
+
+        OPER_ELEM (bool): Flag indicating if the operation is performed on individual elements.
+
+    Methods:
+        __init__(self, files_cluster: FCT): Initializes the IOMeta object.
+        _set_ctrl_flag(self, ctrl_strategy=IO_CTRL_STRATEGY.CACHE_IDPNDT, io_raw=False): Sets the control flags for IO operations.
+        _clear_ctrl_flag(self): Clears the control flags for IO operations.
+        __enter__(self): Enters the control mode.
+        __exit__(self, exc_type, exc_value, traceback): Exits the control mode.
+        _set_synced_flag(self, src_handle: FilesHandle, dst_handle: FilesHandle, synced=False): Sets the synced flag for file handles.
+        key_type(self): Returns the key type of the files cluster.
+        multi_files(self): Returns whether the files cluster contains multiple files.
+        cache_priority(self): Returns the cache priority.
+        strict_priority_mode(self): Returns the strict priority mode.
+        write_synchronous(self): Returns whether the write operation is synchronous.
+        io_raw(self): Returns whether the IO operation is raw.
+        _FCMemoryData(self): Returns the memory data of the files cluster.
+        get_FilesHandle(self, src, dst, value, **other_paras): Gets the file handles for the IO operation.
+        _query_fileshandle(self, data_i: int): Queries the file handle for the given data index.
+        get_file_core_func(self, src_file_handle: FHT, dst_file_handle: FHT, value): Gets the core function for the file handles.
+        progress_FilesHandle(self, src_file_handle: FHT, dst_file_handle: FHT, postprocessed_value, **other_paras): Progresses the file handles after the IO operation.
+        io_cache(self, src_file_handle: FHT, dst_file_handle: FHT, value=None): Performs the IO operation with caching.
+        cvt_to_core_paras(self, src_file_handle: FHT, dst_file_handle: FHT, value): Converts the parameters for the core function.
+        preprogress_value(self, value, **other_paras): Preprocesses the value before the IO operation.
+        postprogress_value(self, value, **other_paras): Postprocesses the value after the IO operation.
+        format_value(self, value: Optional[VDMT]): Formats the value before the IO operation.
+        inv_format_value(self, formatted_value): Inversely formats the value after the IO operation.
+        core_func_hook(self, *core_args): Hook function for the core function.
+        operate_elem(self, src, dst, value, **other_paras): Performs the operation on individual elements.
+        gather_mutil_results(self, results: list): Gathers multiple results.
+        split_value_as_mutil(self, *core_values): Splits the value into multiple core values.
+        assert_path_exists(self, path): Asserts that the path exists.
+        io_file(self, src_file_handle, dst_file_handle, value: Optional[VDMT] = None): Performs the IO operation on a file.
+
+    Methods (abstract):
+        get_FilesHandle(self, src, dst, value, **other_paras): Gets the file handles for the IO operation.
+        io_cache
+        cvt_to_core_paras
+
+    Methods recommended to be overridden:
+        get_file_core_func: Gets the core function of the file handles.
+        preprogress_value: Preprocesses the value before the I operation.
+        postprogress_value: Postprocesses the value after the O operation.
+        format_value: Formats the value before the I operation.
+        inv_format_value: Inversely formats the value after the O operation.
+        core_func_hook: Hook function for the core function.
+
+    Methods need to be overridden if `OPER_ELEM`:
+        operate_elem
+
+    Methods need to be overridden if the files cluster contains multiple files:
+        gather_mutil_results
+        split_value_as_mutil
+
     '''
     READ = True
     PATH_EXISTS_REQUIRED = True
@@ -2331,9 +4651,9 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
 
     def _set_synced_flag(self, src_handle:FilesHandle, dst_handle:FilesHandle, synced = False):
         if src_handle is not None:
-            src_handle.set_synced(synced)
+            src_handle._set_synced(synced)
         if dst_handle is not None:
-            dst_handle.set_synced(synced)
+            dst_handle._set_synced(synced)
     # endregion ctrl flags
 
     # region properties
@@ -2386,8 +4706,19 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
     def _query_fileshandle(self, data_i:int) -> FHT:
         return self.files_cluster.query_fileshandle(data_i) # type: ignore
 
-    def get_file_core_func(self, src_file_handle:FHT, dst_file_handle:FHT, value) -> Callable:
-        return None # type: ignore
+    def get_file_core_func(self, src_file_handle: FHT, dst_file_handle: FHT, value) -> Callable:
+        """
+        This method returns the file core function.
+
+        Args:
+            src_file_handle (FilesHandle): The source file handle.
+            dst_file_handle (FilesHandle): The destination file handle.
+            value: The value.
+
+        Returns:
+            Callable: The file core function.
+        """
+        return None  # type: ignore
 
     def progress_FilesHandle(self, 
                             src_file_handle:FHT, 
@@ -2401,34 +4732,153 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
         pass
 
     @abstractmethod
-    def cvt_to_core_paras(self, src_file_handle:FHT, dst_file_handle:FHT, value) -> tuple:
+    def cvt_to_core_paras(self, src_file_handle: FHT, dst_file_handle: FHT, value) -> tuple:
+        """
+        Convert the given source file handle and destination file handle to core parameters.
+
+        Args:
+            src_file_handle (FilesHandle): The source file handle.
+            dst_file_handle (FilesHandle): The destination file handle.
+            value: The value to be converted.
+
+        Returns:
+            path: The path or paths that the core function will use.
+            *core_values: The core values that the core function will use.
+        """
         pass
 
     def preprogress_value(self, value, **other_paras) -> Any:
+        """
+        Preprocesses the value before the O operation.
+
+        See Also
+        -----
+        * the difference between `format_value` and `preprogress_value` see :link:`format_value`
+        
+        Args:
+            value: The value to be preprocessed.
+            **other_paras: Additional parameters for preprocessing.
+
+        Returns:
+            The preprocessed value.
+        """
         return value
 
     def postprogress_value(self, value, **other_paras) -> Any:
+        """
+        Postprocesses the value after the I operation.
+        
+        See Also
+        -----
+        * the difference between `inv_format_value` and `postprogress_value` see :link:`format_value`
+
+        Args:
+            value: The value to be processed.
+            **other_paras: Additional parameters.
+        
+        Returns:
+            The processed value.
+        """
         return value
 
-    def format_value(self, value:VDMT) -> Any:
+    def format_value(self, value:Optional[VDMT]) -> Any:
+        """
+        Formats the value before the O operation.
+        
+        * the difference between `format_value` and `preprogress_value` is that:
+
+        `preprogress_value` has additional parameters: `**other_paras`, which allows more flexible preprocessing, such as resize an image.
+
+        `format_value` need no additional parameters. 
+        It is used to format the value to the type that the core function can handle, such as converting a numpy array to a tensor. 
+        
+        Args:
+            value (Optional[VDMT]): The value to be formatted.
+        
+        Returns:
+            Any: The formatted value.
+        """
         return value
     
     def inv_format_value(self, formatted_value) -> VDMT:
+        """
+        Inversely formats the value after the I operation.
+
+        * the difference between `inv_format_value` and `postprogress_value` see :link:`format_value`
+
+        Args:
+            formatted_value: The formatted value to be inverse formatted.
+
+        Returns:
+            The inverse formatted value.
+        """
         return formatted_value
 
     def core_func_hook(self, *core_args):
+        """
+        This is a hook function that can be overridden in subclasses.
+        It is called after the core function is executed.
+        
+        Parameters:
+            *core_args: Variable number of arguments passed to the core_func.
+        
+        Returns:
+            None
+        """
         pass
 
     def operate_elem(self, src, dst, value, **other_paras):
+        """
+        # WARNING: must be overridden if `OPER_ELEM = True`
+        Perform an operation on the elements.
+        Args:
+            src: The source element.
+            dst: The destination element.
+            value: The value to be used in the operation.
+            **other_paras: Additional parameters for the operation.
+
+        Raises:
+            NotImplementedError: If the method is not implemented.
+        """
         raise NotImplementedError
 
-    def gather_mutil_results(self, results:list):
+    def gather_mutil_results(self, results: list):
+        """
+        # WARNING: must be overridden if `self.multi_files = True`
+        Gathers multiple results into a single result.
+
+        Args:
+            results (list): A list of results to be gathered.
+
+        Raises:
+            NotImplementedError: This method is not implemented and should be overridden in a subclass.
+        """
+        FilesHandle.multi_files = True
         raise NotImplementedError
 
     def split_value_as_mutil(self, *core_values):
+        """
+        # WARNING: must be overridden if `self.multi_files = True`
+        Splits the given core values into multiple values.
+        
+        Args:
+            *core_values: The core values to be split.
+        
+        Raises:
+            NotImplementedError: This method is not implemented and should be overridden in a subclass.
+        """
         raise NotImplementedError
     
-    def assert_path_exists(self, path):
+    def assert_path_exists(self, path: T_MUITLSTR):
+        """
+        Asserts that the given path or paths exist.
+
+        Args:
+            path (str or list[str]): The path or paths to check.
+
+        Raises:
+            IOMetaPriorityError: If the path or any of the paths do not exist and PATH_EXISTS_REQUIRED is True.
+        """
         if isinstance(path, str):
             if not os.path.exists(path) and self.PATH_EXISTS_REQUIRED:
                 raise IOMetaPriorityError("file not found")
@@ -2438,26 +4888,51 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
     # endregion hook funcs
 
     # region io pipeline
-    def io_file(self, src_file_handle, dst_file_handle, value = None) -> Any:
+    def io_file(self, src_file_handle:FilesHandle, dst_file_handle:FilesHandle, value:Optional[VDMT] = None) -> Any:
+        """
+        Perform file input/output operation.
+
+        Args:
+            src_file_handle: The source file handle.
+            dst_file_handle: The destination file handle.
+            value: Optional value to be used in the operation.
+
+        Returns:
+            The result of the file operation.
+
+        Raises:
+            IOMetaPriorityError: If core_func is None.
+        """
         value = self.format_value(value)
         path, *core_values = self.cvt_to_core_paras(src_file_handle = src_file_handle, 
-                                           dst_file_handle = dst_file_handle, 
-                                           value = value)
+                                            dst_file_handle = dst_file_handle, 
+                                            value = value)
         self.assert_path_exists(path)
-        core_func = self.get_file_core_func(src_file_handle, dst_file_handle, value)
-        core_func = self.core_func if core_func is None else core_func
+        # get core func with priority: the core_func of the file_handle has higher priority than the core func of the files cluster
+        core_func = get_with_priority(self.get_file_core_func(src_file_handle, dst_file_handle, value), self.core_func)
         if core_func is not None:
             if self.multi_files and self.__class__.__name__ == "_write":
-                core_values = self.split_value_as_mutil(*core_values)
-            rlt = self.execute_core_func(core_func, path, *core_values)
+                core_values = self.split_value_as_mutil(*core_values) # split core values to multiple values, because `core_values` contains the datas for mutil files 
+            rlt = self.execute_core_func(core_func, path, *core_values) # execute core func
             if self.multi_files and self.__class__.__name__ == "_read":
-                return self.gather_mutil_results(rlt)
+                return self.gather_mutil_results(rlt) # gather mutil results to a single result, because `rlt` contains the datas for mutil files
         else:
             raise IOMetaPriorityError("core_func is None")
         rlt = self.inv_format_value(rlt)
         return rlt
 
     def execute_core_func(self, core_func, *core_args, **other_paras):
+        """
+        Executes the core function with the given arguments and parameters.
+
+        Args:
+            core_func: The core function to be executed.
+            core_args: The arguments to be passed to the core function.
+            other_paras: Other parameters to be passed to the core function.
+
+        Returns:
+            The result of the core function execution.
+        """
         if self.multi_files:
             rlts = []
             for i in range(len(core_args[0])):
@@ -2471,6 +4946,39 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
             return rlt
 
     def io(self, src_handle:FilesHandle, dst_handle:FilesHandle, preprocessed_value):
+        """
+        Perform input/output operations on the given source and destination handles.
+
+        IO operations have a sequential order.
+        Try to perform IO on the file and cache (or cache first and then the file) in sequence.
+
+        * the first operation is called 'priority', and the second operation is called 'secondary'.
+
+        If 'priority' fails, continue to execute 'secondary', 
+        otherwise the result will be returned directly.
+
+        you may control the strategy of the IO operations by setting the control flags by `_set_ctrl_flag` method:
+        * `self.cache_priority`: If True, the cache will be used first.
+        * `self.strict_priority_mode`: If True, an exception will be raised if the priority fails.
+        * `self.write_synchronous`: If True, both file and cache will be written synchronously.
+        * `self.io_raw`: If True, the IO operation will be raw.
+
+        Tip
+        ----
+        You should pay attention to the definition of :link:`cache_priority`,
+        :link:`self.strict_priority_mode` and :link:`self.write_synchronous`, see their docs for details
+        
+        Args:
+        ----
+            src_handle (FilesHandle): The source handle for the input operation.
+            dst_handle (FilesHandle): The destination handle for the output operation.
+            preprocessed_value: The preprocessed value to be used in the operations.
+
+        Returns:
+        ----
+            The result of the input/output operations.
+        """
+        
         priority_ok = False
         secondary_ok = False
         if self.cache_priority:
@@ -2502,24 +5010,49 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
 
         return rlt # type: ignore
 
-    def __call__(self, *, src = None, dst = None, value = None, **other_paras) -> Any:
+    def __call__(self, *, src=None, dst=None, value=None, **other_paras) -> Any:
+        """
+        Make the IOMeta object callable.
+
+        Args:
+            src: The source parameter.
+            dst: The destination parameter.
+            value: The value parameter.
+            **other_paras: Additional parameters.
+
+        Returns:
+            The result of the call.
+
+        Raises:
+            None.
+        """
         if not self.__io_raw:
             value = self.preprogress_value(value, **other_paras)
         if self.OPER_ELEM:
             rlt = self.operate_elem(src, dst, value, **other_paras)
             for fh in self.files_cluster.query_all_fileshandle():
-                fh.set_synced(False)
+                fh._set_synced(False)
         else:
-            src_handle, dst_handle = self.get_FilesHandle(src = src, dst = dst, value = value, **other_paras)
+            src_handle, dst_handle = self.get_FilesHandle(src=src, dst=dst, value=value, **other_paras)
             rlt = self.io(src_handle, dst_handle, value)
-            self.progress_FilesHandle(src_handle, dst_handle, rlt, **other_paras)
+            # self.progress_FilesHandle(src_handle, dst_handle, rlt, **other_paras)
         if not self.__io_raw:
             rlt = self.postprogress_value(rlt, **other_paras)
+        self.files_cluster._clear_rely()
         return rlt
     # endregion io pipeline
 
     # region conditions func
     def check_src(self, src):
+        """
+        Check if the given source is valid.
+
+        Parameters:
+            src (self.key_type): The source to be checked.
+
+        Returns:
+            bool: True if the source is valid, False otherwise.
+        """
         if not isinstance(src, self.key_type):
             return False
         if not self.files_cluster.has(src):
@@ -2527,6 +5060,15 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
         return True
         
     def check_dst(self, dst):
+        """
+        Check if the given destination is of the correct type.
+
+        Parameters:
+            dst (self.key_type): The destination to be checked.
+
+        Returns:
+            bool: True if the destination is of the correct type, False otherwise.
+        """
         if not isinstance(dst, self.key_type):
             return False
         return True
@@ -2539,10 +5081,106 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
     # endregion conditions func
 
 class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
+    """
+    # FilesCluster
+    A class representing a cluster of files.
+
+    ## Class Attributes:
+    ----
+
+    ### _IS_ELEM
+    ----
+
+    ### _ELEM_BY_CACHE
+
+    需要说明的是data和elem的定义：
+    `data`是指`FilesCluster`对象包含的文件，当`_ELEM_BY_CACHE`为`False`时，
+    所使用的索引是默认针对在`FilesCluster.MemoryData`中对应的`FilesHandle`的。
+    而在某些情况下，文件的IO操作可能是不推荐直接进行的，而应该先操作`FilesHandle`的`cache`，
+    然后再调用`cache_to_file`。否则，如果每条数据的写入都需要进行IO操作，会消耗大量资源。
+    例如一个包含了多条数据的json/xml文件。这时需要设置`_ELEM_BY_CACHE`为`True`，
+    使得索引默认针对`elem`，即对所有`FilesHandle`的cache同名的`key`。
+
+    #### `_ELEM_BY_CACHE`的值会影响一系列属性和方法的默认调用，你也可以调用对应的明确方法：
+    #### 属性：
+    * `num`:            `data_num`/`elem_num`
+    * `i_upper`:        `data_i_upper`/`elem_i_upper`
+    * `next_valid_i`:   `next_valid_elem_i`/`net_valid_data_i`
+    #### 方法：
+    * `read`:           `read_data`/`read_elem`
+    * `write`:          `write_data`/`write_elem`
+    * `modify_key`:     `modify_data_key`/`modity_elem_key`
+    * `remove`:         `remove_data`/`remove_elem`
+    * `merge_from`:     `merge_data_from`/`merge_elem_from`
+    * `copy_from`:      `copy_data_from`/`copy_elem_from`
+    * `clear`:          `clear_data`/`clear_elem`
+    * `keys`:           `data_keys`/`elem_keys`
+    * `idx_unwritten`
+
+    #### 举个例子，如果在`self.MemoryData`中有2个FilesHandle：
+    >>> fc.MemoryData 
+    >>> {0: fh0, 1: fh1}
+    >>> fh0.cache
+    >>> {0: array([0,1,2]), 1: array([3,4,5]) 2: array([6,7,8])}
+    >>> fh1.cache
+    >>> {0: 1.0, 1: 5.0, 2: 10.0}
+
+
+    如果`_ELEM_BY_CACHE`为`False`，调用`read`时，实际上`read_data`会被调用
+    >>> fc.read(0) # 等效于fc.read_data(0)
+    >>> {0: array([0,1,2]), 1: array([3,4,5]) 2: array([6,7,8])}
+
+    如果`_ELEM_BY_CACHE`为`True`，调用`read`时，实际上`read_elem`会被调用
+    >>> fc.read(0) # 等效于fc.read_elem(0)
+    >>> (array([0,1,2]), 1.0)
+    
+    ----
+
+    * KEY_TYPE: The type of the keys used to access the files in the cluster.
+    * ALWAYS_ALLOW_WRITE: A boolean indicating whether write operations are always allowed.
+    * ALWAYS_ALLOW_OVERWRITE: A boolean indicating whether overwriting files is always allowed.
+    * DEFAULT_SUFFIX: The default suffix for file names.
+    * DEFAULT_PREFIX: The default prefix for file names.
+    * DEFAULT_PREFIX_JOINER: The default joiner for prefix and core names.
+    * DEFAULT_APPENDNAMES: The default append names for file names.
+    * DEFAULT_APPENDNAMES_JOINER: The default joiner for append names.
+    * DEFAULT_READ_FUNC: The default function for reading files.
+    * DEFAULT_WRITE_FUNC: The default function for writing files.
+    * DEFAULT_VALUE_TYPE: The default type of the values stored in the files.
+    * DEFAULT_VALUE_INIT_FUNC: The default function for initializing values.
+    * MULTI_FILES: A boolean indicating whether the cluster contains multiple files.
+    * STRATEGY_ONLY_CACHE: The strategy for file operations when only using cache.
+    * STRATEGY_ONLY_FILE: The strategy for file operations when only using file.
+    * STRATEGY_CACHE_AND_FILE: The strategy for file operations when using both cache and file.
+
+    Properties commonly used:
+    * dataset_node: The dataset node that the cluster belongs to.
+    * continuous: A boolean indicating whether the cluster is continuous.
+    * num: The number of files in the cluster.
+    * i_upper: The upper bound of the indices of the files in the cluster.
+
+    Methods commonly used:
+    * query_all_fileshandle: Queries all the file handles in the cluster.
+    * read: Reads a file from the cluster.
+    * write: Writes a file to the cluster.
+    * modify_key: Modifies the key of a file in the cluster.
+    * remove: Removes a file from the cluster.
+    * merge_from: Merges the cluster from another cluster.
+    * copy_from: Copies the cluster from another cluster.
+    * append: Appends a file to the cluster.
+    * clear: Clears the cluster.
+    * make_continuous: Makes the cluster continuous.
+
+    """
 
     _IS_ELEM = False
+
     _ELEM_BY_CACHE = False
+
     KEY_TYPE = int
+    """
+    xyz
+    """
     
     ALWAYS_ALLOW_WRITE = False
     ALWAYS_ALLOW_OVERWRITE = False
@@ -2595,7 +5233,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
 
     @property
     def MemoryData(self) -> BinDict[int, FHT]:
-        return self._MemoryData
+        return self._MemoryData # type: ignore
     
     # endregion - override methods #
 
@@ -2611,44 +5249,99 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         return self.dataset_node is not None and \
             self.identity_string() in self.dataset_node.clusters_map
 
-    # def register_to_dataset(self): #TODO
-    #     if self.dataset_node is not None:
-    #         self.dataset_node.add_cluster(self)
-
-    # def unregister_from_dataset(self): #TODO
-    #     if self.identity_string() in self.dataset_node.clusters_map:
-    #         self.dataset_node.remove_cluster(self)
-
     def get_rely_io_parameters(self):
         pass
     # endregion FilesCluster new methods ####
     
     # region fileshandle operation ########
     def query_all_fileshandle(self):
+        """
+        Returns all the file handles stored in the MemoryData dictionary.
+        
+        Returns:
+            list: A list of file handles.
+        """
         return self.MemoryData.values()
     
     def query_fileshandle_from_iterable(self, iterable:Union[Iterable, slice]) -> Generator[FHT, Any, None]:
+        """
+        Queries fileshandle from an iterable or a slice.
+
+        Args:
+            iterable (Union[Iterable, slice]): An iterable or a slice.
+
+        Yields:
+            Generator[FHT, Any, None]: A generator that yields fileshandle.
+
+        Returns:
+            None
+        """
         if isinstance(iterable, slice):
             iterable = range(iterable.start, iterable.stop, iterable.step)
         for i in iterable:
             yield self.query_fileshandle(i)
 
     def query_fileshandle(self, data_i:int) -> FHT:
+        """
+        Retrieve the fileshandle at the specified index from the MemoryData.
+
+        Args:
+            data_i (int): The index of the fileshandle to retrieve.
+
+        Returns:
+            FHT: The fileshandle at the specified index.
+        """
         return self.MemoryData[data_i]
     
     @abstractmethod
     def create_fileshandle_in_iometa(self, src, dst, value, **other_paras) -> FHT:
         pass
 
-    def format_corename(self, data_i:int):
+    def format_corename(self, data_i:int) -> str:
+        """
+        Formats the core name of the data.
+        * recommended to be overridden in subclasses
+        
+        e.g.: 
+        >>> 1 -> "000001"
+        >>> 309 -> "000309"
+
+        Args:
+            data_i (int): The data index.
+
+        Returns:
+            str
+        """
         return None
     
-    def deformat_corename(self, corename:str):
+    def deformat_corename(self, corename:str) -> int:
+        """
+        Deformats the core name of the data.
+        * recommended to be overridden in subclasses
+
+        e.g.:
+        >>> "000001" -> 1
+        >>> "000309" -> 309
+
+        Args:
+            corename (str): The core name.
+
+        Returns:
+            int
+        """
         return None
     
     def _set_fileshandle(self, data_i, fileshandle:FHT):
-        # if self.closed:
-        #     raise ClusterDataIOError("can not set fileshandle when cluster is closed")
+        '''
+        Set the fileshandle for the given data index.
+
+        Parameters:
+            data_i (int): The index of the data.
+            fileshandle (FHT): The fileshandle to be set.
+
+        Returns:
+            bool: True if the fileshandle is set successfully, False otherwise.
+        '''
         assert isinstance(fileshandle, self.FILESHANDLE_TYPE), f"fileshandle must be {self.FILESHANDLE_TYPE}, not {type(fileshandle)}"
         if fileshandle not in self.MemoryData._reverse_dict:
             self.MemoryData[data_i] = fileshandle
@@ -2657,8 +5350,15 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         return False
 
     def _pop_fileshandle(self, data_i):
-        # if self.closed:
-        #     raise ClusterDataIOError("can not set fileshandle when cluster is closed")
+        """
+        Pop the file handle for the given data index from the MemoryData dictionary.
+
+        Args:
+            data_i (int): The index of the data.
+
+        Returns:
+            object: The popped file handle.
+        """
         if self.has_data(data_i):
             return self.MemoryData.pop(data_i)
     # endregion fileshandle operation ########
@@ -2669,12 +5369,31 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
 
     @property
     def use_rely(self):
+        """
+        Check if use rely
+        """
         if self.dataset_node is None:
             return False
         else:
             return self.dataset_node.cluster_use_rely
 
     def link_rely_on(self, cluster:"FilesCluster"):
+        """
+        Links the current cluster to the specified cluster as a relying cluster.
+
+        Details:
+        -----
+        The IO of the cluster may depend on other clusters. 
+        For example, the normalized pixel coordinates depend on the size of the image. 
+        In this case, you can use `link_rely_on` to set the cluster that self depends on.
+
+        * relying_clusters: those clusters that rely on self
+        * relied_clusters: those clusters that self relies on
+        
+        Args:
+        -----
+        cluster (FilesCluster): The cluster to be linked as a relying cluster.
+        """
         if cluster not in cluster.__relying_clusters:
             cluster.__relying_clusters.append(self)
             self.__relied_clusters.append(cluster)
@@ -2684,22 +5403,29 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
                 self.dataset_node.cluster_use_rely = True
 
     def unlink_rely_on(self, cluster:"FilesCluster"):
+        """
+        Unlinks the cluster from relying. 
+
+        Args:
+        -----
+            cluster (FilesCluster): The cluster to be unlinked from relying.
+        """
         if cluster in cluster.__relying_clusters:
             cluster.__relying_clusters.remove(self)
             self.__relied_clusters.remove(cluster)
 
     def _send_rely(self, rlt):
         '''
-        send parameters to other cluster
+        send parameters to the relying clusters
         '''
         if self.use_rely:
             for c in self.__relying_clusters:
-                c._clear_rely()
                 c._set_rely(self, rlt)
 
     def _set_rely(self, relied:"FilesCluster", rlt):
         '''
-        set relied parameters from other cluster, relied is the cluster that send the parameters, rlt is the parameters
+        set relied parameters from the relied cluster, 
+        relied is the cluster that send the parameters, rlt is the parameters
         '''
         pass
 
@@ -2726,9 +5452,9 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         self.change_dir_meta:IOMeta[FCT, VDMT, FHT]      = self._change_dir(self)
 
     def init_attrs(self):
-        self.__relying_clusters:list[FilesCluster]    = []
-        self.__relied_clusters:list[FilesCluster]     = []
-        self.__relied_paras                           = {}
+        self.__relying_clusters:list[FilesCluster]    = [] # clusters that rely on self
+        self.__relied_clusters:list[FilesCluster]     = [] # clusters that self relies on
+        self.__relied_paras                           = {} # parameters that IO operation relies on
 
         self.merge_strategy = self.STRATEGY_ONLY_CACHE
 
@@ -2739,7 +5465,17 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         return key
 
     def io_decorator(self, io_meta:IOMeta, force = False):
-        func = io_meta.__call__
+        """
+        Decorator function for input/output operations.
+
+        Args:
+            io_meta (IOMeta): The metadata object for the input/output operation.
+            force (bool): Flag indicating whether to force the operation. Defaults to False.
+
+        Returns:
+            function: The decorated function.
+        """
+        func = io_meta.__call__ # io_meta
         is_read = io_meta.READ
         log_type = io_meta.LOG_TYPE
         warning_info = io_meta.WARNING_INFO
@@ -2748,6 +5484,22 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         allow_overwrite     = (force or self.ALWAYS_ALLOW_OVERWRITE)    and not self.overwrite_allowed
         
         def wrapper(*, src:int = None, dst:int = None, value = None, **other_paras): # type: ignore
+            """
+            A wrapper function that performs input/output operations for the data.
+
+            Args:
+                src (int, optional): The source key. Defaults to None.
+                dst (int, optional): The destination key. Defaults to None.
+                value (any, optional): The value to be written. Defaults to None.
+                **other_paras: Additional parameters.
+
+            Returns:
+                any: The result of the original function call.
+
+            Raises:
+                ClusterIONotExecutedWarning: If the input/output operation is not executed.
+
+            """
             nonlocal self, log_type, warning_info
             src = self.cvt_key(src)
             dst = self.cvt_key(dst)
@@ -2757,6 +5509,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
                 io_error = False
                 overwrited = False
 
+                # check if the contidions are satisfied
                 if self.is_closed(with_warning=True) or (not is_read and self.is_readonly(with_warning=True)):
                     return None
                 if src is not None and not io_meta.check_src(src):
@@ -2779,6 +5532,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
                     overwrited = True 
 
                 if not io_error:                
+                    # ready to execute the original function
                     try:
                         if not is_read and not self.is_writing:
                             self.start_writing()
@@ -2795,11 +5549,10 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
                             self._set_MemoryData_modified() # Marks the cluster as updated after writing operations.
                             if overwrited and log_type == self.LOG_ADD:
                                 log_type = self.LOG_CHANGE
-                            self.log_to_mark_file(log_type, src, dst, value)
+                            self.log_to_mark_file(log_type, src, dst, value) # Logs the operation.
                             if self.dataset_node is not None and (io_meta.OPER_ELEM == self._ELEM_BY_CACHE):
                                 self.dataset_node.update_overview(log_type, src, dst, value, self)
-                
-                if io_error:
+                else:
                     io_type_name = ["READ", "APPEND", "REMOVE", "CHANGE", "MOVE", "OPERATION"]
                     warning_str =   f"{self.__class__.__name__}:{self.mapping_name} " + \
                                     f"{io_type_name[log_type]}: src:{src}, dst:{dst}, value:{value} failed:" + \
@@ -3067,7 +5820,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
                     continue
                 value = fh.cache
                 rlt = self.write_data(data_i, value, **other_paras)
-                self.query_fileshandle(data_i).set_synced(True)
+                self.query_fileshandle(data_i)._set_synced(True)
 
         self.write_meta._clear_ctrl_flag()
         return rlt
@@ -3098,7 +5851,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
                 if value is None:
                     continue
                 rlt = self.write_data(data_i, value, **other_paras)
-                self.query_fileshandle(data_i).set_synced(True)
+                self.query_fileshandle(data_i)._set_synced(True)
 
         self.write_meta._clear_ctrl_flag()
         self.read_meta._clear_ctrl_flag()
@@ -3185,7 +5938,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
             super().clear(force = force)
             for fh in self.query_all_fileshandle():
                 fh:FHT
-                fh.set_synced(False)
+                fh._set_synced(False)
     
     def data_keys(self):
         return self.MemoryData.keys()
@@ -3404,13 +6157,23 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
     # endregion create instance ####
 
 class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DSNT, VDST]):
+    """
+    Represents a dataset node in the data mapping hierarchy.
+
+    Attributes:
+        MEMORY_DATA_TYPE (Table[int, str, bool]): The memory data type.
+        MEMORY_DATA_FILE (str): The memory data file.
+        load_memory_func (function): The function used to load memory data.
+        save_memory_func (function): The function used to save memory data.
+    """
+
     MEMORY_DATA_TYPE = Table[int, str, bool]
     MEMORY_DATA_FILE = ".overview"
     load_memory_func = JsonIO.load_json
     save_memory_func = JsonIO.dump_json 
-    
+
     # region FilesCluster override ####
-    
+
     # region - override new #
     # def init_identity(self, top_directory:str, *args, parent:"DatasetNode" = None, flag_name = "", **kwargs):
 
@@ -3427,6 +6190,16 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
 
     # region - override methods #
     def __init__(self, top_directory:Union[str, "DatasetNode"], mapping_name: str = "", *args, flag_name = "", **kwargs) -> None:
+        """
+        Initializes a DatasetNode instance.
+
+        Args:
+            top_directory (Union[str, DatasetNode]): The top directory of the dataset node.
+            mapping_name (str, optional): The mapping name. Defaults to "".
+            flag_name (str, optional): The flag name. Defaults to "".
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
+        """
         super().__init__(top_directory, mapping_name, *args, flag_name = flag_name,  **kwargs)
         if self.parent is None:
             print(f"initilizing {self}")
@@ -3443,9 +6216,18 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
 
     @property
     def MemoryData(self) -> Table[int, str, bool]:
+        """
+        Gets the memory data.
+
+        Returns:
+            Table[int, str, bool]: The memory data.
+        """
         return self._MemoryData
 
     def init_dataset_attr_hook(self):
+        """
+        Initializes the dataset attribute hook.
+        """
         os.makedirs(self.top_directory, exist_ok=True) 
         self._cluster_use_rely = False
         self.__unfinished_operation = 0
@@ -3458,6 +6240,16 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
 
     # region - map operation #
     def __dsn_add_child(self, child:DataMapping, map:dict):
+        """
+        Adds a child to the data mapping.
+
+        Args:
+            child (DataMapping): The child to add.
+            map (dict): The mapping to add the child to.
+        
+        Raises:
+            KeyError: If the child already exists in the mapping with a different instance.
+        """
         child.set_parent(self)
         # unique check
         if child.identity_name() in map and map[child.identity_name()] is not child:
@@ -3473,6 +6265,13 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
             self.MemoryData.add_column(child.identity_name(), exist_ok=True)
 
     def __dsn_remove_child(self, child:DataMapping, map:dict):
+        """
+        Removes a child from the data mapping.
+
+        Args:
+            child (DataMapping): The child to remove.
+            map (dict): The mapping to remove the child from.
+        """
         if child.parent == self:
             self._remove_child(child)
             map.pop(child.identity_name())
@@ -3481,42 +6280,109 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
    
     # region - cluster_map ####
     def add_cluster(self, cluster:FCT):
+        """
+        Adds a cluster to the dataset node.
+
+        Args:
+            cluster (FCT): The cluster to add.
+        """
         self.__dsn_add_child(cluster, self.clusters_map)
 
     def remove_cluster(self, cluster:FCT):
+        """
+        Removes a cluster from the dataset node.
+
+        Args:
+            cluster (FCT): The cluster to remove.
+        """
         self.__dsn_remove_child(cluster, self.clusters_map)
 
     def get_cluster(self, identity_name:str):
+        """
+        Gets a cluster from the dataset node.
+
+        Args:
+            identity_name (str): The identity name of the cluster.
+
+        Returns:
+            FCT: The cluster.
+        """
         return self.clusters_map[identity_name]
 
     def cluster_keys(self):
+        """
+        Gets the keys of the clusters in the dataset node.
+
+        Returns:
+            dict_keys: The keys of the clusters.
+        """
         return self.clusters_map.keys()
 
     @property
     def clusters(self) -> list[FCT]:
+        """
+        Gets the clusters in the dataset node.
+
+        Returns:
+            list[FCT]: The clusters.
+        """
         clusters = list(self.clusters_map.values())
         return clusters
 
     @property
     def elem_clusters(self) -> list[FCT]:
+        """
+        Gets the element clusters in the dataset node.
+
+        Returns:
+            list[FCT]: The element clusters.
+        """
         clusters = [x for x in self.clusters if x._IS_ELEM]
         return clusters
 
     @property
     def opened_clusters(self):
+        """
+        Gets the opened clusters in the dataset node.
+
+        Returns:
+            list[FCT]: The opened clusters.
+        """
         clusters = [x for x in self.clusters if x.opened]
         return clusters
 
     @property
     def opened_elem_clusters(self):
+        """
+        Gets the opened element clusters in the dataset node.
+
+        Returns:
+            list[FCT]: The opened element clusters.
+        """
         clusters = [x for x in self.elem_clusters if x.opened]
         return clusters
     
     @property
     def clusters_num(self) -> int:
+        """
+        Gets the number of clusters in the dataset node.
+
+        Returns:
+            int: The number of clusters.
+        """
         return len(self.clusters_map)
 
     def get_all_clusters(self, _type:Union[type, tuple[type]] = None, only_opened = False) -> dict[int, FCT]:
+        """
+        Gets all clusters in the dataset node.
+
+        Args:
+            _type (Union[type, tuple[type]], optional): The type of clusters to retrieve. Defaults to None.
+            only_opened (bool, optional): Whether to retrieve only opened clusters. Defaults to False.
+
+        Returns:
+            dict[int, FCT]: A dictionary of clusters.
+        """
         cluster_map:dict[str, FCT] = {}
 
         for k in self.cluster_keys():
@@ -3541,15 +6407,42 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
 
     # region - child_nodes_map ####
     def add_child_node(self, child_node:"DatasetNode"):
+        """
+        Adds a child node to the dataset node.
+
+        Args:
+            child_node (DatasetNode): The child node to add.
+        """
         self.__dsn_add_child(child_node, self.child_nodes_map)
 
     def remove_child_node(self, child_node:"DatasetNode"):
+        """
+        Removes a child node from the dataset node.
+
+        Args:
+            child_node (DatasetNode): The child node to remove.
+        """
         self.__dsn_remove_child(child_node, self.child_nodes_map)
 
     def get_child_node(self, identity_name:str):
+        """
+        Gets a child node from the dataset node.
+
+        Args:
+            identity_name (str): The identity name of the child node.
+
+        Returns:
+            DatasetNode: The child node.
+        """
         return self.child_nodes_map[identity_name]
     
     def child_node_keys(self):
+        """
+        Gets the keys of the child nodes in the dataset node.
+
+        Returns:
+            dict_keys: The keys of the child nodes.
+        """
         return self.child_nodes_map.keys()
     
     @property
@@ -3665,45 +6558,6 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
                 self.add_cluster(value)
         super().__setattr__(name, value)
     # endregion clusters #
-
-    # # region node ###
-    # @property
-    # def children_names(self):
-    #     return [x.identity_name() for x in self.children]
-
-    # @property
-    # def parent(self):
-    #     return self.__parent[0]
-
-    # def _set_parent(self, parent):
-    #     self.__parent[0] = parent
-
-    # def get_child(self, name):
-    #     for child in self.children:
-    #         if child.identity_name() == name:
-    #             return child
-    #     raise KeyError(f"{name} not in {self}")
-
-    # def add_child(self, child_node:"DatasetNode"):
-    #     assert isinstance(child_node, DatasetNode), f"child_node must be Node, not {type(child_node)}"
-    #     if child_node in self.children:
-    #         return
-    #     child_node._set_parent(self)
-    #     self.children.append(child_node)
-
-    # def remove_child(self, child_node:"DatasetNode"):
-    #     assert isinstance(child_node, DatasetNode), f"child_node must be Node, not {type(child_node)}"
-    #     if child_node in self.children:
-    #         child_node._set_parent(None)
-    #         self.children.remove(child_node)
-
-    # def _move_node(self, new_parent:"DatasetNode"):
-    #     assert isinstance(new_parent, DatasetNode) or new_parent is None, f"new_parent must be DatasetNode, not {type(new_parent)}"
-    #     if self.parent is not None:
-    #         self.parent.remove_child(self)
-    #     if new_parent is not None:
-    #         new_parent.add_child(self)
-    # # endregion node ###
 
     # region io ###
     @cluster_use_rely_decorator

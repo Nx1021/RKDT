@@ -48,7 +48,7 @@ from typing import Union
 
 
 from . import CameraIntr
-from .aruco_detector import ArucoDetector
+from .utils.aruco_detector import ArucoDetector
 from .data_manager import DataRecorder, ModelManager
 # from config.DataAcquisitionParameters import DEPTH_THRESH
 

@@ -91,22 +91,14 @@ def setup(
     copy = False
     if use_data_on_server and sys == "Linux":
         pass
-        # if not os.path.exists(server_full_data_dir):
-        #     # copy
-        #     assert os.path.exists(local_full_data_dir), f"local data dir {local_full_data_dir} not exist"
-        #     print(f"copy data to the server: {server_full_data_dir}, it may take a while...")
-        #     voc:VocFormat_6dPosture = dataset_format(local_full_data_dir)
-        #     voc.set_elements_cache_priority(True)
-        #     voc.labels_elements.cache_priority = False
-        #     voc.images_elements.cache_priority = False
-        #     voc.depth_elements.cache_priority = False
-        #     voc.masks_elements.cache_priority = False
-        #     voc.copyto(server_full_data_dir, cover=True)
-        #     # voc.labels_elements.cache_priority = False
-        #     # voc.labels_elements.copyto(os.path.join(server_full_data_dir, 
-        #     #                                         voc.labels_elements.sub_dir), cover = True)
-        #     # shutil.copytree(local_full_data_dir, server_full_data_dir)
-        #     copy = True
+        if not os.path.exists(server_full_data_dir):
+            # copy
+            assert os.path.exists(local_full_data_dir), f"local data dir {local_full_data_dir} not exist"
+            print(f"copy data to the server: {server_full_data_dir}, it may take a while...")
+            # voc:VocFormat_6dPosture = dataset_format(local_full_data_dir)
+            # voc_server:VocFormat_6dPosture = dataset_format(server_full_data_dir)
+            # voc_server.copy_from_simplified(voc, cover=True, force=True)
+            copy = True
         data_folder = server_full_data_dir
         print("use data on the server: ", data_folder)
     else:
@@ -118,7 +110,7 @@ def setup(
         ### setup model
         train_dataset = OLDTDataset(data_folder, "train", dataset_format) 
         val_dataset = OLDTDataset(data_folder, "val", dataset_format)
-        train_dataset.vocformat.spliter_group
+        train_dataset.vocformat.spliter_group.get_cluster("posture").get_idx_list("train")
 
         model = OLDT(yolo_weight_path, cfg_file, list(ldt_branches.keys()))  
         for load_brach_i, load_from in ldt_branches.items():
@@ -152,7 +144,7 @@ def setup(
             trainer.logger.log(flow_file)
             return trainer        
         elif mode == "predict":
-            predctor = OLDTPredictor(model, train_dataset, val_dataset, cfg_file, batch_size, 
+            predctor = OLDTPredictor(model, cfg_file, train_dataset, val_dataset, batch_size, 
                                     if_postprocess=True, if_calc_error=True)
             predctor.save_imtermediate = False
             predctor.logger.log({

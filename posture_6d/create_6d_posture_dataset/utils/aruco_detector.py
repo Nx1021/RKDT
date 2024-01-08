@@ -28,12 +28,12 @@ import matplotlib.pyplot as plt
 from sko.GA import GA
 
 import cv2.aruco as aruco
-from . import JsonIO, Posture, CameraIntr
+from .. import JsonIO, Posture, CameraIntr
 from typing import Union
 
-from .utils.camera_sys import convert_depth_frame_to_pointcloud
-from .utils.plane import findplane_wo_outliers
-from .utils import homo_pad
+from .camera_sys import convert_depth_frame_to_pointcloud
+from .plane import findplane_wo_outliers
+from . import homo_pad
 
 
 

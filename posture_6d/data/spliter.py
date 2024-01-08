@@ -239,10 +239,10 @@ class Spliter(DisunifiedFileCluster[SpliterFilesHandle, SP, SPG, Table[int, str,
     def set_one_subset(self, subset:str, elems:Union[dict[int, bool], tuple[int, ...]]):
         with self.get_writer().allow_overwriting(True):
             if isinstance(elems, dict):
-                for elem_i, value in elems.items():
+                for elem_i, value in tqdm(elems.items(), desc=f"set {subset} of {self}", total=len(elems), leave=False):
                     self.set_one(elem_i, subset, value)
             elif isinstance(elems, Iterable):
-                for elem_i in elems:
+                for elem_i in tqdm(elems, desc=f"set {subset} of {self}", total=len(elems), leave=False):
                     self.set_one(elem_i, subset, True)
     
     def one_defined(self, elem_i:int):
@@ -386,7 +386,7 @@ class SpliterGroup(DatasetNode[Spliter, SPG, Table[int, str, bool]], Generic[SP,
     DEFAULT_SPLIT_MODE = ["default"]
 
     def __init__(self, top_directory, mapping_name, *, flag_name="", split_paras = None) -> None:
-        self.__split_paras:dict[str, list[str]] = split_paras if split_paras is not None else {self.DEFAULT_SPLIT_MODE: None}
+        self.__split_paras:dict[str, list[str]] = split_paras if split_paras is not None else {self.DEFAULT_SPLIT_MODE[0]: None}
         super().__init__(top_directory, mapping_name, flag_name=flag_name)
 
     def init_clusters_hook(self):

@@ -1,13 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 def softmax(x):
     e_x = np.exp(x - np.max(x))  # 减去最大值，避免数值溢出
     return e_x / np.sum(e_x, axis=0)
 
-def calculate_scores(points, pk):
-    alpha = 0.15
-    beta = 0.4
+def calculate_scores(points, pk, alpha = 0.15, beta = 0.4):
+    alpha = alpha
+    beta = beta
     eps = 1e-4
 
     distances = np.linalg.norm(points - pk, axis=1)  # 计算Pk与其他点之间的欧几里得距离
@@ -21,6 +23,79 @@ def calculate_scores(points, pk):
     scores = softmax(scores)
     
     return scores
+
+def show(image_res = 200):
+    points = np.array(
+    [[0.5, 0.6], 
+     [0.6, 0.4],
+     [0.65, 0.45]]
+)
+
+    fig, axs = plt.subplots(3, 4, figsize=(10, 10))  # 创建2x2的子图数组
+
+    # 生成网格点
+    x = np.linspace(0, 1, image_res)
+    y = np.linspace(0, 1, image_res)
+    x, y = np.meshgrid(x, y)
+    grid_points = np.stack((x, y), axis=-1).reshape(-1, 2)
+
+    ### 计算得分
+    scores = []
+    for pk in grid_points:
+        score = calculate_scores(points, pk)
+        scores.append(score)
+    scores = np.array(scores)
+    scores = scores.reshape(image_res, image_res, -1)
+
+    # 绘制热图
+    for i in range(4):
+        plt.subplot(3,4,1+i)
+        plt.imshow(scores[:,:,i],  interpolation='nearest', origin='lower')
+        plt.scatter(points[:,0]*image_res - 0.5, points[:,1]*image_res - 0.5, c='r', s=10)
+        plt.xticks(np.linspace(0, image_res, 3), [str(round(x,1)) for x in np.linspace(0, 1, 3)])
+        plt.yticks(np.linspace(0, image_res, 3), [str(round(x,1)) for x in np.linspace(0, 1, 3)])
+
+    ### 计算得分2 
+    scores_2 = []
+    for pk in grid_points:
+        score = calculate_scores(points, pk, alpha=0.25, beta=0.4)
+        scores_2.append(score)
+    scores_2 = np.array(scores_2)
+    scores_2 = scores_2.reshape(image_res, image_res, -1)
+    # 绘制热图
+    for i in range(4):
+        plt.subplot(3,4,5+i)
+        plt.imshow(scores_2[:,:,i],  interpolation='nearest', origin='lower')
+        plt.scatter(points[:,0]*image_res - 0.5, points[:,1]*image_res - 0.5, c='r', s=10)
+        plt.xticks(np.linspace(0, image_res, 3), [str(round(x,1)) for x in np.linspace(0, 1, 3)])
+        plt.yticks(np.linspace(0, image_res, 3), [str(round(x,1)) for x in np.linspace(0, 1, 3)])
+
+    ### 计算得分3 
+    scores_3 = []
+    for pk in grid_points:
+        score = calculate_scores(points, pk, alpha=0.15, beta=1.0)
+        scores_3.append(score)
+    scores_3 = np.array(scores_3)
+    scores_3 = scores_3.reshape(image_res, image_res, -1)
+    # 绘制热图
+    for i in range(4):
+        ax = plt.subplot(3,4,9+i)
+        im = plt.imshow(scores_3[:,:,i],  interpolation='nearest', origin='lower')
+        plt.scatter(points[:,0]*image_res - 0.5, points[:,1]*image_res - 0.5, c='r', s=10)
+        plt.xticks(np.linspace(0, image_res, 3), [str(round(x,1)) for x in np.linspace(0, 1, 3)])
+        plt.yticks(np.linspace(0, image_res, 3), [str(round(x,1)) for x in np.linspace(0, 1, 3)])
+    
+    # divider = make_axes_locatable(axs)
+
+    # # 添加颜色条到新的坐标轴
+    # cax = divider.append_axes("right", size="5%", pad=0.05)
+    # colorbar = plt.colorbar(im, cax=cax)
+
+    # # 设置颜色条的标签
+    # colorbar.set_label('Intensity')  # 你可以根据需要设置不同的标签
+
+    plt.show()
+    
 
 # def calculate_scores(pk, points):
 #     alpha = 0.15
@@ -46,9 +121,17 @@ def calculate_scores(points, pk):
 # print(score_matrix)
 
 # 生成随机点
-np.random.seed(0)
-num = 24
-points = np.random.rand(num, 2)
+# np.random.seed(0)
+# num = 24
+# points = np.random.rand(num, 2)
+
+points = np.array(
+    [[0.3, 0.65], 
+     [0.6, 0.2],
+     [0.65, 0.25]]
+)
+
+show(50)
 
 # 创建子图
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))

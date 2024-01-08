@@ -22,6 +22,7 @@ class PostureDataset(Mix_Dataset[FCT, DST, VDST]):
     SPLIT_PARA.update(
         {
             POSTURE_SPLITER_NAME: POSTURE_SUBSETS,
+            "aug_posture": POSTURE_SUBSETS,
         }
     )
 

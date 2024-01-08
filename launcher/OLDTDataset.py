@@ -34,10 +34,13 @@ class OLDTDataset(Dataset):
         self.data_folder = data_folder
         self.vocformat = formattype(data_folder)
         # self.vocformat.rebuild(force= True)
-        self.vocformat.depth_elements.close()
-        self.vocformat.bbox_3ds_elements.close()
-        self.vocformat.visib_fracts_element.close()
-        self.vocformat.depth_scale_elements.close()
+        try:
+            self.vocformat.depth_elements.close()
+            self.vocformat.bbox_3ds_elements.close()
+            self.vocformat.visib_fracts_element.close()
+            self.vocformat.depth_scale_elements.close()
+        except:
+            pass
         # self.vocformat.masks_elements.close()
         # self.vocformat.intr_elements.close()
 
@@ -109,7 +112,7 @@ class OLDTDataset(Dataset):
         orig_idx = int(idx / self.data_inflation)
         data_i = self.idx_array[orig_idx]
         viewmeta = self.vocformat.read(data_i)   
-        viewmeta.calc_bbox2d_from_mask(viewmeta.masks)
+        viewmeta.labels = viewmeta.calc_bbox2d_from_mask(viewmeta.masks)
         if if_aug:
             viewmeta = self.augment(viewmeta)
         # viewmeta = viewmeta.rotate(0.2)
@@ -117,7 +120,7 @@ class OLDTDataset(Dataset):
         image = viewmeta.color
         
         class_id = list(viewmeta.labels.keys()) 
-        landmarks = [viewmeta.landmarks[x] for x in class_id]
+        landmarks = [viewmeta.landmarks[x] if viewmeta.landmarks is not None else None for x in class_id]
         bbox_2d = viewmeta.bbox_2d
         bbox = np.array([bbox_2d[x] for x in class_id])
         bbox_n = normalize_bbox(bbox, image.shape[:2][::-1])

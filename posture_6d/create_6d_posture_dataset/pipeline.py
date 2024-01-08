@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from .aruco_detector import ArucoDetector
+from .utils.aruco_detector import ArucoDetector
 from .capturing import Capturing, RsCamera
 from .data_manager import DataRecorder, ModelManager, FrameMeta
 from .interact_icp import InteractIcp

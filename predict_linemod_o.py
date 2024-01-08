@@ -16,6 +16,8 @@ import os
 import shutil
 from utils.yaml import load_yaml, dump_yaml
 
+from posture_6d.data.dataset_example import BopFormat
+
 if __name__ == "__main__":
     cfg_file = f"{CFG_DIR}/oldt_linemod_mix.yaml"
     setup_paras = load_yaml(cfg_file)["setup"]
@@ -50,9 +52,10 @@ if __name__ == "__main__":
     for k, v in weights.items():
         if k != 7:
             continue
-        setup_paras["sub_data_dir"] = "linemod_mix/{}".format(str(k).rjust(6, '0'))
+        setup_paras["sub_data_dir"] = "linemod_o/"
         setup_paras["ldt_branches"] = {k: "linemod_mix/{}".format(v)}
         setup_paras["batch_size"] = batch_size
+        # setup_paras["dataset_format"] = VocFormat_6dPosture
 
         predictor = setup("predict", 
                         detection_base_weight=f"{WEIGHTS_DIR}/linemod_mix/{str(k).rjust(6, '0')}_best.pt" ,

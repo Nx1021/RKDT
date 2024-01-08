@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from .data_manager import DataRecorder, EnumElements, ModelManager, ProcessData
-from .aruco_detector import ArucoDetector
+from .utils.aruco_detector import ArucoDetector
 from .utils.camera_sys import convert_depth_frame_to_pointcloud
 from .utils.bounded_voronoi import bounded_voronoi, get_seg_maps
 from .utils.plane import fitplane

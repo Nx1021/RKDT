@@ -4,7 +4,7 @@ from . import SCRIPT_DIR
 
 loaded_cfg = {}
 
-def load_yaml(path='data.yaml', assingle=True) -> dict:
+def load_yaml(path='data.yaml', assingle=False) -> dict:
     """
     Load YAML data from a file.
 
