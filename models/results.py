@@ -560,8 +560,8 @@ class ObjPosture():
             for i, (x, y) in enumerate(self.landmarks):
                 if x == 0 and y == 0:
                     continue
-                plt.scatter(x, y, color=color, s = 4)
-                plt.text(x + 1, y + 1, str(i), color=color, fontsize=4, va='top')
+                plt.scatter(x, y, color=color, s = 3)
+                plt.text(x + 1, y + 1, str(i), color=color, fontsize=3, va='top')
 
         if self.bbox_n is not None:
             # 绘制边界框
@@ -586,7 +586,7 @@ class ObjPosture():
         plt.title('Object Posture')
 
 class ImagePosture():
-    def __init__(self, image: np.ndarray, *objs: ObjPosture, intr_M:np.ndarray = None) -> None:
+    def __init__(self, image: np.ndarray, *objs: ObjPosture, intr_M:np.ndarray = None, depth:Optional[np.ndarray] = None) -> None:
         """
         初始化ImagePosture对象。
 
@@ -597,6 +597,7 @@ class ImagePosture():
         self.obj_list: list[ObjPosture] = list(objs)
         self.image = image
         self.intr_M = intr_M
+        self.depth = depth
 
     @property
     def image_size(self):
@@ -678,7 +679,7 @@ class ImagePosture():
         """
         # 绘制图像
         if show_image:
-            plt.imshow(self.image)
+            plt.imshow(self.image[:,:,::-1])
             plt.axis('off')
 
         # 绘制每个ObjPosture对象

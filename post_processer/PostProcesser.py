@@ -18,6 +18,8 @@ from models.utils import tensor_to_numpy, normalize_points, denormalize_points
 from utils.yaml import load_yaml
 from scipy.optimize import linear_sum_assignment
 
+from MyLib.posture_6d.derive import draw_one_mask
+
 from typing import TypedDict, Union, Callable, Optional, Iterable, TypeVar, overload, Any, Sequence, Literal
 
 def create_model_manager(cfg_file) -> MeshManager:
@@ -1182,7 +1184,7 @@ class PostProcesser():
         posture.set_rmat(transmit.rmat.dot(R_C2O))
         return posture
 
-    def solve_posture(self, ldmks:np.ndarray, mask:np.ndarray, bbox:np.ndarray, intr_M:Optional[np.ndarray], class_id:int):
+    def solve_posture(self, ldmks:np.ndarray, mask:np.ndarray, bbox:np.ndarray, intr_M:Optional[np.ndarray], class_id:int, depth:Optional[np.ndarray] = None):
         if np.sum(mask) < 8:
             return None
         elif self.obj_out_bbox(ldmks, bbox):
@@ -1190,7 +1192,11 @@ class PostProcesser():
         else:
             points_3d = self.mesh_manager.get_ldmk_3d(class_id)
             posture:Posture = self.pnpsolver.solvepnp(ldmks, points_3d, mask, K=intr_M, return_posture=True) # type:ignore
-            if self._use_bbox_area_assumption:
+
+            if depth is not None:
+                posture = self.__refine_posture_by_depth(depth, bbox, class_id, posture)
+
+            if self._use_bbox_area_assumption and depth is None:
                 posture = self.bbox_area_assumption(posture, class_id, bbox)
 
             if self._use_fix_z and isinstance(self._camera_pose, Posture):
@@ -1203,7 +1209,45 @@ class PostProcesser():
 
             return posture
 
-    def process_one(self, pred_probs, pred_ldmks, class_id, bbox:torch.Tensor, mode = 'v', intr_M = None, *, obj_idx:Optional[int] = None):
+    def __refine_posture_by_depth(self, depth:np.ndarray, bbox:np.ndarray, class_id:int, raw_posture:Posture):
+        self.depth_scale = 0.5 # mm
+
+        points = self.mesh_manager.get_model_pcd(class_id)
+        mesh_meta = self.mesh_manager.export_meta(class_id)
+        points = points[np.linspace(0, len(points) - 1, 1000, dtype=np.int32)] # sample [N, 3]
+        points_in_C = raw_posture * points # [N, 3]
+        min_dist = np.min(points_in_C[:, 2])
+
+        bbox = np.array([np.floor(bbox[0]), np.floor(bbox[1]), np.ceil(bbox[2]), np.ceil(bbox[3])]).astype(np.int32)
+        ref_depth = depth[bbox[1]:bbox[3], bbox[0]:bbox[2]] * self.depth_scale # [h, w]
+
+        self.pnpsolver.intr.cam_wid = depth.shape[1]
+        self.pnpsolver.intr.cam_hgt = depth.shape[0]
+        raw_depth, orig_proj = draw_one_mask(mesh_meta, raw_posture, self.pnpsolver.intr, tri_mode=False)
+        raw_depth[raw_depth == self.pnpsolver.intr.max_depth] = 0
+        raw_depth = raw_depth[bbox[1]:bbox[3], bbox[0]:bbox[2]] # [h, w]
+
+        if raw_depth.size == 0:
+            return raw_posture
+
+        delta_depth = ref_depth - raw_depth
+        valid_mask:np.ndarray = (ref_depth > 0) & (raw_depth > 0)
+        valid_mask = cv2.morphologyEx(valid_mask.astype(np.uint8), cv2.MORPH_ERODE, np.ones((3,3), np.uint8)).astype(np.bool8)
+        dists = delta_depth[valid_mask]
+
+        # exclued outliers
+        dists_mean = np.mean(dists)
+        dists_std = np.std(dists)
+        dists = dists[(dists > dists_mean - 2 * dists_std) & (dists < dists_mean + 2 * dists_std)]
+
+        if len(dists) != 0:
+            move_dist = np.mean(dists)
+            new_posture = self.move_obj_by_optical_link(raw_posture, move_dist)
+            return new_posture
+        else:
+            return raw_posture
+
+    def process_one(self, pred_probs, pred_ldmks, class_id, bbox:torch.Tensor, mode = 'v', intr_M = None, *, obj_idx:Optional[int] = None, depth:Optional[np.ndarray] = None):
         if mode == "e":
             ldmks, mask = self.parse_exclusively(pred_probs, pred_ldmks) # 独占式
         elif mode == "v":
@@ -1226,25 +1270,26 @@ class PostProcesser():
                         pass
                     else:
                         ldmks, mask = _ldmks, _mask
-            posture = self.solve_posture(ldmks, mask, bbox, intr_M, class_id) # type:ignore
+            posture = self.solve_posture(ldmks, mask, bbox, intr_M, class_id, depth = depth) # type:ignore
             trace.set_last_trace_point(bbox, posture)
         else:
-            posture = self.solve_posture(ldmks, mask, bbox, intr_M, class_id)
+            posture = self.solve_posture(ldmks, mask, bbox, intr_M, class_id, depth = depth)
         # # 计算姿态
         # self.objs[obj_idx].add_to_sequence(ldmks, mask)
         # if self._sequence_mode and self._sequence_more_accurate and self.objs[obj_idx].obj_stable:
         #     ldmks, mask = self.objs[obj_idx].calc_sequence()
         return ldmks, posture
     
-    def process(self, image_list:list[np.ndarray], ldmk_detection:list[list[LandmarkDetectionResult]], mode = "v"):
+    def process(self, image_list:list[np.ndarray], ldmk_detection:list[list[LandmarkDetectionResult]], depths:Optional[list[np.ndarray]] = None, mode = "v"):
         image_posture_list:list[ImagePosture] = []
+        depths:Union[list[np.ndarray], list[None]] = [None for _ in image_list] if depths is None else depths
         for bi, batch in enumerate(ldmk_detection):
             if self._sequence_mode:
                 self.trace_manager.update_time()
                 self.trace_manager.match_to_trace(batch)
-            image_posture = ImagePosture(image_list[bi])
+            image_posture = ImagePosture(image_list[bi], depth = depths[bi])
             for pred_obj_idx, rlt in enumerate(batch):
-                ldmks, posture = self.process_one(rlt.landmarks_probs, rlt.landmarks, rlt.class_id, rlt.bbox, mode, obj_idx = pred_obj_idx)
+                ldmks, posture = self.process_one(rlt.landmarks_probs, rlt.landmarks, rlt.class_id, rlt.bbox, mode, obj_idx = pred_obj_idx, depth = depths[bi])
                 if not self._sequence_mode:
                     # 创建objp
                     objp = ObjPosture(ldmks, rlt.bbox_n, rlt.class_id, image_posture.image_size, posture)

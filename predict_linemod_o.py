@@ -44,13 +44,15 @@ if __name__ == "__main__":
         9: "20230826200842branch_ldt_09.pt",
         10: "20230823011027branch_ldt_10.pt",
         11: "20230826191856branch_ldt_11.pt",
-        12: "20230823011323branch_ldt_12.pt",
-        13: "20230826165015branch_ldt_13.pt",
+        # 12: "20230823011323branch_ldt_12.pt",
+        12: "20240108081240branch_ldt_12.pt",
+        # 13: "20230826165015branch_ldt_13.pt",
+        13: "20240105192423branch_ldt_13.pt",
         14: "20230902185318branch_ldt_14.pt"
     }
 
     for k, v in weights.items():
-        if k != 7:
+        if k != 12 and k != 13:
             continue
         setup_paras["sub_data_dir"] = "linemod_o/"
         setup_paras["ldt_branches"] = {k: "linemod_mix/{}".format(v)}

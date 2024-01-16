@@ -22,6 +22,7 @@ from post_processer.PostProcesser import PostProcesser, \
 from posture_6d.derive import PnPSolver
 from posture_6d.metric import MetricCalculator, MetricResult
 from posture_6d.core.posture import Posture
+from posture_6d.data.mesh_manager import get_bbox_connections
 from .OLDTDataset import OLDTDataset, collate_fn
 from .BaseLauncher import Launcher, BaseLogger
 
@@ -245,6 +246,8 @@ class OLDTPredictor(Launcher):
 
         self.loss = LandmarkLoss(cfg_file)
 
+        self._use_depth = False
+
     @Launcher.timing(-1)
     def preprocess(self, inputs:Union[list[ImagePosture], np.ndarray, Iterable[np.ndarray]]) -> list[cv2.Mat]:
         '''
@@ -286,8 +289,9 @@ class OLDTPredictor(Launcher):
     @Launcher.timing(1)
     def postprocess(self, 
                     image_list:list[np.ndarray], 
-                    predictions:list[list[LandmarkDetectionResult]]) ->list[ImagePosture]:
-        return self.postprocesser.process(image_list, predictions, self.postprocess_mode )
+                    predictions:list[list[LandmarkDetectionResult]],
+                    depths = None) ->list[ImagePosture]:
+        return self.postprocesser.process(image_list, predictions, depths = depths, mode = self.postprocess_mode)
 
     @Launcher.timing(-1)
     def calc_error(self, pred: Iterable[ImagePosture], gt: Iterable[ImagePosture])->list[list[tuple[MetricResult]]]:
@@ -303,13 +307,17 @@ class OLDTPredictor(Launcher):
             error_result.append(image_error_result)
         return error_result
     
-    def predict_from_dataset(self, dataset, plot_outlier = False):
+    def predict_from_dataset(self, dataset:OLDTDataset, plot_outlier = False):
+        dataset.set_use_depth(self._use_depth)
         data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
         
         with torch.no_grad():
             num_batches = len(data_loader)
             iters:Iterable[list[ImagePosture]] = tqdm(data_loader, total=num_batches, leave=True)
-            for batch in iters:
+            for idx, batch in enumerate(iters):
+                # if idx % 100 != 0:
+                #     continue
+
                 # Preprocessing
                 inputs = self.preprocess(batch)
                 if self.save_imtermediate:
@@ -332,7 +340,8 @@ class OLDTPredictor(Launcher):
                 # Postprocessing
                 if self.if_postprocess:
                     # print([x.obj_list[0].tvec for x in batch if isinstance(x, ImagePosture)])
-                    processed:list[ImagePosture] = self.postprocess(inputs, predictions)
+                    depths = [x.depth for x in batch if isinstance(x, ImagePosture)] if self._use_depth else None
+                    processed:list[ImagePosture] = self.postprocess(inputs, predictions, depths = depths)
                     if self.save_imtermediate:
                         for obj in processed:
                             self.intermediate_manager.save_pkl(self.processed_dir, obj)
@@ -342,6 +351,9 @@ class OLDTPredictor(Launcher):
                     error_result = self.calc_error(processed, batch)
                     if plot_outlier:
                         self.plot_outlier(error_result, batch, processed)
+
+                # self.plot_compare(batch, processed)
+
         with self.logger.capture_output("process record"):
             self.frame_timer.print()
             self.error_calculator.print_result()
@@ -378,6 +390,33 @@ class OLDTPredictor(Launcher):
                 plt.text(0, 1, text, ha='left', va='top', transform=plt.gca().transAxes)
                 self.intermediate_manager._save_object("error_outlier", None, save_figure)
                 # self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
+
+    def plot_compare(self,  gt_list:list[ImagePosture],
+                    pred_list:list[ImagePosture]):
+        def save_figure(file_path, image):
+            plt.gcf()
+            file_path += ".svg"
+            plt.savefig(file_path)
+            plt.clf()
+
+        def plot_bbox_3d(bbox_3d, color):
+            plt.scatter(bbox_3d[:,0], bbox_3d[:,1], c = color, s=5)
+            lines = get_bbox_connections(bbox_3d)
+            for line in lines:
+                plt.plot(line[0], line[1], c = color, linewidth=1)
+
+        for gt, pred in zip(gt_list, pred_list):
+            compare_image_posture(gt, pred)
+            for gt_item, pred_item in zip(gt.obj_list, pred.obj_list):
+                bbox_3d = self.postprocesser.mesh_manager.get_bbox_3d(gt_item.class_id)
+                gt_bbox_3d_proj   = self.postprocesser.pnpsolver.calc_reproj(bbox_3d, gt_item.rvec,   gt_item.tvec)
+                pred_bbox_3d_proj = self.postprocesser.pnpsolver.calc_reproj(bbox_3d, pred_item.rvec, pred_item.tvec)
+                gt_color = "lawngreen"
+                pred_color = "lightslategray"
+                plot_bbox_3d(gt_bbox_3d_proj, gt_color)
+                plot_bbox_3d(pred_bbox_3d_proj, pred_color)
+            self.intermediate_manager._save_object("plot_compare", None, save_figure)
+            # self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
 
     def postprocess_from_intermediate(self, plot_outlier = False):
         predictions_generator:Generator[list[LandmarkDetectionResult]] = \

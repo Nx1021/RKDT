@@ -34,6 +34,66 @@ def inv_proj(intr_M:np.ndarray, pixels:np.ndarray, depth:float):
     pz = np.sqrt(np.square(depth) - np.square(px) - np.square(py))
     return np.array([px, py, pz]).T # [N,3]
 
+def draw_one_mask(meta:MeshMeta, posture:Posture, intrinsics:CameraIntr, ignore_depth = False, tri_mode = True):
+    CAM_WID, CAM_HGT    = intrinsics.cam_wid, intrinsics.cam_hgt # 重投影到的深度图尺寸
+    EPS = intrinsics.eps
+    MAX_DEPTH = intrinsics.max_depth
+    pc = meta.points_array #[N, 3]
+    triangles = meta.tris_array #[T, 3]
+    pc = posture * pc #变换
+    z = pc[:, 2]
+    # 点云反向映射到像素坐标位置
+    orig_proj = intrinsics * pc
+    u, v = (orig_proj).T
+    # 滤除镜头后方的点、滤除超出图像尺寸的无效像素
+    valid = np.bitwise_and(np.bitwise_and((u >= 0), (u < CAM_WID)),
+                        np.bitwise_and((v >= 0), (v < CAM_HGT)))
+    mask = np.zeros((CAM_HGT, CAM_WID), np.uint8) #掩膜，物体表面的完全投影
+
+    if np.sum(valid) != 0:
+        u, v, z = u[valid], v[valid], z[valid]
+        pts = np.array([u, v]).T.astype(np.int32) #[P, 2]
+        new_pc_index = -np.ones(valid.size).astype(np.int32)
+        new_pc_index[valid] = np.arange(np.sum(valid)).astype(np.int32)
+        ### 绘制掩膜
+        if not tri_mode:
+            mask[tuple(pts[:, ::-1].T)] = 255
+            kernel_size = max(int((u.max() - u.min()) * (v.max() - v.min()) / u.shape[0]), 3)
+            kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, 
+                                    cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size)),
+                                    iterations=2)
+        else:
+            valid_tri = np.all(valid[triangles], axis = -1)
+            triangles = new_pc_index[triangles]
+            triangles = triangles[valid_tri]
+            # 由于点的数量有限，直接投影会形成空洞，所有将三角面投影和点投影结合
+            # 先用三角形生成掩膜
+            tri_pts = pts[triangles] #[T, 3, 2]
+            for i, t in enumerate(tri_pts):
+                mask = cv2.fillPoly(mask, [t], 255) # 必须以循环来画，cv2.fillPoly一起画会有部分三角丢失，原因尚不清楚
+        mask[mask > 0] = 1
+        ### 计算深度
+        if ignore_depth:
+            min_depth = np.full((CAM_HGT, CAM_WID), MAX_DEPTH) 
+            min_depth[mask.astype(np.bool_)] = np.mean(z)
+        else:
+            # 用点生成深度
+            depth = np.full((CAM_HGT, CAM_WID), MAX_DEPTH) 
+            for i, p in enumerate(pts):
+                z_value = z[i]
+                depth[p[1], p[0]] = min(z_value, depth[p[1], p[0]])
+            # 对掩膜上的点进行深度值的最小值滤波
+            iter_num = min(int(np.ceil(np.sum(mask) / pts.shape[0]/255)), 4)
+            min_depth = cv2.morphologyEx(mask * depth, cv2.MORPH_ERODE, cv2.getStructuringElement(cv2.MORPH_RECT, (3,3)), iterations= iter_num)
+            # 膨胀用来填充边缘点
+            dilate = cv2.morphologyEx(min_depth, cv2.MORPH_DILATE, cv2.getStructuringElement(cv2.MORPH_RECT, (3,3)), iterations= iter_num + 1)
+            min_depth[min_depth == 0] = dilate[min_depth == 0]
+            min_depth[mask == 0] = MAX_DEPTH
+    else:
+        min_depth = np.full((CAM_HGT, CAM_WID), MAX_DEPTH)
+    return min_depth, orig_proj
+
 def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:CameraIntr, 
             ignore_depth = False, tri_mode = True, reserve_empty = True):
     '''
@@ -45,70 +105,10 @@ def calc_masks(mesh_metas:list[MeshMeta], postures:list[Posture], intrinsics:Cam
     masks: list[cv2.Mat]
     visib_fracts: list[float]
     '''
-    def draw_one_mask(meta:MeshMeta, posture:Posture):
-        CAM_WID, CAM_HGT    = intrinsics.cam_wid, intrinsics.cam_hgt # 重投影到的深度图尺寸
-        EPS = intrinsics.eps
-        MAX_DEPTH = intrinsics.max_depth
-        pc = meta.points_array #[N, 3]
-        triangles = meta.tris_array #[T, 3]
-        pc = posture * pc #变换
-        z = pc[:, 2]
-        # 点云反向映射到像素坐标位置
-        orig_proj = intrinsics * pc
-        u, v = (orig_proj).T
-        # 滤除镜头后方的点、滤除超出图像尺寸的无效像素
-        valid = np.bitwise_and(np.bitwise_and((u >= 0), (u < CAM_WID)),
-                            np.bitwise_and((v >= 0), (v < CAM_HGT)))
-        mask = np.zeros((CAM_HGT, CAM_WID), np.uint8) #掩膜，物体表面的完全投影
-
-        if np.sum(valid) != 0:
-            u, v, z = u[valid], v[valid], z[valid]
-            pts = np.array([u, v]).T.astype(np.int32) #[P, 2]
-            new_pc_index = -np.ones(valid.size).astype(np.int32)
-            new_pc_index[valid] = np.arange(np.sum(valid)).astype(np.int32)
-            ### 绘制掩膜
-            if not tri_mode:
-                mask[tuple(pts[:, ::-1].T)] = 255
-                kernel_size = max(int((u.max() - u.min()) * (v.max() - v.min()) / u.shape[0]), 3)
-                kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
-                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, 
-                                        cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size)),
-                                        iterations=2)
-            else:
-                valid_tri = np.all(valid[triangles], axis = -1)
-                triangles = new_pc_index[triangles]
-                triangles = triangles[valid_tri]
-                # 由于点的数量有限，直接投影会形成空洞，所有将三角面投影和点投影结合
-                # 先用三角形生成掩膜
-                tri_pts = pts[triangles] #[T, 3, 2]
-                for i, t in enumerate(tri_pts):
-                    mask = cv2.fillPoly(mask, [t], 255) # 必须以循环来画，cv2.fillPoly一起画会有部分三角丢失，原因尚不清楚
-            mask[mask > 0] = 1
-            ### 计算深度
-            if ignore_depth:
-                min_depth = np.full((CAM_HGT, CAM_WID), MAX_DEPTH) 
-                min_depth[mask.astype(np.bool_)] = np.mean(z)
-            else:
-                # 用点生成深度
-                depth = np.full((CAM_HGT, CAM_WID), MAX_DEPTH) 
-                for i, p in enumerate(pts):
-                    z_value = z[i]
-                    depth[p[1], p[0]] = min(z_value, depth[p[1], p[0]])
-                # 对掩膜上的点进行深度值的最小值滤波
-                iter_num = min(int(np.ceil(np.sum(mask) / pts.shape[0]/255)), 4)
-                min_depth = cv2.morphologyEx(mask * depth, cv2.MORPH_ERODE, cv2.getStructuringElement(cv2.MORPH_RECT, (3,3)), iterations= iter_num)
-                # 膨胀用来填充边缘点
-                dilate = cv2.morphologyEx(min_depth, cv2.MORPH_DILATE, cv2.getStructuringElement(cv2.MORPH_RECT, (3,3)), iterations= iter_num + 1)
-                min_depth[min_depth == 0] = dilate[min_depth == 0]
-                min_depth[mask == 0] = MAX_DEPTH
-        else:
-            min_depth = np.full((CAM_HGT, CAM_WID), MAX_DEPTH)
-        return min_depth, orig_proj
-
     depth_images:list[np.ndarray] = []
     orig_proj_list:list[np.ndarray] = []
     for meta, posture in zip(mesh_metas, postures):
-        min_depth, orig_proj = draw_one_mask(meta, posture)
+        min_depth, orig_proj = draw_one_mask(meta, posture, intrinsics, ignore_depth, tri_mode)
         depth_images.append(min_depth)
         orig_proj_list.append(orig_proj)
 

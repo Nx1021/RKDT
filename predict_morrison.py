@@ -50,10 +50,14 @@ if __name__ == "__main__":
     elif sys == "Linux":
         batch_size = 32 # * torch.cuda.device_count()
         # model = torch.nn.DataParallel(model)
-    setup_paras["ldt_branches"] = {1:"20231106112011branch_ldt_01", 
-                                   3: "20231106112051branch_ldt_03",
-                                   5: "20231112053841branch_ldt_05.pt", 
-                                   7:"20231112053921branch_ldt_07.pt"}
+    setup_paras["ldt_branches"] = { 0: "20231026090805branch_ldt_00.pt",
+                                    1: "20231106112011branch_ldt_01.pt",
+                                    2: "20231026090851branch_ldt_02.pt",
+                                    3: "20231106112051branch_ldt_03.pt",
+                                    4: "20231101005107branch_ldt_04.pt",
+                                    5: "20231112053841branch_ldt_05.pt" ,
+                                    6: "20231116180743branch_ldt_06.pt" ,
+                                    7: "20231112053921branch_ldt_07.pt" }
     setup_paras["batch_size"] = batch_size
     # setup_paras["sub_data_dir"] = f"morrison_mix_single/{str(i).rjust(6, '0')}"
     setup_paras["sub_data_dir"] = f"morrison_real_voc/"
@@ -66,6 +70,7 @@ if __name__ == "__main__":
     # format.posture_spliter.set_split_mode(f"obj_{str(i).rjust(2, '0')}")
     # format.gen_posture_log(0.5)
     # trainer.train_dataset.vocformat.spliter_group.copyto(os.path.join(setup_paras["server_dataset_dir"], "morrison_mix_single", "ImageSets"))
+    predictor._use_depth = True
     predictor.predict_val(plot_outlier = False)
     # predictor.predict_train(plot_outlier = False)
 

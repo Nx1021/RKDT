@@ -115,7 +115,7 @@ class _process_timer():
             return
         print(" " * intent + "total_frames: " + str(self.count))
         print(" " * intent + "total_time: " + str(self.time))
-        rate = self.count / self.time
+        rate = self.count / self.time if self.time != 0 else 1
         if rate > 1:
             print(" " * intent + "frame_rate: " + str(rate))
         else:

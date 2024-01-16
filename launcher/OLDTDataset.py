@@ -27,15 +27,17 @@ def collate_fn(batch_data):
     return batch_data
 _ONLY_REAL = False
 class OLDTDataset(Dataset):
-    def __init__(self, data_folder:str, set_:str, formattype = VocFormat_6dPosture):
+    def __init__(self, data_folder:str, set_:str, formattype = VocFormat_6dPosture, use_depth = False):
         '''
         set must be "trian" or "val"
         '''
         self.data_folder = data_folder
         self.vocformat = formattype(data_folder)
+        self.__use_depth = use_depth
         # self.vocformat.rebuild(force= True)
         try:
-            self.vocformat.depth_elements.close()
+            if not self.__use_depth:
+                self.vocformat.depth_elements.close()
             self.vocformat.bbox_3ds_elements.close()
             self.vocformat.visib_fracts_element.close()
             self.vocformat.depth_scale_elements.close()
@@ -54,6 +56,13 @@ class OLDTDataset(Dataset):
         self.data_files = self.vocformat.num
 
         self.set_augment_para(1,0)
+
+    def set_use_depth(self, use_depth:bool):
+        self.__use_depth = use_depth
+        if not self.__use_depth:
+            self.vocformat.depth_elements.close()
+        else:
+            self.vocformat.depth_elements.open()
 
     @property
     def idx_array(self):
@@ -118,6 +127,7 @@ class OLDTDataset(Dataset):
         # viewmeta = viewmeta.rotate(0.2)
 
         image = viewmeta.color
+        depth = viewmeta.depth
         
         class_id = list(viewmeta.labels.keys()) 
         landmarks = [viewmeta.landmarks[x] if viewmeta.landmarks is not None else None for x in class_id]
@@ -128,7 +138,7 @@ class OLDTDataset(Dataset):
         postures = [Posture(rvec=x[0], tvec=x[1]) for x in trans_vecs]
         intr_M = viewmeta.intr
 
-        image_posture = ImagePosture(image, intr_M=intr_M)
+        image_posture = ImagePosture(image, intr_M=intr_M, depth=depth)
         for obj_i in range(len(class_id)):
             image_posture.obj_list.append(
                 ObjPosture(landmarks[obj_i], 
