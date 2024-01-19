@@ -272,6 +272,8 @@ class Trainer(Launcher):
                 print("new best val_loss: {}, saving...".format(val_loss))
                 self.best_val_loss = val_loss
                 self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp)
+            if epoch % 400 == 0:
+                self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp + "_400_")
 
             # 更新进度条信息
             tqdm.write('Epoch {} - Train Loss: {:.4f} - Val Loss: {:.4f}'.format(self.cur_epoch, train_loss, val_loss))

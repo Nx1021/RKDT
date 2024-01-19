@@ -30,12 +30,15 @@ import time
 # from concurrent.futures import ThreadPoolExecutor
 # from concurrent.futures import ProcessPoolExecutor
 
-from . import Posture, JsonIO, JSONDecodeError, Table, extract_doc, search_in_dict, int_str_cocvt,\
-      serialize_object, deserialize_object, test_pickleable, read_file_as_str, write_str_to_file
+from . import Posture, JsonIO, JSONDecodeError, Table, BinDict, extract_doc, search_in_dict, int_str_cocvt,\
+      serialize_object, deserialize_object, test_pickleable, read_file_as_str, write_str_to_file, set_union_keep_order, set_intersect_keep_order, set_diff_keep_order
 from .mesh_manager import MeshMeta
 
 
 DEBUG = False
+
+IO_TEST_MODE = False
+IO_TEST_PRINT_INTERNAL = 100
 
 NODE = TypeVar('NODE', bound="Node")
 
@@ -608,7 +611,7 @@ class IOStatusManager():
         pass
 
     @abstractmethod
-    def identity_string(self) -> str:
+    def identity_string(self, regen = False) -> str:
         """
         Returns a string representation of the IOStatusManager object.
 
@@ -1111,12 +1114,14 @@ class _RegisterInstance(ABC, Generic[RGSITEM]):
         """
         pass
 
-    def identity_string(self):
+    def identity_string(self, regen = False):
         """
         Note
         ----
         `identity_string` returns a string that can uniquely identify an instance
         """
+        if regen:
+            self._identity_string = self.gen_identity_string()
         try:
             return self._identity_string
         except:
@@ -1493,7 +1498,7 @@ class _AppendNames(dict[str, Union[List[str], str]]):
         bool
             True if the name was added, False if it already existed.
         """
-        if appendname not in self:
+        if appendname not in self.appendnames:
             self.appendnames.append(appendname)
             return True
         return False
@@ -1512,7 +1517,7 @@ class _AppendNames(dict[str, Union[List[str], str]]):
         bool
             True if the name was removed, False if it did not exist.
         """
-        if appendname in self:
+        if appendname in self.appendnames:
             self.appendnames.remove(appendname)
             return True
         return False
@@ -1921,6 +1926,10 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
                     obj.add_appendname(appname)
             return obj
         elif cls.GET_INSTANCE_STRATEGY == 1:
+            if orig_obj.multi_files:
+                obj:FilesHandle = cls._registry[identity_string]
+                for appname in obj._appendnames_obj.appendnames:
+                    orig_obj.add_appendname(appname)
             cls.register(identity_string, orig_obj)
             cls.GET_INSTANCE_STRATEGY = 0
             return orig_obj
@@ -2463,7 +2472,7 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         return sub_dir, corename, suffix, prefix, appendname, _prefix_joiner, _appendnames_joiner
     
     @staticmethod
-    def _parse_one_path_to_paras(cluster:"FilesCluster", path:str, prefix_joiner:str, appendnames_joiner:str):
+    def _parse_one_path_to_paras(cluster:"FilesCluster", path:str, prefix_joiner:str, appendnames_joiner:str, _extract_corename_func:Optional[Callable] = None):
         """
         Parses a single path to extract various parameters.
         
@@ -2479,6 +2488,8 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
             The prefix joiner.
         appendnames_joiner: 
             The append names joiner.
+        _extract_corename_func:
+            Optional function to extract the core name from the file name. Used for custom parsing.
 
         Returns
         -----
@@ -2493,9 +2504,74 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
             - appendnames_joiner: The append names joiner.
         """
         name:str = FilesHandle._parse_path_to_name(cluster, path)
+        prefix_joiner = "" if prefix_joiner is None else prefix_joiner
+        appendnames_joiner = "" if appendnames_joiner is None else appendnames_joiner
         sub_dir, corename, suffix, prefix, appendname, prefix_joiner, appendnames_joiner =\
-            FilesHandle._default_parse_file_name(name, prefix_joiner, appendnames_joiner)
+            FilesHandle._default_parse_file_name(name, prefix_joiner, appendnames_joiner, _extract_corename_func)
         return sub_dir, corename, suffix, prefix, appendname, prefix_joiner, appendnames_joiner
+
+    @staticmethod
+    def _compose_paras_to_name(corename:str, suffix:str = "", prefix:str = "", appendnames:str = "", prefix_joiner:str = "", appendnames_joiner:str = ""):
+        """
+        Composes the parameters into a file name.
+
+        Parameters
+        -----
+        sub_dir (str): 
+            The sub directory.
+        corename (str): 
+            The core name.
+        suffix (str): 
+            The suffix.
+        prefix (str): 
+            The prefix.
+        appendname (str): 
+            The append name.
+        prefix_joiner: 
+            The prefix joiner.
+        appendnames_joiner: 
+            The append names joiner.
+
+        Returns
+        -----
+        str: 
+            The composed file name.
+        """
+        appendnames = [appendnames] if isinstance(appendnames, str) else appendnames
+        assert all([isinstance(a, str) for a in appendnames]), "appendnames must be a str or a list of str"
+        appendnames = [a + (appendnames_joiner if len(a) > 0 else "") for a in appendnames]
+
+        if len(prefix) > 0:
+            prefix = prefix + prefix_joiner
+
+        if len(suffix) > 0 and suffix[0] != '.': 
+            suffix = '.' + suffix
+
+        names = [prefix + corename + a + suffix for a in appendnames]
+
+        if len(names) == 1:
+            return names[0]
+        else:
+            return names
+
+    @staticmethod
+    def _compose_paras_to_path_from_dict(dict_:dict[str, Union[str, dict[str, str]]]):
+        data_path:str       = dict_[FilesHandle.KW_data_path] # type: ignore
+        sub_dir             = dict_[FilesHandle.KW_sub_dir]
+        corename            = dict_[FilesHandle.KW_corename]
+        suffix              = dict_[FilesHandle.KW_suffix]      
+
+        prefix                  = dict_[FilesHandle.KW_prefix][_Prefix.KW_PREFIX]
+        prefix_joiner           = dict_[FilesHandle.KW_prefix][_Prefix.KW_JOINER]
+        appendnames             = dict_[FilesHandle.KW_appendnames][_AppendNames.KW_APPENDNAMES]
+        appendnames_joiner      = dict_[FilesHandle.KW_appendnames][_AppendNames.KW_JOINER]
+
+        name = FilesHandle._compose_paras_to_name(corename, suffix, prefix, appendnames, prefix_joiner, appendnames_joiner)
+        return os.path.join(data_path, sub_dir, name)
+
+    @classmethod
+    def _default_compose_paras_to_name(cls, corename:str, suffix:str = ""):
+        return cls._compose_paras_to_name(corename, suffix, cls.DEFAULT_PREFIX, cls.DEFAULT_APPENDNAMES, cls.DEFAULT_PREFIX_JOINER, cls.DEFAULT_APPENDNAMES_JOINER)
 
     @classmethod
     def from_path(cls, cluster:FCT, path:Union[str, list[str]], *,
@@ -2774,8 +2850,8 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         return rlt
 
     def __setattr__(self, name, value):
-        if hasattr(self, "_inited"):
-            raise AttributeError(f"FilesHandle is immutable, you can't change its attribute")
+        if hasattr(self, "_inited") and name in self.INDENTITY_PARA_NAMES:
+            raise AttributeError(f"{name} is immutable for {self.__class__.__name__}")
         return super().__setattr__(name, value)
     # endregion make immutable
 
@@ -3004,7 +3080,7 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         """
         Get its key in the `self.cluster.MemoryData`
         """
-        return self.cluster.MemoryData._reverse_dict[self] # type: ignore
+        return self.cluster.MemoryData.query_value(self) # type: ignore
 
     # endregion path, dir, name
 
@@ -3136,263 +3212,93 @@ class FilesHandle(_RegisterInstance["FilesHandle"], Generic[FCT, VDMT]):
         return string
     # endregion other
 
-class BinDict(dict[_KT, _VT], Generic[_KT, _VT]):
-    """
-    A dictionary subclass that supports bidirectional mapping between keys and values.
+class FhBinDict(BinDict[int, FHT], Generic[FHT]):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__lazy_data:Optional[dict[int, dict]] = None
+        self.fileshandle_init_func:Callable[[dict], FHT] = None
 
-    Parameters
-    ----------
-    dict_ : dict, optional
-        The initial dictionary to populate the BinDict with.
+    def set_lazy_data(self, lazy_data:dict[int, dict], fileshandle_init_func:Callable[[dict], FHT]):
+        assert isinstance(lazy_data, dict), f"lazy_data must be a dict, not {lazy_data}"
+        self.__lazy_data = lazy_data
+        self.fileshandle_init_func = fileshandle_init_func
+    
+    def get_lazy_data(self):
+        return self.__lazy_data
 
-    Attributes
-    ----------
-    _reverse_dict : dict
-        A dictionary that stores the reverse mapping of values to keys.
+    def has_lazy_data(self):
+        return self.__lazy_data is not None
 
-    Methods
-    -------
-    gen_reverse_dict(dict_)
-        Generates the reverse dictionary from the given dictionary.
-    init_reverse_dict()
-        Initializes the `_reverse_dict` attribute.
-    __getitem__(key)
-        Returns the value associated with the given key.
-    __del_item(key)
-        Deletes the item with the given key and its corresponding reverse mapping.
-    __setitem__(key, value)
-        Sets the value associated with the given key and updates the reverse mapping.
-    update(*args, **kwargs)
-        Updates the BinDict with the key-value pairs from other dictionaries.
-    pop(key, default=None)
-        Removes and returns the value associated with the given key.
-    popitem()
-        Removes and returns the last key-value pair in the BinDict.
-    clear()
-        Removes all items from the BinDict.
-    setdefault(key, default=None)
-        Returns the value associated with the given key, or sets it to the default value if the key is not present.
-    __delitem__(key)
-        Deletes the item with the given key and its corresponding reverse mapping.
-    __repr__()
-        Returns a string representation of the BinDict.
+    def __activate(self, key):
+        self[key] = self.fileshandle_init_func(self.__lazy_data[key])
+        self.__lazy_data.__delitem__(key) # can only use once
 
-    Examples
-    --------
-    >>> bin_dict = BinDict({'a': 1, 'b': 2})
-    >>> print(bin_dict['a'])
-    1
-    >>> bin_dict.update({'c': 3})
-    >>> print(bin_dict)
-    BinDict({'a': 1, 'b': 2, 'c': 3})
-    >>> bin_dict._reverse_dict[3]
-    'c'
-    """
+    def __getitem__(self, key:int) -> FHT:
+        return self.get(key)
 
-    def __init__(self, dict_: Optional[dict[_KT, _VT]] = None, *args, **kwargs):
-        super().__init__(dict_, *args, **kwargs)
-        self.init_reverse_dict()
-
-    @staticmethod
-    def gen_reverse_dict(dict_: dict[_KT, _VT]) -> dict[_VT, _KT]:
-        """
-        Generates a reverse dictionary from the given dictionary.
-
-        Parameters
-        ----------
-        dict_ : dict
-            The dictionary to generate the reverse dictionary from.
-
-        Returns
-        -------
-        dict
-            The reverse dictionary.
-        """
-        def reverse_entry(entry):
-            key, value = entry
-            return value, key
-
-        reverse_entries = list(map(reverse_entry, dict_.items()))
-
-        return dict(reverse_entries)
-
-    def init_reverse_dict(self):
-        """
-        Initializes the `_reverse_dict` attribute by generating the reverse dictionary from the current dictionary.
-        """
-        self._reverse_dict = self.gen_reverse_dict(self)
-
-    def __getitem__(self, __key: _KT) -> _VT:
-        """
-        Returns the value associated with the given key.
-
-        Parameters
-        ----------
-        __key : _KT
-            The key to retrieve the value for.
-
-        Returns
-        -------
-        _VT
-            The value associated with the key.
-        """
-        return super().__getitem__(__key)
-
-    def __del_item(self, key) -> _VT:
-        """
-        Deletes the item with the given key and its corresponding reverse mapping.
-
-        Parameters
-        ----------
-        key : _KT
-            The key of the item to delete.
-
-        Returns
-        -------
-        _VT
-            The value of the deleted item.
-        """
-        value = self[key]
-        super().__delitem__(key)
-        if value in self._reverse_dict:
-            del self._reverse_dict[value]
-        return value
-
-    def __setitem__(self, key, value):
-        """
-        Sets the value associated with the given key and updates the reverse mapping.
-
-        Parameters
-        ----------
-        key : _KT
-            The key to set the value for.
-        value : _VT
-            The value to associate with the key.
-        """
-        if key in self:
-            # If key already exists, delete the old reverse mapping
-            old_value = self[key]
-            if old_value in self._reverse_dict:
-                del self._reverse_dict[old_value]
-        if value in self._reverse_dict:
-            # If value already exists in the reverse mapping, delete the old key
-            old_key = self._reverse_dict[value]
-            del self[old_key]
-        super().__setitem__(key, value)
-        self._reverse_dict[value] = key
-
-    def update(self, *args: dict[_KT, _VT], **kwargs):
-        """
-        Updates the BinDict with the key-value pairs from other dictionaries.
-
-        Parameters
-        ----------
-        *args : dict
-            Other dictionaries to update the BinDict with.
-        **kwargs : key-value pairs
-            Key-value pairs to update the BinDict with.
-        """
-        for other_dict in args:
-            reverse_dict = self.gen_reverse_dict(other_dict)
-
-            if len(self) > 0:
-                reverse_same_keys = set(reverse_dict.keys()) & set(self._reverse_dict.keys())
-                origin_same_keys = set(other_dict.keys()) & set(self.keys())
-                for rev_k in reverse_same_keys:
-                    self.pop(self._reverse_dict[rev_k])
-                for k in origin_same_keys:
-                    self._reverse_dict.pop(self[k])
-
-            super().update(other_dict)
-            self._reverse_dict.update(reverse_dict)
-        for key, value in kwargs.items():
-            self[key] = value
-
-    def pop(self, key, default=None) -> _VT:
-        """
-        Removes and returns the value associated with the given key.
-
-        Parameters
-        ----------
-        key : _KT
-            The key of the item to remove.
-        default : any, optional
-            The value to return if the key is not found, by default None.
-
-        Returns
-        -------
-        _VT
-            The value associated with the key, or the default value if the key is not found.
-        """
-        if key in self:
-            value = self.__del_item(key)
-            return value
+    def activate(self, keys:Union[int, list[int]] = None):
+        if keys is None:
+            keys = list(set(self.__lazy_data.keys()).difference(super().keys()))
         else:
-            return default
+            if isinstance(keys, int):
+                keys = [keys]
+            assert all([isinstance(k, int) for k in keys]), f"keys must be int or list of int, not {keys}"
+            keys = list(set(keys).union(self.__lazy_data.keys()).difference(super().keys()))
+        for key in keys:
+            self.__activate(key)
 
-    def popitem(self) -> tuple[_KT, _VT]:
-        """
-        Removes and returns the last key-value pair in the BinDict.
+    def get(self, key, default = None):
+        fh = dict.get(self, key, default)
+        if fh is None:
+            if key in self.__lazy_data:
+                self.__activate(key)
+                return self[key]
+            else:
+                raise KeyError(f"key {key} not found")
+        else:
+            return fh
+        
+    def update(self, *args: dict[int, FHT], **kwargs):
+        super().update(*args, **kwargs)
+        for arg in args:
+            if isinstance(arg, FhBinDict):
+                # update _lazy_data
+                if arg.has_lazy_data():
+                    if not self.has_lazy_data():
+                        self.__lazy_data = arg.__lazy_data.copy()
+                    else:
+                        self.__lazy_data.update(arg.__lazy_data)
+                # update fileshandle_init_func
+                if self.fileshandle_init_func is None:
+                    self.fileshandle_init_func = arg.fileshandle_init_func
+                else:
+                    assert self.fileshandle_init_func == arg.fileshandle_init_func, \
+                        f"fileshandle_init_func must be the same, not {self.fileshandle_init_func} and {arg.fileshandle_init_func}"
 
-        Returns
-        -------
-        tuple
-            The last key-value pair in the BinDict.
-        """
-        key, value = super().popitem()
-        if value in self._reverse_dict:
-            del self._reverse_dict[value]
-        return key, value
+    def has(self, key):
+        return key in super().keys()
 
-    def clear(self):
-        """
-        Removes all items from the BinDict.
-        """
-        super().clear()
-        self._reverse_dict.clear()
+    def export_path_dict(self):
+        path_dict = {}
 
-    def setdefault(self, key, default=None) -> _VT:
-        """
-        Returns the value associated with the given key, or sets it to the default value if the key is not present.
+        if self.has_lazy_data():
+            for key, data in self.__lazy_data.items():
+                path_dict[key] = FilesHandle._compose_paras_to_path_from_dict(data)
+        for key, fh in self.items():
+            path_dict[key] = fh.get_path()
+        return path_dict
 
-        Parameters
-        ----------
-        key : _KT
-            The key to retrieve the value for.
-        default : any, optional
-            The default value to set if the key is not present, by default None.
+    def keys(self):
+        if self.has_lazy_data():
+            return sorted(list(set(super().keys()).union(self.__lazy_data.keys())))
+        else:
+            return super().keys()
 
-        Returns
-        -------
-        _VT
-            The value associated with the key, or the default value if the key is not present.
-        """
-        if key not in self:
-            self[key] = default
-        return self[key]
-
-    def __delitem__(self, key):
-        """
-        Deletes the item with the given key and its corresponding reverse mapping.
-
-        Parameters
-        ----------
-        key : _KT
-            The key of the item to delete.
-        """
-        if key in self:
-            self.__del_item(key)
-
-    def __repr__(self) -> str:
-        """
-        Returns a string representation of the BinDict.
-
-        Returns
-        -------
-        str
-            A string representation of the BinDict.
-        """
-        return f"{self.__class__.__name__}({super().__repr__()})"
+    def __contains__(self, key: object) -> bool:
+        if self.has_lazy_data():
+            return key in super().keys() or key in self.__lazy_data
+        else:
+            return key in super().keys()
 
 class Node(Generic[NODE]):
     """
@@ -3426,6 +3332,7 @@ class Node(Generic[NODE]):
         Helper method to propagate a function call to the child nodes in a forward direction.
         """
         for child in obj._children:
+            child:Node
             if child.follow_parent and hasattr(child, funcname):
                 getattr(child, funcname)(*args, **kwargs)
 
@@ -3435,10 +3342,10 @@ class Node(Generic[NODE]):
         Decorator to propagate a function call to the leaves of the node in a downward preorder traversal.
         '''
         @functools.wraps(func)
-        def forward_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
+        def forward_propagate_wrapper(obj: Node[NODE], *args, only_this = False, **kwargs):
             funcname = get_func_name(obj, func)
             func(obj, *args, **kwargs)
-            if funcname is not None:
+            if funcname is not None and not only_this:
                 Node.__forward(obj, funcname, *args, **kwargs)
             else:
                 warnings.warn(f"can't find function {func} in {obj}, propagate ends")
@@ -3451,9 +3358,9 @@ class Node(Generic[NODE]):
         Decorator to propagate a function call to the leaves of the node in a downward postorder traversal.
         '''
         @functools.wraps(func)
-        def forward_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
+        def forward_propagate_wrapper(obj: Node[NODE], *args, only_this = False, **kwargs):
             funcname = get_func_name(obj, func)
-            if funcname is not None:
+            if funcname is not None and not only_this:
                 Node.__forward(obj, funcname, *args, **kwargs)
             else:
                 warnings.warn(f"can't find function {func} in {obj}, propagate ends")
@@ -3467,9 +3374,9 @@ class Node(Generic[NODE]):
         Decorator to propagate a function call to the ancestors of the node in a backtracking preorder traversal.
         '''
         @functools.wraps(func)
-        def upward_preorder_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
+        def upward_preorder_propagate_wrapper(obj: Node[NODE], *args, only_this = False, **kwargs):
             funcname = get_func_name(obj, func)
-            if funcname is not None:
+            if funcname is not None and not only_this:
                 Node.__backward(obj, funcname, *args, **kwargs)
             else:
                 warnings.warn(f"can't find function {func} in {obj}, propagate ends")
@@ -3481,10 +3388,10 @@ class Node(Generic[NODE]):
         '''
         Decorator to propagate a function call to the ancestors of the node in a backtracking postorder traversal.
         '''
-        def upward_postorder_propagate_wrapper(obj: Node[NODE], *args, **kwargs):
+        def upward_postorder_propagate_wrapper(obj: Node[NODE], *args, only_this = False, **kwargs):
             funcname = get_func_name(obj, func)
             func(obj, *args, **kwargs)
-            if funcname is not None:
+            if funcname is not None and not only_this:
                 Node.__backward(obj, funcname, *args, **kwargs)
             else:
                 warnings.warn(f"can't find function {func} in {obj}, propagate ends")
@@ -3695,7 +3602,7 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
         
         The default filename for storing memory data.
     MEMORY_DATA_TYPE (type): 
-        The default data type for memory data storage (BinDict).
+        The default data type for memory data storage (FhBinDict).
     KEY_TYPE (type): 
         The type of keys used in the mapping (int).
     FILESHANDLE_TYPE (type): 
@@ -3844,7 +3751,7 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     _VDMT = TypeVar('_VDMT')
 
     MEMORY_DATA_FILE = ".datamap"
-    MEMORY_DATA_TYPE = BinDict
+    MEMORY_DATA_TYPE = FhBinDict
 
     KEY_TYPE = int
     FILESHANDLE_TYPE:type[FilesHandle] = FilesHandle
@@ -3877,11 +3784,11 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
         obj = cls._registry[identity_string]
         return obj
 
-    def identity_string(self):
+    def identity_string(self, regen = False):
         """
         see :link:`RegisterInstance.identity_string`
         """
-        return _RegisterInstance.identity_string(self)
+        return _RegisterInstance.identity_string(self, regen)
 
     def identity_name(self):
         """
@@ -3929,7 +3836,7 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
         * see :link:`DataMapping.__init__` for more information.
         '''
         if isinstance(parent_like, str):
-            self._top_directory = parent_like
+            self._top_directory = os.path.join(parent_like, mapping_name)
         elif isinstance(parent_like, DatasetNode):
             self._top_directory = os.path.join(parent_like.data_path, mapping_name)
             # assert is_subpath(self._top_directory, parent_like.top_directory), f"{self.top_directory} is not inside {parent_like.top_directory}"
@@ -4058,6 +3965,7 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
     
     def _rebuild_done(self):
         self._reset_MemoryData_modified()
+        self.relugar_MemoryData()
         self.save(True)
 
     @property
@@ -4279,6 +4187,7 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
         """
         if self.MemoryData_modified or force:
             self.make_path()
+            print("\r", f"saving MemoryData: {self.MemoryData_path}", end="")
             self.__class__.save_memory_func(self.MemoryData_path, self.save_preprecess())
             self._reset_MemoryData_modified()
 
@@ -4325,6 +4234,9 @@ class DataMapping(IOStatusManager, _RegisterInstance["DataMapping"], Node["DataM
 
     @abstractmethod
     def merge_MemoryData(self, MemoryData:dict):
+        pass
+
+    def relugar_MemoryData(self):
         pass
 
     def sort(self):
@@ -4694,7 +4606,7 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
             return False
 
     @property
-    def _FCMemoryData(self)  -> BinDict[int, FHT]:
+    def _FCMemoryData(self)  -> FhBinDict[FHT]:
         return self.files_cluster.MemoryData # type: ignore
     # endregion properties
 
@@ -4913,12 +4825,19 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
         if core_func is not None:
             if self.multi_files and self.__class__.__name__ == "_write":
                 core_values = self.split_value_as_mutil(*core_values) # split core values to multiple values, because `core_values` contains the datas for mutil files 
-            rlt = self.execute_core_func(core_func, path, *core_values) # execute core func
+            if IO_TEST_MODE and not self.READ:
+                self.print_IO_TEST(core_func, path, *core_values)
+                rlt = None
+            else:
+                rlt = self.execute_core_func(core_func, path, *core_values) # execute core func
             if self.multi_files and self.__class__.__name__ == "_read":
                 return self.gather_mutil_results(rlt) # gather mutil results to a single result, because `rlt` contains the datas for mutil files
         else:
             raise IOMetaPriorityError("core_func is None")
-        rlt = self.inv_format_value(rlt)
+        try:
+            rlt = self.inv_format_value(rlt)
+        except:
+            raise IOMetaPriorityError("inv_format_value raises exception")
         return rlt
 
     def execute_core_func(self, core_func, *core_args, **other_paras):
@@ -4936,12 +4855,18 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
         if self.multi_files:
             rlts = []
             for i in range(len(core_args[0])):
-                rlt = core_func(*[x[i] for x in core_args], **self.core_func_binded_paras)
+                try:
+                    rlt = core_func(*[x[i] for x in core_args], **self.core_func_binded_paras)
+                except:
+                    raise IOMetaPriorityError("unexpected error while executing core_func")
                 self.core_func_hook(*[x[i] for x in core_args], **other_paras)
                 rlts.append(rlt)
             return rlts
         else:
-            rlt = core_func(*core_args, **self.core_func_binded_paras)
+            try:
+                rlt = core_func(*core_args, **self.core_func_binded_paras)
+            except:
+                raise IOMetaPriorityError("unexpected error while executing core_func")
             self.core_func_hook(*core_args)
             return rlt
 
@@ -5079,6 +5004,15 @@ class IOMeta(ABC, Generic[FCT, VDMT, FHT]):
     def is_overwriting(self, dst:int):
         return not self.files_cluster.idx_unwrited(dst)
     # endregion conditions func
+
+    def print_IO_TEST(self, core_func, path, *core_values):
+        try:
+            self.__print_io_test_count += 1 
+        except:
+            self.__print_io_test_count = 0
+        if self.__print_io_test_count % IO_TEST_PRINT_INTERNAL == 0:
+            print(f"{self.files_cluster} | {self.__class__.__name__}:  func:'{core_func}'  path:'{path}'  values:{[type(v) for v in core_values]}")
+        # raise ClusterDataIOError("skip")
 
 class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
     """
@@ -5232,7 +5166,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         # self.register_to_dataset()
 
     @property
-    def MemoryData(self) -> BinDict[int, FHT]:
+    def MemoryData(self) -> FhBinDict[FHT]:
         return self._MemoryData # type: ignore
     
     # endregion - override methods #
@@ -5331,7 +5265,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         """
         return None
     
-    def _set_fileshandle(self, data_i, fileshandle:FHT):
+    def _set_fileshandle(self, data_i, fileshandle:FHT, cover = False):
         '''
         Set the fileshandle for the given data index.
 
@@ -5343,7 +5277,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
             bool: True if the fileshandle is set successfully, False otherwise.
         '''
         assert isinstance(fileshandle, self.FILESHANDLE_TYPE), f"fileshandle must be {self.FILESHANDLE_TYPE}, not {type(fileshandle)}"
-        if fileshandle not in self.MemoryData._reverse_dict:
+        if not self.MemoryData.has_value(fileshandle) or cover:
             self.MemoryData[data_i] = fileshandle
             self._set_MemoryData_modified()
             return True
@@ -5359,8 +5293,12 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         Returns:
             object: The popped file handle.
         """
+        fh = None
         if self.has_data(data_i):
-            return self.MemoryData.pop(data_i)
+            fh = self.MemoryData.pop(data_i)
+            if fh is not None:
+                self._set_MemoryData_modified()
+        return fh
     # endregion fileshandle operation ########
 
     # region io #####
@@ -5815,7 +5753,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         
         with self.get_writer(force).allow_overwriting():
             for data_i in tqdm(data_i_list, desc=f"write {self} to file", total=len(data_i_list), leave=False):
-                fh = self.MemoryData[data_i]
+                fh = self.query_fileshandle(data_i)
                 if fh.synced or not fh.has_cache:
                     continue
                 value = fh.cache
@@ -6072,7 +6010,7 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
     def rebuild(self, force = False):
         if not self.MemoryData_modified and not force:
             return
-        # self.MemoryData.clear()
+        self.MemoryData.clear()
         paths:list[str] = self.matching_path()
         # # load the first file
         # fh = self.FILESHANDLE_TYPE.create_new_and_cover().from_path(self, paths[0])
@@ -6084,12 +6022,12 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
         #     self.FILESHANDLE_TYPE.create_new_and_cover()()
     
         for path in tqdm(paths, desc=f"rebuilding {self}", leave=False):
-            fh = self.FILESHANDLE_TYPE.create_new_and_cover().from_path(self, path)
+            fh:FilesHandle = self.FILESHANDLE_TYPE.create_new_and_cover().from_path(self, path)
             data_i = self.deformat_corename(fh.corename)
             data_i = data_i if data_i is not None else self.data_i_upper
             if fh.all_file_exist:
-                # self._set_fileshandle(data_i, fh)
-                self.MemoryData[data_i] = fh
+                self._set_fileshandle(data_i, fh, cover = True)
+                # self.MemoryData[data_i] = fh
             else:
                 self.paste_file(data_i, fh)
 
@@ -6098,23 +6036,23 @@ class FilesCluster(DataMapping[FHT, FCT, VDMT], Generic[FHT, FCT, DSNT, VDMT]):
                 self.remove(fh)
 
         self.sort()
-
-    def merge_MemoryData(self, MemoryData:BinDict[int, FHT]):
-        assert type(MemoryData) == self.MEMORY_DATA_TYPE, f"MemoryData type {type(MemoryData)} != cluster type {type(self)}"
+    
+    def merge_MemoryData(self, to_merge_MemoryData:FhBinDict[FHT]):
+        assert type(to_merge_MemoryData) == self.MEMORY_DATA_TYPE, f"MemoryData type {type(to_merge_MemoryData)} != cluster type {type(self)}"
         same_fh:list[FilesHandle] = []
-        for loaded_fh in MemoryData.values(): # TODO: imporve speed
-            if loaded_fh in self.MemoryData._reverse_dict:
-                this_fh = self.MemoryData[self.MemoryData._reverse_dict[loaded_fh]]
+        for loaded_fh in to_merge_MemoryData.values(): # TODO: imporve speed
+            if self.MemoryData.has_value(loaded_fh):
+                this_fh = self.query_fileshandle(self.MemoryData.query_value(loaded_fh))
                 assert loaded_fh.immutable_attr_same_as(this_fh), f"the fileshandle {loaded_fh} is not the same as {this_fh}"
                 # cover cache
                 this_fh.cache_proxy.cache = loaded_fh.cache_proxy.cache
                 same_fh.append(loaded_fh)
         for fh in same_fh:
-            MemoryData.pop(fh.get_key())
-        self.MemoryData.update(MemoryData)
+            to_merge_MemoryData.pop(fh.get_key(), None)
+        self.MemoryData.update(to_merge_MemoryData)
         self._set_MemoryData_modified()
 
-    def save_preprecess(self, MemoryData:BinDict[int, FHT] = None ):
+    def save_preprecess(self, MemoryData:FhBinDict[FHT] = None ):
         MemoryData = self.MemoryData if MemoryData is None else MemoryData
         to_save_dict = {item[0]: item[1].as_dict() for item in MemoryData.items()}
         return to_save_dict
@@ -6169,7 +6107,7 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
 
     MEMORY_DATA_TYPE = Table[int, str, bool]
     MEMORY_DATA_FILE = ".overview"
-    load_memory_func = JsonIO.load_json
+    load_memory_func = partial(JsonIO.load_json, format = False)
     save_memory_func = JsonIO.dump_json 
 
     # region FilesCluster override ####
@@ -6189,7 +6127,7 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
     # endregion - override new #
 
     # region - override methods #
-    def __init__(self, top_directory:Union[str, "DatasetNode"], mapping_name: str = "", *args, flag_name = "", **kwargs) -> None:
+    def __init__(self, top_directory:Union[str, "DatasetNode"], mapping_name: str = "", *args, flag_name = "", lazy = False, **kwargs) -> None:
         """
         Initializes a DatasetNode instance.
 
@@ -6212,7 +6150,7 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
         
         self.clusters_map:dict[str, FCT] = dict()
         self.child_nodes_map:dict[str, DatasetNode] = dict()
-        self.init_clusters_hook()
+        self.init_clusters_hook(lazy)
 
     @property
     def MemoryData(self) -> Table[int, str, bool]:
@@ -6535,7 +6473,7 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
             return rlt
         return cluster_use_rely_decorator_wrapper
 
-    def init_clusters_hook(self):
+    def init_clusters_hook(self, lazy):
         pass
 
     def __setattr__(self, name, value):
@@ -6706,12 +6644,31 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
             rows = [x for x in range(self.i_upper)]
             cols = [x.identity_name() for x in self.elem_clusters]
             self._MemoryData = Table(row_names = rows, col_names = cols, default_value_type = bool, row_name_type=int, col_name_type=str) # type: ignore
+            
+            i_upper = max([x.i_upper for x in self.elem_clusters])            
+            build_data_i_list = list(range(i_upper))
+            self.MemoryData.add_new_row_in_batch(build_data_i_list)
+            for data_i in tqdm(build_data_i_list, desc=f"rebuilding {self}"):
+                self.__calc_overview(data_i)
+
+    @Node.downward_postorder_propagate
+    def build_partly(self, build_data_i_list:Union[int, Iterable[int]]):
+        if len(self.elem_clusters) > 0:
             i_upper = max([x.i_upper for x in self.elem_clusters])
-            for data_i in tqdm(range(i_upper), desc=f"rebuild {self}"):
-                self.calc_overview(data_i)
+            build_data_i_list = list(set_intersect_keep_order(build_data_i_list, list(range(i_upper))))
+            self.MemoryData.add_new_row_in_batch(build_data_i_list)
+            for data_i in tqdm(build_data_i_list, desc=f"building {self}"):
+                self.__calc_overview(data_i)
 
     def merge_MemoryData(self, MemoryData:Table[int, str, bool]):
-        self.MemoryData.merge(MemoryData)
+        # self.MemoryData.merge(MemoryData)
+        self.MemoryData.update(MemoryData)
+
+    def relugar_MemoryData(self):
+        self.MemoryData.sort()
+        for row_i in list(self.MemoryData.keys()):
+            if not any(self.MemoryData.get_row(row_i).values()):
+                self.MemoryData.remove_row(row_i)
 
     def save_preprecess(self, MemoryData:Table = None ):
         MemoryData = self.MemoryData if MemoryData is None else MemoryData
@@ -6722,14 +6679,18 @@ class DatasetNode(DataMapping[dict[str, bool], DSNT, VDST], ABC, Generic[FCT, DS
         return to_save_dict
     
     def load_postprocess(self, data:dict):
-        data_info_map = self.MEMORY_DATA_TYPE(default_value_type=bool, row_name_type=int, col_name_type=str, data=data)
+        data_ = {}
+        for k, v in data.items():
+            data_[int(k)] = v
+        data_info_map = self.MEMORY_DATA_TYPE(default_value_type=bool, row_name_type=int, col_name_type=str, data=data_)
         return data_info_map
 
-    def calc_overview(self, data_i):
-        self.MemoryData.add_row(data_i, exist_ok=True)        
+    def __calc_overview(self, data_i):
+        to_update:dict[str, bool] = {}
         for cluster in self.elem_clusters:
-            self.MemoryData[data_i, cluster.identity_name()] = cluster.has(data_i)
-
+            to_update[cluster.identity_name()] = cluster.has(data_i)
+        self._MemoryData._GET_DATA_UNSAFELY()[data_i] = to_update
+            
     def _clear_empty_row(self, data_i:int, force = False):
         if (data_i in self.MemoryData) and (not any(self.MemoryData.get_row(data_i).values()) or force):
             self.MemoryData.remove_row(data_i, not_exist_ok=True)

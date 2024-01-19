@@ -55,7 +55,8 @@ class ObjectPcd(MeshMeta):
             obj_geo.mesh.compute_triangle_normals()
         sence_center_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=self.mesh.get_center())  #场景中心标架
         sence_robot_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=40, origin=[0,0,0])                  #原点标架
-        showing_geometrys +=  [obj_geo.mesh, sence_center_frame, sence_robot_frame]
+        # showing_geometrys +=  [obj_geo.mesh, sence_center_frame, sence_robot_frame]
+        showing_geometrys +=  [obj_geo.mesh]
 
         if gripper:
             gripper_posture = self.posture_WCS * gripper_posture_O # * Posture(tvec=[0,0,-gripper.finger_gripping_bottom[2]])
@@ -70,6 +71,27 @@ class ObjectPcd(MeshMeta):
         for ggp in self.candi_coord_parameter:
             print(ggp[7])
             self.draw(gripper, Posture(rvec=ggp[:3], tvec=ggp[3:6]), ggp[6])
+
+    def draw_all_in_one(self, gripper:MyThreeFingerGripper):
+        '''
+        绘制所有夹持姿态
+        '''
+        showing_geometrys = []
+        for ggp in self.candi_coord_parameter:
+            posture = Posture(rvec=ggp[:3], tvec=ggp[3:6])
+
+            gripper_o3d_geo = gripper.render(posture, ggp[6])
+            # for geo in gripper_o3d_geo:
+            #     # mat = np.dot(self.posture_WCS.trans_mat, mat)
+            #     geo.transform(posture.trans_mat) 
+
+            showing_geometrys.extend(gripper_o3d_geo)
+        
+        self.mesh.compute_triangle_normals()
+        showing_geometrys.append(self.mesh)
+
+        o3d.visualization.draw_geometries(showing_geometrys, width=1280, height=720)
+
 
     def draw(self, gripper:MyThreeFingerGripper = None, gripper_posture_O:Posture = None, u = None):
         '''

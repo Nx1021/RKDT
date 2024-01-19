@@ -1375,11 +1375,8 @@ class CandiCoordCalculator():
         '''        
         self.modelinfo = modelpcd
         self.gripper = gripper
-        self.friction_angle = friction_angle
-        h_ratio = 3**(1/2)/2
-        self.h_friction_angle = np.arcsin(h_ratio*np.sin(self.friction_angle))
-        self.v_friction_angle = np.arcsin((1 - h_ratio**2) ** (1/2) * np.sin(self.friction_angle))
-
+        self.set_friction_angle(friction_angle)
+        
         if voxel_size == -1:
             voxel_size = int(self.modelinfo.pointcloud_size.min() / 30) + 1
         self.voxel_size = voxel_size
@@ -1396,6 +1393,12 @@ class CandiCoordCalculator():
 
         self.fc_evaluator = ForceClosureEvaluator(self.friction_angle, self.h_friction_angle, self.v_friction_angle, 25, self.gravity)
         self.fc_evaluator._modelinfo = self.modelinfo
+
+    def set_friction_angle(self, friction_angle):
+        h_ratio = 3**(1/2)/2
+        self.friction_angle = friction_angle
+        self.h_friction_angle = np.arcsin(h_ratio*np.sin(self.friction_angle))
+        self.v_friction_angle = np.arcsin((1 - h_ratio**2) ** (1/2) * np.sin(self.friction_angle))
 
     def evaluate(self, grapscoords:list[GraspCoord]):
         _scale = 100
@@ -1613,6 +1616,8 @@ class CandiCoordCalculator():
         ### 显示结果（可选的）
         if show:
             self.modelinfo.draw_all(self.gripper)
+
+        return global_grasp_poses
 
     def _voxelize_test(self):
         start_time = time.time()

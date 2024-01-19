@@ -40,7 +40,7 @@ if __name__ == "__main__":
         14: "20230902185318branch_ldt_14.pt"
     }
     # torch.cuda.set_device("cuda:0")
-    for i in [12]:
+    for i in [0, 1, 3, 4, 5, 7, 8, 9, 11, 12, 13, 14]:
         setup_paras = load_yaml(cfg_file)["setup"]
 
         sys = platform.system()
@@ -50,7 +50,8 @@ if __name__ == "__main__":
         elif sys == "Linux":
             batch_size = 32 # * torch.cuda.device_count()
             # model = torch.nn.DataParallel(model)
-        setup_paras["ldt_branches"] = {i: f"linemod_mix/{weights[i]}"}
+        # setup_paras["ldt_branches"] = {i: f"linemod_mix/{weights[i]}"}
+        setup_paras["ldt_branches"] = {i: ""}
         setup_paras["batch_size"] = batch_size
         setup_paras["sub_data_dir"] = f"linemod_mix/{str(i).rjust(6, '0')}"
 
