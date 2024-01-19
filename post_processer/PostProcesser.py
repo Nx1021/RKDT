@@ -402,6 +402,10 @@ class ObjectTrace():
     def stable(self):
         return self.cur_state == TracePoint.STATE_STILL
     
+    def get_stable_score(self):
+        length = 30
+        return len([tp for tp in self.trace[-length:] if tp.state == TracePoint.STATE_STILL]) / length
+
     @property
     def move(self):
         return self.cur_state == TracePoint.STATE_MOVE
@@ -1263,7 +1267,8 @@ class PostProcesser():
                                           image_posture.image_size, 
                                           last_valid_trace_point.posture, 
                                           trace.stable,
-                                          trace_name) # type:ignore
+                                          trace_name,
+                                          stable_score = trace.get_stable_score()) # type:ignore
                         image_posture.obj_list.append(objp)
 
             image_posture_list.append(image_posture)

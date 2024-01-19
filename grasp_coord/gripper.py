@@ -81,10 +81,15 @@ class MyThreeFingerGripper(Gripper):
         max_grasp_depth = self.finger_length + extra_h
         return min(max_grasp_depth, self.finger_gripping_center[2])
 
-    def get_grasp_center(self, object_trans_mat, gripper_trans_mat):
-        center_G = np.array([0, 0, self.finger_gripping_bottom[2], 1])
-        center_R = np.linalg.multi_dot((object_trans_mat, gripper_trans_mat, center_G))
-        return center_R
+    def get_grasp_center(self, posture_WCS:Posture = None, u = None):
+        posture_WCS = self.posture_WCS if posture_WCS is None else posture_WCS
+        u = self.u if u is None else u
+        self.set_u(u)
+        trans_mat = self._get_finger_trans_mat(u)
+        center = trans_mat[0].dot(np.array([0,0,0,1]))
+        center[0:2] = 0.0
+        center = posture_WCS * center
+        return center
 
     def calc_finger_trans_mat(self, u):
         angle = u * np.pi/3

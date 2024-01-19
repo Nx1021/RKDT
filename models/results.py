@@ -462,7 +462,7 @@ class LandmarkDetectionResult():
         return landmarks
     
 class ObjPosture():
-    def __init__(self, landmarks, bbox_n, class_id, image_size, posture:Optional[Posture]=None, stable:bool = True, name = ""):
+    def __init__(self, landmarks, bbox_n, class_id, image_size, posture:Optional[Posture]=None, stable:bool = True, name = "", stable_score = 0.0):
         """
         初始化ObjPosture对象。
 
@@ -480,6 +480,7 @@ class ObjPosture():
 
         self.image_size = image_size
         self.stable = stable
+        self.stable_score:float = stable_score
 
         self.name = name
 
