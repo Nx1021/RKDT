@@ -263,6 +263,82 @@ def calc_Z_rot_angle_to_horizontal(T_ex) -> np.ndarray:
         theta = theta + np.pi
     return theta
 
+def calc_equivalent_poses_of_symmetrical_objects(T_ex:np.ndarray, symmetrical_axis, symmetrical_offset, overlap_num = -1, auxiliary_axis = None) -> np.ndarray:
+    '''
+    brief
+    ----
+    calculate the equivalent poses of symmetrical objects
+
+    parameters
+    ----
+    T_ex: np.ndarray
+        4x4, extrinsic matrix of the object
+    symmetrical_axis: np.ndarray
+        3, the axis of symmetry
+    symmetrical_offset: float
+        the offset of symmetry
+    overlap_num: int
+        the number of overlap poses, -1 means all poses like a circle, 1 means only one pose
+    '''
+    # 得到新的外参
+    R_ex = T_ex[:3, :3]
+    
+    symmetrical_axis = symmetrical_axis / np.linalg.norm(symmetrical_axis)
+
+    if auxiliary_axis is None:
+        auxiliary_axis = np.cross(symmetrical_axis, np.array([0, 1.0, 0.0]))
+    else:
+        auxiliary_axis = auxiliary_axis / np.linalg.norm(auxiliary_axis)
+    assert np.sum(symmetrical_axis * auxiliary_axis) < 1e-5, "symmetrical_axis and auxiliary_axis should be vertical"
+    
+    symmetrical_axis_inC = R_ex.dot(np.array([0, 0, 1.0]))
+    auxiliary_axis_inC   = R_ex.dot(auxiliary_axis)
+
+    target_plane = np.cross(symmetrical_axis_inC, np.array([0, 0, 1.0]))
+    rotate_plane = symmetrical_axis_inC
+
+    plane_cross_line = np.cross(target_plane, rotate_plane)
+    plane_cross_line = plane_cross_line / np.linalg.norm(plane_cross_line)
+    if np.sum(plane_cross_line * np.array([0.0, 0.0, 1.0])) < 0:
+        plane_cross_line = - plane_cross_line # make sure the direction of plane_cross_line is the same as [0, 0, 1.0]
+    
+    if overlap_num == -1:
+        rot_angle = np.arccos(np.sum(auxiliary_axis_inC*plane_cross_line))
+        print(rot_angle)
+    else:
+        nominal_rot_angle = np.arccos(np.sum(auxiliary_axis_inC, plane_cross_line))
+        candi_rot_angle = np.linspace(0, 2*np.pi, overlap_num+1, endpoint=False)
+        rot_angle = candi_rot_angle[np.argmin(np.abs(candi_rot_angle - nominal_rot_angle))]
+
+    if np.isnan(rot_angle):
+        return T_ex
+
+    new_T = Posture(tvec = T_ex[:3, 3] + symmetrical_offset) *\
+            Posture(rvec = -symmetrical_axis_inC * rot_angle, tvec = np.zeros(3)) *\
+            Posture(tvec = -T_ex[:3, 3] - symmetrical_offset) *\
+            Posture(homomat = T_ex)
+    
+    ###
+    # # 绘制
+    # frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=100.0)
+
+    # frame_Obj = o3d.geometry.TriangleMesh.create_coordinate_frame(size=120.0)
+    # T_ex_ = T_ex.copy()
+    # T_ex_[:3, 3] = 0
+    # frame_Obj.transform(T_ex_)
+    # frame_newObj = o3d.geometry.TriangleMesh.create_coordinate_frame(size=140.0)
+    # new_T_ = new_T.trans_mat.copy()
+    # new_T_[:3, 3] = 0
+    # frame_newObj.transform(new_T_)
+
+    # box = o3d.geometry.TriangleMesh.create_box(width=1, height=100, depth=100)
+
+    # o3d.visualization.draw_geometries([frame, frame_Obj, frame_newObj, box], width=800, height=600)
+    ###
+
+    return new_T.trans_mat
+
+
 class PnPSolver():
     '''
     解PnP
