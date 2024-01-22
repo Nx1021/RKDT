@@ -63,13 +63,13 @@ class MyThreeFingerGripper(Gripper):
     夹爪空间，通过定义若干参数来表示夹爪的运行空间，包括：夹持区域、干涉区域、无关区域
     坐标系与机器人末端坐标系重合
     '''
-    def __init__(self, finger_num=3, finger_length=40, finger_width=10, finger_gripping_length=20, finger_gripping_width=10, finger_thickness=3) -> None:
+    def __init__(self, finger_num=3, finger_length=40, finger_width=10, finger_gripping_length=20, finger_gripping_width=10, finger_thickness=9) -> None:
         self.rod = 40
         self.center_distance = 15   
         self.z_offset = 213.64     
         self.rot_bias = 0.0 # np.pi / 6
         finger_length = 47
-        finger_width = 1
+        finger_width = 20
         finger_gripping_length = 33.5
         finger_gripping_width = 18
         super().__init__(finger_num, finger_length, finger_width, finger_gripping_length, finger_gripping_width, finger_thickness)

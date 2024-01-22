@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import math
 import torch
 import os
+import open3d as o3d
 import time
 from torchvision.ops import generalized_box_iou
 
@@ -18,7 +19,7 @@ from models.utils import tensor_to_numpy, normalize_points, denormalize_points
 from utils.yaml import load_yaml
 from scipy.optimize import linear_sum_assignment
 
-from MyLib.posture_6d.derive import draw_one_mask
+from posture_6d.derive import draw_one_mask
 
 from typing import TypedDict, Union, Callable, Optional, Iterable, TypeVar, overload, Any, Sequence, Literal
 
@@ -1066,6 +1067,7 @@ class PostProcesser():
         self._use_desktop_assumption = False
         self._use_bbox_area_assumption = True
         self._use_fix_z = True
+        self.depth_scale = 1.0
 
         # self.objs:list[ObjPredSequence] = []
         self.trace_manager = ObjectTraceManager()
@@ -1214,13 +1216,19 @@ class PostProcesser():
             return posture
 
     def __refine_posture_by_depth(self, depth:np.ndarray, bbox:np.ndarray, class_id:int, raw_posture:Posture):
-        self.depth_scale = 0.5 # mm
-
-        points = self.mesh_manager.get_model_pcd(class_id)
-        mesh_meta = self.mesh_manager.export_meta(class_id)
-        points = points[np.linspace(0, len(points) - 1, 1000, dtype=np.int32)] # sample [N, 3]
-        points_in_C = raw_posture * points # [N, 3]
-        min_dist = np.min(points_in_C[:, 2])
+        try:
+            self.__meshmeta_for_depth_refine
+        except AttributeError:
+            self.__meshmeta_for_depth_refine = {}
+            
+        if class_id not in self.__meshmeta_for_depth_refine:
+            mesh_meta = self.mesh_manager.export_meta(class_id)
+            # 抽样其中的2500个点
+            mesh_meta.mesh.vertices = o3d.utility.Vector3dVector(
+                np.array(mesh_meta.mesh.vertices)[np.linspace(0, len(mesh_meta.mesh.vertices) - 1, 5000, dtype=np.int32)])
+            self.__meshmeta_for_depth_refine[class_id] = mesh_meta
+        else:
+            mesh_meta = self.__meshmeta_for_depth_refine[class_id]
 
         bbox = np.array([np.floor(bbox[0]), np.floor(bbox[1]), np.ceil(bbox[2]), np.ceil(bbox[3])]).astype(np.int32)
         ref_depth = depth[bbox[1]:bbox[3], bbox[0]:bbox[2]] * self.depth_scale # [h, w]
@@ -1230,6 +1238,7 @@ class PostProcesser():
         raw_depth, orig_proj = draw_one_mask(mesh_meta, raw_posture, self.pnpsolver.intr, tri_mode=False)
         raw_depth[raw_depth == self.pnpsolver.intr.max_depth] = 0
         raw_depth = raw_depth[bbox[1]:bbox[3], bbox[0]:bbox[2]] # [h, w]
+        raw_depth = raw_depth.astype(np.float32)
 
         if raw_depth.size == 0:
             return raw_posture
