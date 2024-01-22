@@ -443,12 +443,12 @@ class VocFormat_6dPosture(PostureDataset[UnifiedFileCluster, "VocFormat_6dPostur
         self.visib_fracts_element.set_io_ctrl_strategy( IO_CTRL_STRATEGY.CACHE_IDPNDT)
         # self.labels_elements.set_io_ctrl_strategy(      IO_CTRL_STRATEGY.CACHE_IDPNDT)
 
-        src_dataset.extr_vecs_elements.file_to_cache(force = force)
-        src_dataset.intr_elements.file_to_cache(force = force)
-        src_dataset.depth_scale_elements.file_to_cache(force = force)
-        src_dataset.bbox_3ds_elements.file_to_cache(force = force)
-        src_dataset.landmarks_elements.file_to_cache(force = force)
-        src_dataset.visib_fracts_element.file_to_cache(force = force)
+        # src_dataset.extr_vecs_elements.file_to_cache(force = force)
+        # src_dataset.intr_elements.file_to_cache(force = force)
+        # src_dataset.depth_scale_elements.file_to_cache(force = force)
+        # src_dataset.bbox_3ds_elements.file_to_cache(force = force)
+        # src_dataset.landmarks_elements.file_to_cache(force = force)
+        # src_dataset.visib_fracts_element.file_to_cache(force = force)
 
         self.copy_from(src_dataset, cover = cover, force = force)
 

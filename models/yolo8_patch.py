@@ -11,6 +11,7 @@ from ultralytics.yolo.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, R
 from ultralytics.yolo.utils.checks import check_version
 TORCH_2_0 = check_version(torch.__version__, minimum='2.0')
 import shutil
+import numpy as np
 import ultralytics.yolo.engine.predictor as _predictor
 import ultralytics.yolo.engine.trainer as _trainer
 import ultralytics.yolo.engine.validator as _validator
@@ -68,12 +69,45 @@ def _select_device(device='', batch=0, newline=False, verbose=True):
         LOGGER.info(s if newline else s.rstrip())
     return torch.device(arg)
 
-def get_MyTrainer(weights_copy_path):
+def get_MyTrainer(weights_copy_path, active_class_id = None):
     class MyBaseTrainer(DetectionTrainer):
         def final_eval(self):
             rlt = super().final_eval()
             shutil.copy(self.best, weights_copy_path)            
             return rlt
+        
+        def build_dataset(self, img_path, mode='train', batch=None):
+            dataset = super().build_dataset(img_path, mode, batch)
+            if active_class_id is None:
+                return dataset
+            else:
+                assert isinstance(active_class_id, list)
+                assert all([isinstance(x, int) for x in active_class_id])
+                not_empty_indices = []
+                for lb_i, lb in enumerate(dataset.labels):
+                    org_cls:np.ndarray = lb["cls"]
+                    org_cls_list:list = org_cls.reshape(-1).astype(np.int32).tolist()
+
+                    keep_cls_id = np.array([x for x in org_cls_list if x in active_class_id], dtype=np.float32).reshape(-1, 1)
+                    keep_cls_idx = [i for i, x in enumerate(org_cls_list) if x in active_class_id]
+
+                    keep_bbox = np.array(lb["bboxes"][keep_cls_idx], dtype=np.float32)
+
+                    lb["cls"] = keep_cls_id
+                    lb["bboxes"] = keep_bbox
+
+                    if len(keep_cls_id) > 0:
+                        not_empty_indices.append(lb_i)
+                
+                dataset.im_files = [dataset.im_files[i] for i in not_empty_indices]
+                dataset.im_hw = [dataset.im_hw[i] for i in not_empty_indices]
+                dataset.im_hw0 = [dataset.im_hw0[i] for i in not_empty_indices]
+                dataset.ims = [dataset.ims[i] for i in not_empty_indices]
+                dataset.label_files = [dataset.label_files[i] for i in not_empty_indices]
+                dataset.labels = [dataset.labels[i] for i in not_empty_indices]
+                dataset.npy_files = [dataset.npy_files[i] for i in not_empty_indices]
+
+                return dataset
     return MyBaseTrainer
 
 def img2label_paths(img_paths):

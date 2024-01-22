@@ -41,7 +41,8 @@ def setup(
         flow_file:str = f"train_flow.yaml",
         server_dataset_dir = "",
         remark = "",
-        detection_base_weight = None):
+        detection_base_weight = None,
+        detection_active_class_id = None):
     ### input check
     if isinstance(dataset_format, str):
         _globals = globals()
@@ -163,7 +164,7 @@ def setup(
         cfg = load_yaml(yolo_cfg_file)
         dataset_cfg = load_yaml(data_cfg_file)
         weights_copy_path = yolo_weight_path #os.path.join(WEIGHTS_DIR, DATASET, SERIAL + "_best.pt")
-        TASK_MAP['detect'][1] = yolo8_patch.get_MyTrainer(weights_copy_path)
+        TASK_MAP['detect'][1] = yolo8_patch.get_MyTrainer(weights_copy_path, detection_active_class_id)
 
         if detection_base_weight is None:
             detection_base_weight = f"{SCRIPT_DIR}/weights/yolov8l.pt"

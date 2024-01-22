@@ -20,15 +20,16 @@ def _get_sub_log_dir(type):
     return f"{LOGS_DIR}/{type.__name__}_logs/"
 
 try:
-    import MyLib.posture_6d
-    sys.path.insert(0, MyLib.__path__[0])
-    shutil.rmtree(f"{SCRIPT_DIR}/posture_6d/core")
-    shutil.copytree(MyLib.posture_6d.__path__[0] + "/core", f"{SCRIPT_DIR}/posture_6d/core")
-    shutil.rmtree(f"{SCRIPT_DIR}/posture_6d/data")
-    shutil.copytree(MyLib.posture_6d.__path__[0] + "/data", f"{SCRIPT_DIR}/posture_6d/data")
-    shutil.copy(MyLib.posture_6d.__path__[0] + "/__init__.py", f"{SCRIPT_DIR}/posture_6d/__init__.py")
-    shutil.copy(MyLib.posture_6d.__path__[0] + "/derive.py", f"{SCRIPT_DIR}/posture_6d/derive.py")
-    shutil.copy(MyLib.posture_6d.__path__[0] + "/metric.py", f"{SCRIPT_DIR}/posture_6d/metric.py")
+    # import MyLib.posture_6d
+    # sys.path.insert(0, MyLib.__path__[0])
+    # shutil.rmtree(f"{SCRIPT_DIR}/posture_6d/core")
+    # shutil.copytree(MyLib.posture_6d.__path__[0] + "/core", f"{SCRIPT_DIR}/posture_6d/core")
+    # shutil.rmtree(f"{SCRIPT_DIR}/posture_6d/data")
+    # shutil.copytree(MyLib.posture_6d.__path__[0] + "/data", f"{SCRIPT_DIR}/posture_6d/data")
+    # shutil.copy(MyLib.posture_6d.__path__[0] + "/__init__.py", f"{SCRIPT_DIR}/posture_6d/__init__.py")
+    # shutil.copy(MyLib.posture_6d.__path__[0] + "/derive.py", f"{SCRIPT_DIR}/posture_6d/derive.py")
+    # shutil.copy(MyLib.posture_6d.__path__[0] + "/metric.py", f"{SCRIPT_DIR}/posture_6d/metric.py")
+    pass
 except ModuleNotFoundError:
     pass
 

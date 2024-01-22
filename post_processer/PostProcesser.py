@@ -18,7 +18,7 @@ from models.utils import tensor_to_numpy, normalize_points, denormalize_points
 from utils.yaml import load_yaml
 from scipy.optimize import linear_sum_assignment
 
-from MyLib.posture_6d.derive import draw_one_mask
+from posture_6d.derive import draw_one_mask
 
 from typing import TypedDict, Union, Callable, Optional, Iterable, TypeVar, overload, Any, Sequence, Literal
 

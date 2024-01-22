@@ -716,9 +716,12 @@ class IOStatusManager():
             return 
         assert log_type in self.LOG_KN, f"log_type must be in {self.LOG_KN}"
         file_path = self.get_writing_mark_file()
-        with open(file_path, 'a') as file:
-            line = f"{log_type}, {src}, {dst}, {type(value)}\n"
-            file.write(line)
+        try:
+            with open(file_path, 'a') as file:
+                line = f"{log_type}, {src}, {dst}, {type(value)}\n"
+                file.write(line)
+        except:
+            pass
     # endregion mark file ###
 
     # region IOStatus ###

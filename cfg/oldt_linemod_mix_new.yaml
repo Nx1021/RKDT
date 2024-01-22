@@ -6,15 +6,15 @@ yolo_override:
   mode: predict  # YOLO mode, i.e. train, val, predict, export, track, benchmark
 
   # Train settings -------------------------------------------------------------------------------------------------------
-  model: E:\shared\code\OLDT/weights\linemod_mix\000000_best.pt                 # path to model file, i.e. yolov8n.pt, yolov8n.yaml
-  data: ./datasets/linemod_mix.yaml # path to data file, i.e. coco128.yaml
+  model: /home/nerc-ningxiao/share/code/OLDT/weights/linemod_mix_new/best.pt        # path to model file, i.e. yolov8n.pt, yolov8n.yaml
+  data: ./datasets/linemod_mix_new.yaml # path to data file, i.e. coco128.yaml
   verbose: false  # whether to print verbose output
 
 ### setup
 setup:
-  sub_data_dir: linemod_mix/000006
+  sub_data_dir: linemod_mix_new/000006
   ldt_branches:
-    6: linemod_mix/20230823005717branch_ldt_06.pt
+    6: linemod_mix_new/20230823005717branch_ldt_06.pt
   batch_size: 4
   start_epoch: 1
   dataset_format: VocFormat_6dPosture
@@ -30,7 +30,7 @@ use_variable_tokennum: false
 normalize_before: true
 landmark_num: 24
 decoder_num_queries: 96
-transformer_d: 192 # 256
+transformer_d: 256 # 256
 input_d: 256
 calc_intermediate: false
 
