@@ -63,13 +63,13 @@ class MyThreeFingerGripper(Gripper):
     夹爪空间，通过定义若干参数来表示夹爪的运行空间，包括：夹持区域、干涉区域、无关区域
     坐标系与机器人末端坐标系重合
     '''
-    def __init__(self, finger_num=3, finger_length=40, finger_width=10, finger_gripping_length=20, finger_gripping_width=10, finger_thickness=3) -> None:
+    def __init__(self, finger_num=3, finger_length=40, finger_width=10, finger_gripping_length=20, finger_gripping_width=10, finger_thickness=9) -> None:
         self.rod = 40
         self.center_distance = 15   
         self.z_offset = 213.64     
         self.rot_bias = 0.0 # np.pi / 6
         finger_length = 47
-        finger_width = 1
+        finger_width = 20
         finger_gripping_length = 33.5
         finger_gripping_width = 18
         super().__init__(finger_num, finger_length, finger_width, finger_gripping_length, finger_gripping_width, finger_thickness)
@@ -81,10 +81,15 @@ class MyThreeFingerGripper(Gripper):
         max_grasp_depth = self.finger_length + extra_h
         return min(max_grasp_depth, self.finger_gripping_center[2])
 
-    def get_grasp_center(self, object_trans_mat, gripper_trans_mat):
-        center_G = np.array([0, 0, self.finger_gripping_bottom[2], 1])
-        center_R = np.linalg.multi_dot((object_trans_mat, gripper_trans_mat, center_G))
-        return center_R
+    def get_grasp_center(self, posture_WCS:Posture = None, u = None):
+        posture_WCS = self.posture_WCS if posture_WCS is None else posture_WCS
+        u = self.u if u is None else u
+        self.set_u(u)
+        trans_mat = self._get_finger_trans_mat(u)
+        center = trans_mat[0].dot(np.array([0,0,0,1]))
+        center[0:2] = 0.0
+        center = posture_WCS * center
+        return center
 
     def calc_finger_trans_mat(self, u):
         angle = u * np.pi/3

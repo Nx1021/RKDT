@@ -2,12 +2,13 @@ from .gripper import MyThreeFingerGripper
 from .object_pcd import ObjectPcd, create_ObjectPcd_from_file
 
 from posture_6d.core.posture import Posture
+from posture_6d.core.utils import JsonIO
 import numpy as np
 import open3d as o3d
 import copy
 import time
 
-from typing import Union
+from typing import Union, Any, Optional
 
 from models.results import ImagePosture, ObjPosture
 from utils.match_with_threshold import perform_matching
@@ -46,6 +47,8 @@ class Scene:
         self.cfg = load_yaml(cfg) if cfg is not None else {}
 
         # self.GCS = Posture(rvec = np.array(0,0,0), tvec = np.array(400,0,0)) #抓取坐标系
+        self.log_update = False
+        self.logs = {}
         
     def set_gripper(self, gripper):
         self.gripper = gripper
@@ -80,7 +83,7 @@ class Scene:
         success: bool
         grasp_posture:Posture
         '''
-        angle_threshold = 30
+        angle_threshold = 45
         if obj.candi_coord_parameter is None:
             return False, np.zeros((0,7))
         ### filter the directions
@@ -98,21 +101,24 @@ class Scene:
             parameter = obj.candi_coord_parameter[ok_index[score_argsort]]
             return True, parameter[:, :7]
 
-    def calc_grasp_posture(self, selected_obj: ObjectPcd = None):
+    def calc_grasp_posture(self, selected_obj: Optional[ObjectPcd] = None, return_near_surf_pointcloud_dict = False):
         '''
         计算抓取位置，默认从全局开始抓取，也可以抓取指定的物体
         若不存在合适的抓取位置，将返回None
         '''
+        extra_info:dict[str, Any] = {}
+
         if selected_obj is None:
             ### 按照到中心位置排序
             sorted_object_list = sorted(self.object_list, key = lambda x:np.linalg.norm(x.posture_WCS.tvec - self.scene_center), reverse = True) #从大到小
         elif isinstance(selected_obj, ObjectPcd):
             sorted_object_list = [selected_obj]
         else:
-            return False, None, None
+            return False, None, None, extra_info
         ### 以各初始位置计算新位置
-        obj_centers = np.array([o.posture_WCS.tvec for o in self.object_list if o is not selected_obj]).reshape(-1, 3)
-        obj_model_diameters = np.array([o.diameter for o in self.object_list if o is not selected_obj]).reshape(-1)
+        other_object_list = [o for o in self.object_list if o is not selected_obj]
+        obj_centers = np.array([o.posture_WCS.tvec for o in other_object_list]).reshape(-1, 3)
+        obj_model_diameters = np.array([o.diameter for o in other_object_list]).reshape(-1)
         for obj in sorted_object_list:
             success, posture_para_list = self.choose_grasp_posture(obj)
             if len(obj_centers) == 0:
@@ -122,7 +128,10 @@ class Scene:
                     tvec = paras[3:6]
                     u = paras[6]
                     grasp_posture = Posture(homomat =  obj.posture_WCS.trans_mat.dot(Posture(rvec=rvec, tvec=tvec).trans_mat))
-                    return True, grasp_posture, u
+                    if return_near_surf_pointcloud_dict:
+                        extra_info["near_surf_pointcloud_dict"] = {}
+
+                    return True, grasp_posture, u, extra_info
                 else:
                     continue
             ### 选取附近的物体
@@ -132,12 +141,16 @@ class Scene:
             if len(near_index )== 0:
                 near_surf_pointcloud = np.zeros((0,3))
             else:
-                near_surf_pointcloud = np.vstack([self.object_list[i].pcd_WCS for i in near_index])            
+                near_surf_pointcloud = np.vstack([other_object_list[i].pcd_WCS for i in near_index])            
             if success:
-                for paras in posture_para_list:
+                grasp_posture_list:list[Posture] = [None for _ in range(len(posture_para_list))]
+                _scores:list[float] = [0.0 for _ in range(len(posture_para_list))]
+                if return_near_surf_pointcloud_dict:
+                    extra_info["near_surf_pointcloud_dict"] = {other_object_list[i].class_id: other_object_list[i].pcd_WCS for i in near_index}
+                for para_i, paras in enumerate(posture_para_list):
                     rvec = paras[:3]
                     tvec = paras[3:6]
-                    u = paras[6]
+                    u:float = paras[6]
                     self.gripper.set_u(u)
                     posture_GinO = Posture(rvec=rvec, tvec=tvec)
                     # near_surf_pointcloud = near_surf_pointcloud[np.linalg.norm(near_surf_pointcloud[:, :3] - grasp_center_R[:3], axis=-1) < gripper_r]
@@ -150,9 +163,19 @@ class Scene:
                     if interference_num/len(interference_array) > 0.01 and interference_num > 5:
                         continue
                     else:
+                        # 夹持点距离其他点的距离
                         grasp_posture = Posture(homomat =  obj.posture_WCS.trans_mat.dot(Posture(rvec=rvec, tvec=tvec).trans_mat))
-                        return True, grasp_posture, u
-        return False, None, None 
+                        grasp_posture_list[para_i] = grasp_posture
+                        center = self.gripper.get_grasp_center(grasp_posture)
+                        dist = np.linalg.norm(near_surf_pointcloud - center, axis=-1)
+                        min_dist = np.min(dist) if len(dist) > 0 else 0
+                        _scores[para_i] += np.clip(min_dist, 0, 100) / 100
+                grasp_posture = grasp_posture_list[np.argmax(_scores)]
+                if grasp_posture is None:
+                    return False, None, None, extra_info
+                else:
+                    return True, grasp_posture, u, extra_info
+        return False, None, None, extra_info
 
     def show_scene(self):
         showing_geometrys = []
@@ -204,7 +227,27 @@ class Scene:
                     self.remove_object(obj)
                 for obj in new[class_id]:
                     self.add_object(create_ObjectPcd_from_file(class_id), obj)
+    
+    def log_scene(self, grasp:tuple[np.ndarray, float, int] = None):
+        log_i = len(self.logs)
 
+        object_info = {}
+
+        for obj in self.object_list:
+            id_ = obj.class_id
+            posture = obj.posture_WCS.trans_mat
+            object_info[id_] = posture
+        
+        if grasp is None:
+            self.logs[log_i] = {"obj_list": object_info, "grasp_posture": None, "grasp_u": None, "grasp_obj_id": None}
+        else:
+            self.logs[log_i] = {"obj_list": object_info, "grasp_posture": grasp[0], "grasp_u": grasp[1], "grasp_obj_id": grasp[2]}
+
+    def save_log(self, path):
+        JsonIO.dump_json(path, self.logs)
+
+    def load_log(self, path):
+        self.logs = JsonIO.load_json(path)
 
 
 class GraspManipulator():

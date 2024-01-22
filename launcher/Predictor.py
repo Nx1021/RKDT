@@ -438,12 +438,12 @@ class OLDTPredictor(Launcher):
     def calc_error_from_imtermediate(self):
         pass
 
-    def predict_single_image(self, image):
+    def predict_single_image(self, image, depth = None):
         with torch.no_grad():
             inputs:list[cv2.Mat] = self.preprocess(image)
             # inputs = torch.from_numpy(np.expand_dims(preprocessed_image, axis=0)).to(device)
             predictions = self.inference(inputs)
-            processed_prediction:ImagePosture = self.postprocess(inputs, predictions)[0]
+            processed_prediction:ImagePosture = self.postprocess(inputs, predictions, depths = [depth])[0]
 
         return processed_prediction
 
