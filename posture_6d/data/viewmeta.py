@@ -661,13 +661,16 @@ class ViewMeta():
             masks = np.stack(list(self.masks.values()))
             mask = np.sum(masks.astype(np.float32) * 0.2, axis=0).astype(np.uint8)
             mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+        else:
+            mask = 0
+        
+        if self.bbox_2d is not None:
             # bbox_2d
             for bbox_2d in self.bbox_2d.values():
                 plt.gca().add_patch(plt.Rectangle((bbox_2d[0], bbox_2d[1]), 
                                                 bbox_2d[2] - bbox_2d[0], bbox_2d[3] - bbox_2d[1],
                                                     color="blue", fill=False, linewidth=1))
-        else:
-            mask = 0
+
         color = np.clip((self.color.astype(np.float32) + mask), 0, 255).astype(np.uint8)
         plt.imshow(color) 
         # landmarks

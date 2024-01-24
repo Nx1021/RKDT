@@ -16,7 +16,14 @@ import os
 import shutil
 from utils.yaml import load_yaml, dump_yaml
 
+from posture_6d.data.dataset_example import VocFormat_6dPosture, Spliter
+
 if __name__ == "__main__":
+
+    # morrison_real_voc = VocFormat_6dPosture(r"E:\shared\code\OLDT\datasets\morrison_real_voc", lazy=True)
+
+    # spliter_group = morrison_real_voc.spliter_group
+
     # cfg_file = f"{CFG_DIR}/oldt_morrison_mix.yaml"
     cfg_file = f"{CFG_DIR}/oldt_morrison_real_voc.yaml"
     # setup_paras = load_yaml(cfg_file)["setup"]
@@ -65,13 +72,18 @@ if __name__ == "__main__":
     predictor = setup("predict",
                     detection_base_weight=f"{WEIGHTS_DIR}/morrison_real_voc/best.pt" ,
                         **setup_paras)
-    predictor.train_dataset.vocformat.spliter_group.split_mode = "posture"
-    predictor.val_dataset.vocformat.spliter_group.split_mode = "posture"
+    
+    spliter = Spliter(predictor.train_dataset.vocformat.spliter_group, "real_posture_all", ["train", "val"])
+    predictor.train_dataset.vocformat.spliter_group.add_cluster(spliter)
+
+    predictor.train_dataset.vocformat.spliter_group.split_mode = "real_posture_all"
+    predictor.val_dataset.vocformat.spliter_group.split_mode = "real_posture_all"
     # format.posture_spliter.set_split_mode(f"obj_{str(i).rjust(2, '0')}")
     # format.gen_posture_log(0.5)
     # trainer.train_dataset.vocformat.spliter_group.copyto(os.path.join(setup_paras["server_dataset_dir"], "morrison_mix_single", "ImageSets"))
     predictor._use_depth = True
-    predictor.predict_val(plot_outlier = False)
+    predictor.postprocesser.depth_scale = 0.5
+    predictor.predict_train(plot_outlier = False)
     # predictor.predict_train(plot_outlier = False)
 
 

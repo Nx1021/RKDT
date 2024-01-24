@@ -49,7 +49,7 @@ class MeshMeta:
             new_mesh = o3d.geometry.TriangleMesh(self.mesh)
             new_mesh = new_mesh.transform(posture.trans_mat)
 
-            return MeshMeta(new_mesh, new_bbox, self.symmetries, self.diameter, new_ldmk, self.name, self.class_id)
+            return self.__class__(new_mesh, new_bbox, self.symmetries, self.diameter, new_ldmk, self.name, self.class_id)
         else:
             self.mesh.transform(posture.trans_mat)
             if new_bbox is not None:

@@ -7,8 +7,9 @@ import numpy as np
 import open3d as o3d
 import copy
 import time
+import os
 
-from typing import Union, Any, Optional
+from typing import Union, Any, Optional, TypedDict
 
 from models.results import ImagePosture, ObjPosture
 from utils.match_with_threshold import perform_matching
@@ -35,6 +36,11 @@ class ObjectPostureHistory():
     def mean(self):
         return np.mean(self.history, axis=0)
 
+class SceneLogDict(TypedDict):
+    obj_dict: dict[int, np.ndarray]
+    grasp_posture: Optional[np.ndarray]
+    grasp_u: Optional[float]
+    grasp_obj_id: Optional[int]
 
 class Scene:
     '''
@@ -48,7 +54,7 @@ class Scene:
 
         # self.GCS = Posture(rvec = np.array(0,0,0), tvec = np.array(400,0,0)) #抓取坐标系
         self.log_update = False
-        self.logs = {}
+        self.logs:dict[int, SceneLogDict] = {}
         
     def set_gripper(self, gripper):
         self.gripper = gripper
@@ -184,6 +190,91 @@ class Scene:
         showing_geometrys += self.gripper.render()
         o3d.visualization.draw_geometries(showing_geometrys, width=1280, height=720)
 
+    def show_scene_in_log(self, log_num:int, save_path = ""):
+        obj_dict        = self.logs[log_num]["obj_dict"]
+        grasp_posture   = self.logs[log_num]["grasp_posture"]
+        grasp_u         = self.logs[log_num]["grasp_u"]
+        grasp_obj_id    = self.logs[log_num]["grasp_obj_id"]
+
+        self.object_list.clear()
+        for id_, trans_mat in obj_dict.items():
+            pcd = create_ObjectPcd_from_file(id_)
+            # pcd = pcd.transform(trans_mat)
+            pcd.posture_WCS = trans_mat
+            self.object_list.append(pcd)
+        
+        if grasp_posture is not None:
+            self.gripper.posture_WCS = Posture(homomat = grasp_posture)
+            self.gripper.set_u(grasp_u)
+
+        showing_geometrys = []
+        for obj in self.object_list:
+            showing_geometrys += obj.render()
+        showing_geometrys += self.gripper.render()
+        # o3d.visualization.draw_geometries(showing_geometrys, width=1280, height=720)
+        
+        RCS_coord = o3d.geometry.TriangleMesh.create_coordinate_frame(size=50.0)
+        RCS_coord.compute_triangle_normals()
+        table = o3d.geometry.TriangleMesh.create_box(800, 800 ,1.0).paint_uniform_color(np.array([0.0, 1.0, 1.0]))
+        table.transform(Posture(tvec=np.array([0, -400, -1.0])).trans_mat)
+        table.paint_uniform_color([0.0, 1.0, 1.0])
+        table.compute_triangle_normals()
+        showing_geometrys.append(RCS_coord)
+        showing_geometrys.append(table)
+
+        if len(save_path) > 0:
+            save_path = os.path.join(save_path, f"export_meshes_{str(log_num).rjust(6, '0')}")
+            os.makedirs(save_path, exist_ok=True)
+            for idx, mesh in enumerate(showing_geometrys):
+                o3d.io.write_triangle_mesh(os.path.join(save_path, f"{str(idx).rjust(6, '0')}.ply"), mesh)
+        else:
+            # 相机内参外参：
+            # 创建一个带有几何体和相机参数的场景
+            scene = o3d.geometry.TriangleMesh()
+            for mesh in showing_geometrys:
+                if len(mesh.vertex_colors) == 0:
+                    mesh.paint_uniform_color([1.0, 1.0, 1.0])
+                if len(mesh.vertex_normals) == 0:
+                    mesh.compute_vertex_normals()
+                if len(mesh.triangle_normals) == 0:
+                    mesh.compute_triangle_normals()
+                scene += mesh
+
+            intrinsics = o3d.camera.PinholeCameraIntrinsic()
+            intrinsics.set_intrinsics(640, 480, 605.79, 605.70, 320.91, 249.77)
+
+            # extrinsics = np.load(r"E:\shared\code\OLDT\logs\grasping_running\log_20240122110348\camera_pose.npy")
+            extrinsics = np.array( [[ 9.93755613e-01, -8.06690216e-02, -7.70862508e-02, -2.84568310e+02],
+                                    [-1.10952565e-01, -7.87515024e-01, -6.06225713e-01,  1.28023091e+02],
+                                    [-1.18029455e-02,  6.10993123e-01, -7.91547911e-01,  9.42091626e+02],
+                                    [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]])
+
+            # 创建渲染器并设置相机参数
+            vis = o3d.visualization.Visualizer()
+            vis.create_window(width = 640, height = 480)
+            
+            ctr = vis.get_view_control()
+
+            phcp = ctr.convert_to_pinhole_camera_parameters()
+            # phcp = o3d.camera.PinholeCameraParameters()
+            phcp.extrinsic = extrinsics #外参
+            # phcp.intrinsic = intrinsics
+            ctr.convert_from_pinhole_camera_parameters(phcp)
+
+            # 添加几何体和设置相机参数
+            vis.add_geometry(scene)
+
+
+            # 渲染并显示窗口
+            vis.run()
+
+            # 打印相机外参
+            print("Camera Extrinsics:")
+            print(vis.get_view_control().convert_to_pinhole_camera_parameters().extrinsic)
+            print(vis.get_view_control().convert_to_pinhole_camera_parameters().intrinsic)
+
+            vis.destroy_window()
+
     def update_from_prediction(self, prediction: Union[ImagePosture, list[ObjPosture]]):
         '''
         从网络的预测结果更新场景,
@@ -192,7 +283,7 @@ class Scene:
         old:dict[int, list[ObjectPcd]] = {}
         ### 收集
         if isinstance(prediction, ImagePosture):
-            prediction = prediction.obj_list
+            prediction = prediction.obj_dict
 
         for obj in prediction:
             if obj.posture is not None:
@@ -232,16 +323,17 @@ class Scene:
         log_i = len(self.logs)
 
         object_info = {}
-
+        
         for obj in self.object_list:
             id_ = obj.class_id
             posture = obj.posture_WCS.trans_mat
             object_info[id_] = posture
         
+        self.logs[log_i] = SceneLogDict()
         if grasp is None:
-            self.logs[log_i] = {"obj_list": object_info, "grasp_posture": None, "grasp_u": None, "grasp_obj_id": None}
+            self.logs[log_i] = {"obj_dict": object_info, "grasp_posture": None, "grasp_u": None, "grasp_obj_id": None}
         else:
-            self.logs[log_i] = {"obj_list": object_info, "grasp_posture": grasp[0], "grasp_u": grasp[1], "grasp_obj_id": grasp[2]}
+            self.logs[log_i] = {"obj_dict": object_info, "grasp_posture": grasp[0], "grasp_u": grasp[1], "grasp_obj_id": grasp[2]}
 
     def save_log(self, path):
         JsonIO.dump_json(path, self.logs)

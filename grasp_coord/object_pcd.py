@@ -1,4 +1,6 @@
+from numpy import ndarray
 from posture_6d.core.posture import Posture
+from posture_6d.data import Posture
 from posture_6d.data.mesh_manager import MeshMeta, MeshManager
 
 import numpy as np
@@ -9,27 +11,52 @@ import matplotlib.pyplot as plt
 
 from . import MODELS_DIR, PCD_MODELS
 from .gripper import Gripper, MyThreeFingerGripper
+from typing import Optional, Union
 
 def create_ObjectPcd_from_file(class_id):
     mm = MeshManager(MODELS_DIR, PCD_MODELS)
-    return ObjectPcd(mm.export_meta(class_id))
+    return ObjectPcd.from_meshmeta(mm.export_meta(class_id))
 
 class ObjectPcd(MeshMeta):
     '''
     物体点云
     '''
     def __init__(self, 
-                 modelinfo:MeshMeta,
-                 posture:Posture = None) -> None:
-        super().__init__(   modelinfo.mesh, 
-                            modelinfo.bbox_3d, 
-                            modelinfo.symmetries, 
-                            modelinfo.diameter, 
-                            modelinfo.ldmk_3d,
-                            modelinfo.name,
-                            modelinfo.class_id)
+                 mesh, 
+                 bbox_3d: np.ndarray = None, 
+                 symmetries:dict = None, 
+                 diameter:float = None,  
+                 ldmk_3d: np.ndarray = None,
+                 name = "",
+                 class_id = -1,
+                 posture:Optional[Posture] = None) -> None:
+
+        super().__init__(   mesh, 
+                            bbox_3d, 
+                            symmetries, 
+                            diameter, 
+                            ldmk_3d,
+                            name,
+                            class_id)
         self.posture_WCS: Posture = posture if posture is not None else Posture()
         self.read_candidate_coord()
+
+    @classmethod
+    def from_meshmeta(cls, modelinfo:MeshMeta,
+                 posture:Posture = None):
+        return cls(   modelinfo.mesh, 
+                    modelinfo.bbox_3d, 
+                    modelinfo.symmetries, 
+                    modelinfo.diameter, 
+                    modelinfo.ldmk_3d,
+                    modelinfo.name,
+                    modelinfo.class_id,
+                    posture)
+
+    def transform(self, posture: Union[Posture, ndarray], copy=True):
+        rlt = super().transform(posture, copy)
+        rlt.posture_WCS = posture if isinstance(posture, Posture) else Posture(homomat=posture)
+        return rlt
 
     def render(self, gripper:MyThreeFingerGripper = None, gripper_posture_O:Posture = None, u = None):
         '''
