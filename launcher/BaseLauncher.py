@@ -176,6 +176,8 @@ class Launcher():
 
         self.frame_timer = FrameTimer()
 
+        self.num_workers = 0 if self.sys == "Windows" else 4
+
     @staticmethod
     def timing(count_batch_from = DONOT_COUNT_BATCH):
         '''

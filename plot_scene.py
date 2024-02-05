@@ -21,5 +21,5 @@ from grasp_coord import MODELS_DIR, SCRIPT_DIR
 s = Scene()
 
 s.load_log(r"E:\shared\code\OLDT\logs\grasping_running\log_20240123182051\scene_log_20240123182051.json")
-s.show_scene_in_log(261, save_path = r"E:\shared\code\OLDT\logs\grasping_running\log_20240123182051")
+s.show_scene_in_log(317, save_path = r"E:\shared\code\OLDT\logs\grasping_running\log_20240123182051")
 

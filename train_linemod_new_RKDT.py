@@ -32,8 +32,8 @@ if __name__ == "__main__":
         1: "20230815074456branch_ldt_01.pt",
         2: "20230831080343branch_ldt_02.pt",
         3: "20230818011104branch_ldt_03.pt",
-        4: "20230819081237branch_ldt_04.pt",
-        5: "20230819081450branch_ldt_05.pt",
+        4: "20240130015806branch_ldt_04.pt",
+        5: "20240126020130branch_ldt_05.pt",
         6: "20230823005717branch_ldt_06.pt",
         7: "20230826185557branch_ldt_07.pt",
         8: "20230823010935branch_ldt_08.pt",
@@ -45,7 +45,7 @@ if __name__ == "__main__":
         14: "20230902185318branch_ldt_14.pt"
     }
 
-    for idx in [0]: # 8, 9, 10, 11
+    for idx in [7, 8, 9, 10, 11]: #  5, 7, 8, 9, 10, 11
         setup_paras = load_yaml(cfg_file)["setup"]
 
         sys = platform.system()
@@ -76,7 +76,6 @@ if __name__ == "__main__":
 
         spliter.exclusive = False
         print("train:", len(trainer.train_dataset.vocformat.train_idx_array), "val:", len(trainer.train_dataset.vocformat.val_idx_array))
-
         trainer.train()
         trainer = None
 
@@ -91,3 +90,4 @@ if __name__ == "__main__":
         
         # voc_server:VocFormat_6dPosture = VocFormat_6dPosture(f"/home/nerc-ningxiao/datasets/linemod_mix/{str(i).rjust(6, '0')}")
         # voc_server.copy_from_simplified(voc, cover=True, force=True)
+

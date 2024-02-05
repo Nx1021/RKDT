@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
     kps_mesh = o3d.geometry.TriangleMesh()
     for ldmk in obj_0.ldmk_3d:
-        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=2)
+        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=4)
         sphere.translate(ldmk)
         sphere.paint_uniform_color([0.0, 1.0, 0.0])
         kps_mesh += sphere

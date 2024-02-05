@@ -309,7 +309,7 @@ class OLDTPredictor(Launcher):
     
     def predict_from_dataset(self, dataset:OLDTDataset, plot_outlier = False):
         dataset.set_use_depth(self._use_depth)
-        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=self.num_workers)
         
         with torch.no_grad():
             num_batches = len(data_loader)

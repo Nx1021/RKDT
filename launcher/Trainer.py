@@ -255,8 +255,8 @@ class Trainer(Launcher):
     def train(self):
         print("start to train... time:{}".format(self.start_timestamp))
         self.cur_epoch = 0
-        train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn)
-        val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn)
+        train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=self.num_workers)
+        val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn,    num_workers=self.num_workers)
 
         for epoch in self.flow:
             self.cur_epoch = epoch
@@ -273,7 +273,7 @@ class Trainer(Launcher):
                 self.best_val_loss = val_loss
                 self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp)
             if epoch % 400 == 0:
-                self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp + "_400_")
+                self.inner_model.save_branch_weights(WEIGHTS_DIR, self.start_timestamp + "_{}_".format(epoch))
 
             # 更新进度条信息
             tqdm.write('Epoch {} - Train Loss: {:.4f} - Val Loss: {:.4f}'.format(self.cur_epoch, train_loss, val_loss))

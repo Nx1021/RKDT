@@ -25,11 +25,18 @@ def calculate_scores(points, pk, alpha = 0.15, beta = 0.4):
     return scores
 
 def show(image_res = 200):
+#     points = np.array(
+#     [[0.5, 0.6], 
+#      [0.6, 0.4],
+#      [0.65, 0.45]]
+# )
+
     points = np.array(
-    [[0.5, 0.6], 
-     [0.6, 0.4],
-     [0.65, 0.45]]
-)
+    [[10, 20], 
+     [32, 24],
+     [59, 18],
+     [21, 61]]
+    ) / 90
 
     fig, axs = plt.subplots(3, 4, figsize=(10, 10))  # 创建2x2的子图数组
 
