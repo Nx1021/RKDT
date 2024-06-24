@@ -17,7 +17,7 @@ from models.OLDT import OLDT
 from models.loss import LandmarkLoss
 from models.results import LandmarkDetectionResult, ImagePosture, compare_image_posture
 from post_processer.PostProcesser import PostProcesser, \
-    create_pnpsolver, create_model_manager
+    create_pnpsolver, create_mesh_manager
 
 from posture_6d.derive import PnPSolver
 from posture_6d.metric import MetricCalculator, MetricResult
@@ -220,7 +220,7 @@ class OLDTPredictor(Launcher):
         self.val_dataset    = val_dataset
 
         pnpsolver = create_pnpsolver(cfg_file)
-        mesh_manager = create_model_manager(cfg_file)
+        mesh_manager = create_mesh_manager(cfg_file)
         out_bbox_threshold = load_yaml(cfg_file)["out_bbox_threshold"]
         self.postprocesser = PostProcesser(pnpsolver, mesh_manager, out_bbox_threshold)
         self.error_calculator = MetricCalculator(pnpsolver, mesh_manager)
@@ -234,6 +234,9 @@ class OLDTPredictor(Launcher):
             intermediate_root = os.path.join(self.log_dir)
         self.intermediate_manager: IntermediateManager = IntermediateManager(intermediate_root, "intermediate_output")
         self.save_imtermediate = True
+        self.save_raw_input = True
+        self.save_raw_output = True
+        self.save_processed_output = True
 
         self.gt_dir = "gt"
         self.predictions_dir = "list_" + LandmarkDetectionResult.__name__
@@ -307,7 +310,9 @@ class OLDTPredictor(Launcher):
             error_result.append(image_error_result)
         return error_result
     
-    def predict_from_dataset(self, dataset:OLDTDataset, plot_outlier = False):
+    def predict_from_dataset(self, dataset:OLDTDataset, plot_outlier = False, 
+                             ex_raw_output:Generator = None,
+                             result_suffix = ""):
         dataset.set_use_depth(self._use_depth)
         data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=self.num_workers)
         
@@ -320,16 +325,21 @@ class OLDTPredictor(Launcher):
 
                 # Preprocessing
                 inputs = self.preprocess(batch)
-                if self.save_imtermediate:
+                if self.save_imtermediate and self.save_raw_input:
                     for obj in batch:
                         self.intermediate_manager.save_pkl(self.gt_dir, obj)
 
                 # Model inference
                 self.model.if_gather = True
-                predictions:list[list[LandmarkDetectionResult]] = self.inference(inputs)
-                if self.save_imtermediate:
-                    for obj in predictions:
-                        self.intermediate_manager.save_pkl(self.predictions_dir, obj)
+                if not ex_raw_output:
+                    predictions:list[list[LandmarkDetectionResult]] = self.inference(inputs)
+                    if self.save_imtermediate and self.save_raw_output:
+                        for obj in predictions:
+                            self.intermediate_manager.save_pkl(self.predictions_dir, obj)
+                else:
+                    predictions:list[list[LandmarkDetectionResult]] = []
+                    for i in range(min(self.batch_size, len(batch))):
+                        predictions.append(next(ex_raw_output))
 
                 ###
                 # for i in range(len(batch)):
@@ -342,7 +352,7 @@ class OLDTPredictor(Launcher):
                     # print([x.obj_list[0].tvec for x in batch if isinstance(x, ImagePosture)])
                     depths = [x.depth for x in batch if isinstance(x, ImagePosture)] if self._use_depth else None
                     processed:list[ImagePosture] = self.postprocess(inputs, predictions, depths = depths)
-                    if self.save_imtermediate:
+                    if self.save_imtermediate and self.save_processed_output:
                         for obj in processed:
                             self.intermediate_manager.save_pkl(self.processed_dir, obj)
 
@@ -354,7 +364,7 @@ class OLDTPredictor(Launcher):
 
                 # self.plot_compare(batch, processed)
 
-        with self.logger.capture_output("process record"):
+        with self.logger.capture_output(f"process record{result_suffix}"):
             self.frame_timer.print()
             self.error_calculator.print_result()
 
@@ -392,7 +402,7 @@ class OLDTPredictor(Launcher):
                 # self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
 
     def plot_compare(self,  gt_list:list[ImagePosture],
-                    pred_list:list[ImagePosture]):
+                    pred_list:list[ImagePosture], hide_unpredicted = False):
         def save_figure(file_path, image):
             plt.gcf()
             file_path += ".svg"
@@ -405,16 +415,31 @@ class OLDTPredictor(Launcher):
             for line in lines:
                 plt.plot(line[0], line[1], c = color, linewidth=1)
 
+
         for gt, pred in zip(gt_list, pred_list):
             compare_image_posture(gt, pred)
-            for gt_item, pred_item in zip(gt.obj_list, pred.obj_list):
-                bbox_3d = self.postprocesser.mesh_manager.get_bbox_3d(gt_item.class_id)
-                gt_bbox_3d_proj   = self.postprocesser.pnpsolver.calc_reproj(bbox_3d, gt_item.rvec,   gt_item.tvec)
-                pred_bbox_3d_proj = self.postprocesser.pnpsolver.calc_reproj(bbox_3d, pred_item.rvec, pred_item.tvec)
-                gt_color = "lawngreen"
-                pred_color = "lightslategray"
-                plot_bbox_3d(gt_bbox_3d_proj, gt_color)
-                plot_bbox_3d(pred_bbox_3d_proj, pred_color)
+            gt_obj_list = gt.obj_list.copy()
+            valid_pred_ids = [x.class_id for x in pred.obj_list if x.rvec is not None and x.tvec is not None]
+            gt_obj_list = [x for x in gt_obj_list if x.class_id in valid_pred_ids]
+            pred_obj_list = [x for x in pred.obj_list if x.class_id in valid_pred_ids]
+            for obj_list, color in zip([gt_obj_list, pred_obj_list], ["lawngreen", "lightslategray"]):
+                for item in obj_list:
+                    if item.class_id not in [x.class_id for x in pred.obj_list]:
+                        continue
+                    bbox_3d = self.postprocesser.mesh_manager.get_bbox_3d(item.class_id)
+                    if item.rvec is None or item.tvec is None:
+                        continue
+                    bbox_3d_proj = self.postprocesser.pnpsolver.calc_reproj(bbox_3d, item.rvec, item.tvec)
+                    plot_bbox_3d(bbox_3d_proj, color)
+            # for gt_item, pred_item in zip(gt.obj_list, pred.obj_list):
+            #     gt_bbox_3d_proj     = self.postprocesser.pnpsolver.calc_reproj(bbox_3d, gt_item.rvec,   gt_item.tvec)
+            #     if pred_item.rvec is None or pred_item.tvec is None:
+            #         continue
+            #     pred_bbox_3d_proj = self.postprocesser.pnpsolver.calc_reproj(bbox_3d, pred_item.rvec, pred_item.tvec)
+            #     gt_color = "lawngreen"
+            #     pred_color = "lightslategray"
+            #     plot_bbox_3d(gt_bbox_3d_proj, gt_color)
+            #     plot_bbox_3d(pred_bbox_3d_proj, pred_color)
             self.intermediate_manager._save_object("plot_compare", None, save_figure)
             # self.intermediate_manager.save_pkl("error_outlier_raw", (gt, pred))
 

@@ -6,7 +6,7 @@ yolo_override:
   mode: predict  # YOLO mode, i.e. train, val, predict, export, track, benchmark
 
   # Train settings -------------------------------------------------------------------------------------------------------
-  model: E:\shared\code\OLDT/weights\linemod_mix\000004_best.pt                 # path to model file, i.e. yolov8n.pt, yolov8n.yaml
+  model: E:\shared\code\OLDT/weights\linemod_mix\000014_best.pt                 # path to model file, i.e. yolov8n.pt, yolov8n.yaml
   data: ./datasets/linemod_mix.yaml # path to data file, i.e. coco128.yaml
   verbose: false  # whether to print verbose output
 

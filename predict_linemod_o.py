@@ -60,10 +60,10 @@ if __name__ == "__main__":
         5: "20240126020130branch_ldt_05.pt",
         6: "20230823005717branch_ldt_06.pt",
         # 7: "20230826185557branch_ldt_07.pt",
-        7: "20240105130341branch_ldt_07.pt",
-        8: "20230823010935branch_ldt_08.pt",
-        9: "20230826200842branch_ldt_09.pt",
-        10: "20230823011027branch_ldt_10.pt",
+        7: "20240203015411branch_ldt_07.pt",
+        8: "20240205152649branch_ldt_08.pt",
+        9: "20240207152358branch_ldt_09.pt",
+        10: "20240209162253branch_ldt_10.pt",
         11: "20230826191856branch_ldt_11.pt",
         # 12: "20230823011323branch_ldt_12.pt",
         12: "20240108081240branch_ldt_12.pt",
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     }
 
     for k, v in weights.items():
-        if k != 4:
+        if k != 7 and k != 8 and k != 9 and k!= 10:
             continue
         setup_paras["sub_data_dir"] = "linemod_o/"
         setup_paras["ldt_branches"] = {k: "linemod_mix_new/{}".format(v)}

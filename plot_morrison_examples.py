@@ -3,6 +3,7 @@ from launcher.Predictor import OLDTPredictor, IntermediateManager
 from launcher.Trainer import Trainer
 
 from models.OLDT import OLDT
+from models.results import ImagePosture, ObjPosture, Posture
 from launcher.OLDTDataset import OLDTDataset
 from launcher.setup import setup
 
@@ -70,7 +71,7 @@ if __name__ == "__main__":
     setup_paras["sub_data_dir"] = f"morrison_real_voc/"
 
     predictor = setup("predict",
-                    detection_base_weight=f"{WEIGHTS_DIR}/morrison_real_voc/best.pt" ,
+                    detection_base_weight=f"{WEIGHTS_DIR}/morrison_real_voc/best.pt" , _lazy = True,
                         **setup_paras)
     
     spliter = Spliter(predictor.train_dataset.vocformat.spliter_group, "real_posture_all", ["train", "val"])
@@ -83,9 +84,30 @@ if __name__ == "__main__":
     # trainer.train_dataset.vocformat.spliter_group.copyto(os.path.join(setup_paras["server_dataset_dir"], "morrison_mix_single", "ImageSets"))
     predictor._use_depth = True
     predictor.postprocesser.depth_scale = 0.5
+    predictor.train_dataset.set_use_depth(True)
     # predictor.predict_train(plot_outlier = False)
 
-    predictor.predict_train(plot_outlier = False)
+    for i in list(range(0,4000,50)) + [4175, 6482, 8470, 8694]:
+        if i < 4000:
+            predictor.postprocesser.depth_scale = 0.5
+        else:
+            predictor.postprocesser.depth_scale = 1.0
+        meta = predictor.train_dataset.vocformat.read(i)
+        color = meta.color
+        depth = meta.depth
+
+        objs = []
+        for i in meta.extr_vecs:
+            bbox = meta.labels[i] #[xyxy]
+            o = ObjPosture(meta.landmarks[i], meta.labels[i]/np.array([640, 480, 640, 480]), i, (640, 480), 
+                       posture=Posture(rvec=meta.extr_vecs[i][0], tvec=meta.extr_vecs[i][1]))
+            objs.append(o)
+
+        gt_ = ImagePosture(color, *objs, intr_M = meta.intr, depth=depth)
+
+        pred_ = predictor.predict_single_image(color, depth)
+
+        predictor.plot_compare([gt_], [pred_])
 
 
     predictor = None

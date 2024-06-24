@@ -23,7 +23,7 @@ from posture_6d.derive import draw_one_mask
 
 from typing import TypedDict, Union, Callable, Optional, Iterable, TypeVar, overload, Any, Sequence, Literal
 
-def create_model_manager(cfg_file) -> MeshManager:
+def create_mesh_manager(cfg_file) -> MeshManager:
     cfg_paras = load_yaml(cfg_file)
     model_manager = MeshManager(os.path.join(SCRIPT_DIR, cfg_paras["models_dir"]),
                                  cfg_paras["pcd_models"])
@@ -1036,6 +1036,15 @@ class ObjPredSequence():
     def invisible(self):
         return self.visible_count <= -self.visib_threshold
 
+# 沿着物体中心与相机坐标系原点的连线移动物体
+def move_obj_by_optical_link(posture:Posture, move_dist) -> Posture:
+    '''
+    move_dist 为正数，表示沿着射线远离相机
+    '''
+    optical_link = posture.tvec
+    optical_link = optical_link / np.linalg.norm(optical_link)# normalize
+    new_t = posture.tvec + optical_link * move_dist
+    return posture.__class__(rvec=posture.rvec, tvec=new_t)
 
 class PostProcesser():
     '''
@@ -1068,6 +1077,8 @@ class PostProcesser():
         self._use_bbox_area_assumption = True
         self._use_fix_z = True
         self.depth_scale = 1.0
+
+        self.voting_threshold = 0.24
 
         # self.objs:list[ObjPredSequence] = []
         self.trace_manager = ObjectTraceManager()
@@ -1112,7 +1123,7 @@ class PostProcesser():
         '''
         对于同一个landmark，选取多个tgt进行投票
         '''
-        conf = 0.25
+        conf = self.voting_threshold
         probs = tensor_to_numpy(probs)[-1]    #[tgt_num, landmark_num + 1]
         coords = tensor_to_numpy(coords)[-1]         #[tgt_num, landmark_num + 1]
         landmark_num = probs.shape[-1] - 1
@@ -1133,16 +1144,6 @@ class PostProcesser():
                     (ldmks[..., 1] <= bbox[3]))
         return np.sum(in_bbox) < int((1 - self.ldmk_out_upper) * ldmks.shape[0])
 
-    # 沿着物体中心与相机坐标系原点的连线移动物体
-    @staticmethod
-    def move_obj_by_optical_link(posture:Posture, move_dist) -> Posture:
-        '''
-        move_dist 为正数，表示沿着射线远离相机
-        '''
-        optical_link = posture.tvec
-        optical_link = optical_link / np.linalg.norm(optical_link)# normalize
-        new_t = posture.tvec + optical_link * move_dist
-        return posture.__class__(rvec=posture.rvec, tvec=new_t)
 
     def desktop_assumption(self, O_in_C:Posture, C_in_B:Posture, points_in_O:np.ndarray):
         '''
@@ -1163,7 +1164,7 @@ class PostProcesser():
         cos_theta = np.dot(cam_obj_link_in_B, np.array([0,0,-1]))
         move_dist = min_z / cos_theta # move_dist 与 min_z同号
 
-        new_O_in_C = self.move_obj_by_optical_link(O_in_C, move_dist)
+        new_O_in_C = move_obj_by_optical_link(O_in_C, move_dist)
 
         return new_O_in_C
     
@@ -1176,7 +1177,7 @@ class PostProcesser():
         bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
         scale = np.sqrt(bbox_area / reproj_bbox_area)
         move_dist = -(1 - 1/scale) * posture.tvec[2]
-        new_posture = self.move_obj_by_optical_link(posture, move_dist)
+        new_posture = move_obj_by_optical_link(posture, move_dist)
         return new_posture
 
     def fix_z_assumption(self, C_in_B:Posture, posture:Posture, class_id:int):
@@ -1255,7 +1256,7 @@ class PostProcesser():
 
         if len(dists) != 0:
             move_dist = np.mean(dists)
-            new_posture = self.move_obj_by_optical_link(raw_posture, move_dist)
+            new_posture = move_obj_by_optical_link(raw_posture, move_dist)
             return new_posture
         else:
             return raw_posture

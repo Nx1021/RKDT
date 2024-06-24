@@ -27,12 +27,12 @@ def collate_fn(batch_data):
     return batch_data
 _ONLY_REAL = False
 class OLDTDataset(Dataset):
-    def __init__(self, data_folder:str, set_:str, formattype = VocFormat_6dPosture, use_depth = False):
+    def __init__(self, data_folder:str, set_:str, formattype = VocFormat_6dPosture, use_depth = False, lazy = False):
         '''
         set must be "trian" or "val"
         '''
         self.data_folder = data_folder
-        self.vocformat = formattype(data_folder)
+        self.vocformat = formattype(data_folder, lazy=lazy)
         self.__use_depth = use_depth
         # self.vocformat.rebuild(force= True)
         try:

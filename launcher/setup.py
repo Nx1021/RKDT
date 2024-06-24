@@ -42,7 +42,8 @@ def setup(
         server_dataset_dir = "",
         remark = "",
         detection_base_weight = None,
-        detection_active_class_id = None):
+        detection_active_class_id = None,
+        _lazy = False):
     ### input check
     if isinstance(dataset_format, str):
         _globals = globals()
@@ -109,8 +110,8 @@ def setup(
     modify_cfg(cfg_file, DATASET, SERIAL, data_folder)
     if mode != "detection":
         ### setup model
-        train_dataset = OLDTDataset(data_folder, "train", dataset_format) 
-        val_dataset = OLDTDataset(data_folder, "val", dataset_format)
+        train_dataset = OLDTDataset(data_folder, "train", dataset_format, lazy=_lazy) 
+        val_dataset = OLDTDataset(data_folder, "val", dataset_format, lazy=_lazy)
         train_dataset.vocformat.spliter_group.get_cluster("posture").get_idx_list("train")
 
         model = OLDT(yolo_weight_path, cfg_file, list(ldt_branches.keys()))  
