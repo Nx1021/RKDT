@@ -121,7 +121,7 @@ class OLDTDataset(Dataset):
         orig_idx = int(idx / self.data_inflation)
         data_i = self.idx_array[orig_idx]
         viewmeta = self.vocformat.read(data_i)   
-        viewmeta.labels = viewmeta.calc_bbox2d_from_mask(viewmeta.masks)
+        # viewmeta.labels = viewmeta.calc_bbox2d_from_mask(viewmeta.masks)
         if if_aug:
             viewmeta = self.augment(viewmeta)
         # viewmeta = viewmeta.rotate(0.2)

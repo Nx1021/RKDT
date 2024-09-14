@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     sys = platform.system()
     if sys == "Windows":
-        batch_size = 4
+        batch_size = 16
         # model = torch.nn.DataParallel(model)
     elif sys == "Linux":
         batch_size = 32 # * torch.cuda.device_count()
@@ -73,11 +73,12 @@ if __name__ == "__main__":
     wp = "linemod_mix_new" #"linemod_mix_new"
 
     for k, v in weights.items():
-        if not(k == 7 or k==8 or k==9 or k==10):
+        if (k == 2) or (k == 6):
             continue
         setup_paras["sub_data_dir"] = "linemod_mix/{}".format(str(k).rjust(6, '0'))
         setup_paras["ldt_branches"] = {k: f"{wp}/{v}"}
         setup_paras["batch_size"] = batch_size
+        setup_paras["use_data_on_server"] = setup_paras["use_data_on_server"] and sys == "Linux"
 
         predictor = setup("predict", 
                         detection_base_weight=f"{WEIGHTS_DIR}/{wp}/{str(k).rjust(6, '0')}_best.pt" ,
@@ -85,7 +86,13 @@ if __name__ == "__main__":
         predictor.train_dataset.vocformat.spliter_group.split_mode = "posture"
         predictor.val_dataset.vocformat.spliter_group.split_mode = "posture"
         # predictor.postprocesser._use_bbox_area_assumption = True
+        predictor.postprocesser._use_bbox_area_assumption = False
         predictor._use_depth = False
         predictor.postprocesser.depth_scale = 1.0
+        predictor.if_calc_error = True
+        # predictor.num_workers = 0
         predictor.predict_val()
+
+        print(np.mean(predictor._tvec_error, axis=0))
+        print(np.std(predictor._tvec_error, axis=0))
 

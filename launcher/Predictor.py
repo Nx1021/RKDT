@@ -299,22 +299,33 @@ class OLDTPredictor(Launcher):
     @Launcher.timing(-1)
     def calc_error(self, pred: Iterable[ImagePosture], gt: Iterable[ImagePosture])->list[list[tuple[MetricResult]]]:
         ### 匹配真值和预测的roi
+        if not hasattr(self, "_tvec_error"):
+            self._tvec_error = []
         error_result:list[list[tuple[MetricResult]]] = []
         for pred_imgpstr, gt_imgpstr in zip(pred, gt):
             matched = match_roi(pred_imgpstr, gt_imgpstr)
             image_error_result = []
             for m in matched:
-
                 one_error_result = self.error_calculator.calc_one_error(m[0], m[1], m[2], MetricCalculator.ALL)
+                self._tvec_error.append((m[1].tvec - m[2].tvec)/m[2].tvec) # 相对误差
                 image_error_result.append(one_error_result)
             error_result.append(image_error_result)
         return error_result
     
+    def __replace_bbox(self, predictions:list[list[LandmarkDetectionResult]], gts:list[ImagePosture]):
+        for pred, gt in zip(predictions, gts):
+            pd_x1, pd_y1, pd_x2, pd_y2 = pred[0].bbox
+            gt_x1, gt_y1, gt_x2, gt_y2 = gt.obj_list[0].bbox
+            dn_pred_ldmk = pred[0].landmarks_n * torch.Tensor([gt_x2 - gt_x1, gt_y2 - gt_y1]).to("cuda") + torch.Tensor([gt_x1, gt_y1]).to("cuda")
+            norm_pred_ldmk = (dn_pred_ldmk - torch.Tensor([pd_x1, pd_y1]).to("cuda")) / torch.Tensor([pd_x2 - pd_x1, pd_y2 - pd_y1]).to("cuda")
+
+            pred[0].landmarks_n = norm_pred_ldmk
+
     def predict_from_dataset(self, dataset:OLDTDataset, plot_outlier = False, 
                              ex_raw_output:Generator = None,
                              result_suffix = ""):
         dataset.set_use_depth(self._use_depth)
-        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=self.num_workers)
+        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=self.num_workers, pin_memory=True)
         
         with torch.no_grad():
             num_batches = len(data_loader)
@@ -333,6 +344,7 @@ class OLDTPredictor(Launcher):
                 self.model.if_gather = True
                 if not ex_raw_output:
                     predictions:list[list[LandmarkDetectionResult]] = self.inference(inputs)
+                    # self.__replace_bbox(predictions, batch)
                     if self.save_imtermediate and self.save_raw_output:
                         for obj in predictions:
                             self.intermediate_manager.save_pkl(self.predictions_dir, obj)
@@ -355,6 +367,9 @@ class OLDTPredictor(Launcher):
                     if self.save_imtermediate and self.save_processed_output:
                         for obj in processed:
                             self.intermediate_manager.save_pkl(self.processed_dir, obj)
+
+                self.postprocesser.solve_posture(batch[0].obj_list[0].landmarks, np.ones(24, np.bool_), batch[0].obj_list[0].bbox, None,  batch[0].obj_list[0].class_id)
+                ldmk = self.postprocesser.pnpsolver.calc_reproj(self.postprocesser.mesh_manager.get_ldmk_3d(0), batch[0].obj_list[0].rvec, batch[0].obj_list[0].tvec)
 
                 # error
                 if self.if_calc_error:
@@ -414,7 +429,6 @@ class OLDTPredictor(Launcher):
             lines = get_bbox_connections(bbox_3d)
             for line in lines:
                 plt.plot(line[0], line[1], c = color, linewidth=1)
-
 
         for gt, pred in zip(gt_list, pred_list):
             compare_image_posture(gt, pred)

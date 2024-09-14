@@ -1192,13 +1192,21 @@ class PostProcesser():
         return posture
 
     def solve_posture(self, ldmks:np.ndarray, mask:np.ndarray, bbox:np.ndarray, intr_M:Optional[np.ndarray], class_id:int, depth:Optional[np.ndarray] = None):
-        if np.sum(mask) < 8:
+        # min_point_num = 4 # 8
+        # use_point_num = 8 # None
+        min_point_num = 8 # 8
+        use_point_num = None # None
+        ldmks = ldmks[:use_point_num]
+        mask = mask[:use_point_num]
+        if np.sum(mask) < min_point_num:
             return None
         elif self.obj_out_bbox(ldmks, bbox):
             return None
         else:
-            points_3d = self.mesh_manager.get_ldmk_3d(class_id)
-            posture:Posture = self.pnpsolver.solvepnp(ldmks, points_3d, mask, K=intr_M, return_posture=True) # type:ignore
+            # points_3d = self.mesh_manager.get_ldmk_3d(class_id)
+            points_3d = self.mesh_manager.model_ldmk_3d[class_id]
+            # return None
+            posture:Posture = self.pnpsolver.solvepnp(ldmks, points_3d[:use_point_num], mask, K=intr_M, return_posture=True) # type:ignore
 
             if depth is not None:
                 posture = self.__refine_posture_by_depth(depth, bbox, class_id, posture)
