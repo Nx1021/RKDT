@@ -41,10 +41,10 @@ if __name__ == "__main__":
     dataset = MyDataset(r"datasets\linemod\000006\rgb")
     dataloader = DataLoader(dataset, batch_size=bs, shuffle=False, num_workers=0, collate_fn = collate_fn)
 
-    yolo_weight_path = r"weights\linemod_mix_new\000005_best.pt"
-    cfg_file = r"cfg\oldt_linemod_mix_new.yaml"
+    yolo_weight_path = r"weights\linemod_mix\000005_best.pt"
+    cfg_file = r"cfg\oldt_linemod_mix.yaml"
     model = OLDT(yolo_weight_path,  cfg_file, [5])
-    model.load_branch_weights(5, r"weights\linemod_mix_new\20240126020130branch_ldt_05.pt")
+    model.load_branch_weights(5, r"weights\linemod_mix\20240126020130branch_ldt_05.pt")
 
     pnpsolver = create_pnpsolver(cfg_file)
     mesh_manager = create_mesh_manager(cfg_file)

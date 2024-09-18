@@ -70,7 +70,7 @@ if __name__ == "__main__":
         14: "20230902185318branch_ldt_14.pt"
     }
 
-    wp = "linemod_mix_new" #"linemod_mix_new"
+    wp = "linemod_mix" #"linemod_mix"
 
     for k, v in weights.items():
         if (k == 2) or (k == 6):
